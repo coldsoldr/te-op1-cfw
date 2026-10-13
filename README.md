@@ -1,2 +1,2 @@
-# te-op1-cfw
-repo for the development of cfw, and community plugins for the teenage engineering op1
+# OP1.CustomFirmware
+Repo for the development of a custom firmware for the TE op1
