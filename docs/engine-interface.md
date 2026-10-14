@@ -66,7 +66,7 @@ VisualDSP vtable entries are 8 bytes, `{0, fn}`. The entries:
 | +0x2c | **note off** | `0x1a1b5ec` (shared `RTS`) | `0x1a4efae` | `0x1a1b5ec` | St sets release mode (`B[+0x1c] = 1`, `W[+0x18] = 0x100`); Pd relies on the OP-1 ADSR |
 | +0x34 | 0 | | | | end of the voice vtable; the next class's vtable follows |
 
-Note-on gets no arguments besides `this` (**inferred** from the Pd and St code). Pitch comes in at render time, below.
+Note-on also gets **R1 = a pointer to the slot's 8 knob values** (found in the screen and input analysis, `docs/screen-interface.md` §5). Pd and St ignore it. Pitch comes in at render time, below.
 
 ## render(this, int16_t* out, const int16_t* params) (confirmed)
 
