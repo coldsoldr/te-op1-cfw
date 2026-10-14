@@ -51,3 +51,9 @@ So **whether te-boot runs is decided before any app code is loaded.** Holding CO
 - This is static analysis. The Boot ROM isn't available to read, but ADI's BF52x ROM has no authentication, only header checksums (and optional CRC through an init-code callback, which isn't used here).
 - The app could in theory check itself at runtime. Nothing points to that, but the first on-device test settles it.
 - The COM-key reading of `0xffa0042c` and the role of OTP page 0xD8 are inferred. TE's documented "hold COM at power-on" behaviour fits.
+
+## Verified on the device (2026-10-14)
+1. **Stock 246 flashed through the te-boot menu.** The updater showed CRC OK, unpacking, "Updating te-boot…", **"te_boot skipped"**, then "Writing firmware…" and done. This confirms the unit runs TE-BOOT v2.30 (the skip only happens when the running bootloader's version string matches) and that the recovery path works.
+2. **Patched app flashed** (`op1_246_cow.op1`). `OP1_vdk.ldr` was changed in 3 bytes only: the play-mode label at `0x18f2f8c`, `poly` → `cow`. The package was built with `tools/patch_app.py` and `tools/build_package.py`, with no te-boot.ldr inside. **It booted normally and the play-mode screen showed COW.**
+
+This confirms there is no integrity check on the app image, and that edits to plain SDRAM blocks round-trip through the LDR writer, packaging and the te-boot flasher.

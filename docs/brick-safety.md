@@ -8,7 +8,7 @@ Goal: no custom build can ever leave the OP-1 unable to reach te-boot (the bootl
 2. **Every package must pass `python tools/verify_bootloader.py <file.op1>` before it goes on the device.**
 3. **Package file names must not contain `FRC`**, which forces a bootloader rewrite. Never put a **`.KEY`** file on the OP-1 disk: it triggers irreversible OTP key programming. (`RBT` in the name only adds a reboot after the update, so it's harmless but best avoided.) The guard checks all of this.
 4. **Install only through the te-boot menu:** hold COM while switching on, then "1. Upload firmware". Don't use the app-side update path (see "Path B"), which forces a bootloader rewrite whenever the package contains te-boot.ldr.
-5. **Before any custom flash, check the unit's bootloader is v2.30** (shown on the te-boot screen), and **prove recovery once by flashing stock `op1_246.op1` through the te-boot menu**. With a v2.30 unit and the stock file name, te-boot skips the bootloader write (see "Decision logic").
+5. ✅ *Done 2026-10-14: stock flash showed "te_boot skipped", so the unit runs v2.30 and recovery works.* **Before any custom flash, check the unit's bootloader is v2.30** (shown on the te-boot screen), and **prove recovery once by flashing stock `op1_246.op1` through the te-boot menu**. With a v2.30 unit and the stock file name, te-boot skips the bootloader write (see "Decision logic").
 6. Don't use te-boot "7. Factory reset" or "8. Format drive" during development. They wipe YAFFS2, including `/yaffs2/cmel_gamma.dat` and `/yaffs2/samsung.dat`, the display gamma calibration files.
 
 ## Update pipeline
