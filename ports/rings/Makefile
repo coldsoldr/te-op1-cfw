@@ -1,0 +1,78 @@
+# Rings port: reference renders, host builds of the port, comparison and
+# Blackfin benchmarks. Run from this directory inside WSL (needs g++, and
+# bfin-elf-g++ for the bench targets; see tools/build_bfin_gcc.sh).
+#
+#   make ref          upstream float Rings, 48 kHz           -> out/ref/*.wav
+#   make port         the port built at 48 kHz (comparable)   -> out/port/*.wav
+#   make port44       the port at the OP-1 rate (44.1 kHz)    -> out/port44/*.wav
+#   make compare      SNR of out/port against out/ref
+#   make bench-ref    upstream float Rings on Blackfin (bfin-elf-run), cycles per block
+#   make bench-port   the port on Blackfin, cycles per block
+
+MI        ?= ../../mutableinstruments
+BFIN_BIN  ?= $(HOME)/op1-toolchain/bfin/bin
+PYTHON    ?= python3
+BUILD     := build
+OUT       := out
+
+STMLIB_SRC := $(MI)/stmlib/dsp/units.cc $(MI)/stmlib/utils/random.cc
+REF_SRC    := $(MI)/rings/dsp/part.cc $(MI)/rings/dsp/resonator.cc \
+              $(MI)/rings/dsp/string.cc $(MI)/rings/dsp/fm_voice.cc \
+              $(MI)/rings/resources.cc $(STMLIB_SRC)
+PORT_SRC   := src/part.cc src/resonator.cc src/string.cc src/fm_voice.cc \
+              src/resources.cc $(STMLIB_SRC)
+PORT_HDR   := $(wildcard src/*.h src/fx/*.h)
+HARNESS    := harness/render.cc $(wildcard harness/*.h)
+
+WARN          := -Wall -Wno-unused-variable -Wno-unused-local-typedefs -Wno-unused-function
+HOST_CXX      := g++
+HOST_CXXFLAGS := -O2 -g -DTEST -I$(MI) -I. $(WARN)
+
+BFIN_CXX      := $(BFIN_BIN)/bfin-elf-g++
+BFIN_RUN      := $(BFIN_BIN)/bfin-elf-run
+BFIN_CXXFLAGS := -O2 -mcpu=bf524 -msim -fno-exceptions -fno-rtti -DTEST -DBENCH \
+                 -I$(MI) -I. $(WARN)
+BENCH_SECONDS ?= 0.25
+
+.PHONY: all ref port port44 compare bench-ref bench-port clean
+
+all: ref port compare
+
+$(BUILD) $(OUT)/ref $(OUT)/port $(OUT)/port44:
+	mkdir -p $@
+
+$(BUILD)/render_ref: $(HARNESS) $(REF_SRC) | $(BUILD)
+	$(HOST_CXX) $(HOST_CXXFLAGS) harness/render.cc $(REF_SRC) -o $@ -lm
+
+$(BUILD)/render_port: $(HARNESS) $(PORT_SRC) $(PORT_HDR) | $(BUILD)
+	$(HOST_CXX) $(HOST_CXXFLAGS) -DPORT -DOP1RINGS_SAMPLE_RATE=48000 harness/render.cc $(PORT_SRC) -o $@ -lm
+
+$(BUILD)/render_port44: $(HARNESS) $(PORT_SRC) $(PORT_HDR) | $(BUILD)
+	$(HOST_CXX) $(HOST_CXXFLAGS) -DPORT -DOP1RINGS_SAMPLE_RATE=44100 harness/render.cc $(PORT_SRC) -o $@ -lm
+
+ref: $(BUILD)/render_ref | $(OUT)/ref
+	$(BUILD)/render_ref $(OUT)/ref
+
+port: $(BUILD)/render_port | $(OUT)/port
+	$(BUILD)/render_port $(OUT)/port
+
+port44: $(BUILD)/render_port44 | $(OUT)/port44
+	$(BUILD)/render_port44 $(OUT)/port44
+
+compare:
+	$(PYTHON) harness/compare.py dirdiff $(OUT)/ref $(OUT)/port
+
+$(BUILD)/bench_ref.elf: $(HARNESS) $(REF_SRC) | $(BUILD)
+	$(BFIN_CXX) $(BFIN_CXXFLAGS) harness/render.cc $(REF_SRC) -o $@ -lm
+
+$(BUILD)/bench_port.elf: $(HARNESS) $(PORT_SRC) $(PORT_HDR) | $(BUILD)
+	$(BFIN_CXX) $(BFIN_CXXFLAGS) -DPORT harness/render.cc $(PORT_SRC) -o $@ -lm
+
+bench-ref: $(BUILD)/bench_ref.elf
+	$(BFIN_RUN) $< $(BENCH_SECONDS)
+
+bench-port: $(BUILD)/bench_port.elf
+	$(BFIN_RUN) $< $(BENCH_SECONDS)
+
+clean:
+	rm -rf $(BUILD) $(OUT)
