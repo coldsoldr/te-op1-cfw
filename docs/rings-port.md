@@ -135,14 +135,14 @@ The mode bank is ~91k of the steady figure. The rest (weights, exciter, limiter,
 - **Idle cost:**
   - idle voices sleep after 8 silent blocks;
   - the exciter sleeps a few ms after each strum.
-- `tests/sim_engine.cc` (`make sim-engine`) calls the real entry points in the simulator at the real call rate, with 10 modes per voice. It also writes voice 0's output to `build/sim_engine.raw`; a 220 Hz key gives a 220.0 Hz fundamental.
+- `tests/sim_engine.cc` (`make sim-engine`) calls the real entry points in the simulator at the real call rate, with 16 modes per voice (`OP1RINGS_MODES_PER_VOICE`, sized from probe v3's ~324 MHz free). It also writes voice 0's output to `build/sim_engine.raw`; a 220 Hz key gives a 220.0 Hz fundamental.
 
 | Case | CPU |
 |---|---|
-| 1 voice ringing, 5 idle | ~38 MHz |
-| All 6 ringing | ~121 MHz |
+| 1 voice ringing, 5 idle | ~47 MHz (10 modes: ~37) |
+| All 6 ringing | ~164 MHz (10 modes: ~121) |
 
-  - The upsampler, plus per-call overhead now running twice as often, adds about 5 MHz over the old 44.1 kHz figures (31 and 116 MHz). On the device only sounding voices are rendered, so idle voices cost nothing.
+  - At 10 modes, the upsampler plus per-call overhead (now run twice as often) adds about 5 MHz over the old 44.1 kHz figures (31 and 116 MHz). On the device only sounding voices are rendered, so idle voices cost nothing.
 - `tools/inject_app.py` adds the image to `OP1_vdk.ldr` just before FINAL and patches the vtable.
 - Device tests and packages: `docs/device-tests.md`.
 

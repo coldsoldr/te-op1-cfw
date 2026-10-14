@@ -15,8 +15,12 @@
 #include "src/fixed.h"
 #include "src/op1_voice.h"
 
+// Probe v3 measured ~324 MHz free with one voice playing. At 16 modes, six
+// ringing voices simulate at ~164 MHz (more when knobs move), leaving room
+// for other tracks, FX and the UI. Rings itself uses 12 modes per voice at
+// polyphony 4.
 #ifndef OP1RINGS_MODES_PER_VOICE
-#define OP1RINGS_MODES_PER_VOICE 10
+#define OP1RINGS_MODES_PER_VOICE 16
 #endif
 
 namespace {

@@ -158,14 +158,14 @@ void Limiter::Process(int32_t* l, int32_t* r, size_t size, int32_t pre_gain_q28)
 
 void MonoLimiter::Init() {
   peak_ = 1 << 26;          // 0.5
-  gain_ = 962072674;        // 1.4 * 0.8 in Q30
+  gain_ = 1202590843;       // 1.4 * 0.8 in Q30
 }
 
 void MonoLimiter::Process(int32_t* x, size_t size) {
   const int32_t kAttack = 107374182;     // 0.05, Q31
   const int32_t kRelease = 42950;        // 0.00002, Q31
   const int32_t k1_4 = 375809638;        // 1.4, Q28
-  const int32_t k1_12 = 962072674;       // 1.4 * 0.8, Q30
+  const int32_t k1_12 = 1202590843;      // 1.4 * 0.8, Q30
   int32_t peak = peak_;
   const int32_t gain = gain_;
   for (size_t i = 0; i < size; ++i) {

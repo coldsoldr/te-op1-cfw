@@ -122,21 +122,70 @@ It still decodes v2 recordings.
 - So Rings with `f = inc / 2^32 × 88200` plays at the same pitch as the stock engine on any key.
 - The reported note checks the absolute tuning against the key held.
 
-## Test 2: Rings engine (`op1_246_rings_engine.op1`)
+**Result (2026-10-14, `incoming/probe/probe3_report.ogg`):** the lowest F held, octave 0. Three complete reports, all identical: `[3, 566, 459, 1746, 603]`.
 
-The phase engine's render and note-on become Rings' modal model (`ports/rings/op1/engine.cc`), with 6 voices of 10 modes each.
+| Measurement | Value | Meaning |
+|---|---|---|
+| Clock | 399.8 MHz | from the beep timing |
+| Block period (mean) | 566 × 1024 = 579,584 cycles = 1.450 ms | 128 samples → **88.3 kHz** (exact 88.2 kHz is 580,499 cycles; the difference is the ÷1024 rounding) |
+| Free cycles per block | 459 × 1024 = 470,016 | **81% of a block, ~324 MHz** |
+| Held key | 174.6 Hz | **F3, 0 cents**, assuming `inc = f / 88200 × 2^32`; at 44.1 kHz it would be F2 (87.3 Hz) |
+| Longest call interval | 603 × 1024 cycles = 1.54 ms | 107% of a block |
+
+- **88.2 kHz confirmed again** with the octave at 0. The pitch formula gives a sensible note (F3) for the lowest key.
+- **Free CPU is large.** The figure has some limits:
+  - it is with one phase voice playing and no FX or other tracks;
+  - the UI may share that time;
+  - the OP-1's per-voice work (envelopes) grows with more voices.
+- **Sizing.** The engine moves from 10 to 16 modes per voice (see Test 2).
+
+## Test 2: Rings engine (now `op1_246_rings_engine16b.op1`; 10-mode fallback `op1_246_rings_engine10b.op1`)
+
+The phase engine's render and note-on become Rings' modal model (`ports/rings/op1/engine.cc`), with 6 voices of 16 modes each (`OP1RINGS_MODES_PER_VOICE`).
 - **Rate:** Rings runs at 44.1 kHz on 64 samples per call. A 4-point Lagrange 2× upsampler then produces the 128 output samples at 88.2 kHz.
 - **Pitch:** Rings' frequency is the OP-1 increment doubled (`f / 44100`), latched at the start of the block.
 
 **In the simulator** (`make sim-engine`, at the real call rate):
-- **CPU:** about 38 MHz with one voice ringing and 121 MHz with all six. The old engine was simulated at 31 and 116 MHz, but at 44.1 kHz; at 88.2 kHz it would have needed twice that.
+
+| Modes per voice | 1 voice ringing | All 6 ringing | Share of the 324 MHz free (6 voices) |
+|---|---|---|---|
+| 10 | 37 MHz | 121 MHz | 37% |
+| **16** | **47 MHz** | **164 MHz** | **50%** |
+| 20 | 53 MHz | 191 MHz | 59% |
+| 24 | 59 MHz | 218 MHz | 67% |
+
+- **Knob movement:** earlier benchmarks put moving knobs at roughly +30%, so 16 modes would peak at about 210 MHz (65%). That leaves room for other tracks, FX and the UI.
 - **Pitch:** a 220 Hz key gives a 220.0 Hz fundamental, with no energy at 110 Hz.
 - **Upsampling images:** at −83 dB.
 
-The previous `op1_246_rings_engine.op1` was built before the 88.2 kHz fix and played an octave low. It was never flashed, and it has been replaced.
+**Result of the first flash (2026-10-14, `op1_246_rings_engine16.op1`):**
+- **It sounds right** ("sounds amazing").
+- **No stutters or UI sluggishness.**
+- **Slight pops when turning the encoders while a note rings.**
 
-**To check:**
-- Pressing a key gives a struck, bell- or plate-like resonance at the key's pitch.
+**Cause of the pops: a wrong constant in the mono limiter** (`src/op1_voice.cc`).
+- Below the limiter threshold, the gain was `962072674` = 0.896 in Q30, i.e. 1.4 × 0.8 × 0.8, with Rings' 0.8 output factor counted twice.
+- Above the threshold, the gain is 1.12 / peak.
+- So whenever the peak follower crossed 1.0, the gain jumped by 25% (1.9 dB) at a sub-block boundary.
+- Turning an encoder raises the level across that threshold, which made the pop. A decaying note crossing back down made another one (at 0.28 s in the test note).
+- Upstream's gain is continuous there: `peak ≤ 1 ? 1 : 1 / peak`, times 1.4 × 0.8.
+- **Fixed:** the constant is now `1202590843` = 1.12, which also makes notes below the threshold 1.9 dB louder, matching upstream.
+
+**Evidence** (`make step-params`, `tests/step_params.cc`):
+- **Sustained note, fixed parameters:** the worst burst above 9 kHz was −44.7 dB re the note. After the fix it is −75.2 dB. What remains is the limiter's per-sub-block gain update, which is small. The test fails above −60 dB.
+- **Blackfin simulator** (assembly mode bank and upsampler, 88.2 kHz output): −47.8 dB before the fix, −70.4 dB after.
+- **Raw parameter steps** cause a few clicks of their own, at the same level as upstream's float resonator given the same steps:
+  - a structure step of +0.2 gives −56 dB re note (upstream: −61.5 dB);
+  - position steps give −63 to −85 dB;
+  - brightness and damping steps cause none.
+  - Upstream never sees raw steps: its pots are low-passed (`cv_scaler.cc`, coefficient 0.01 per 2 kHz block, ~50 ms). A similar smoother would remove the structure click (−83 to −91 dB in the test). It isn't added yet; it's the next step if any zipper or click remains.
+
+**Packages** (all verified against stock):
+- **`op1_246_rings_engine16b.op1`: 16 modes, limiter fixed. Flash this one.** Its image differs from the flashed `engine16` only in the two limiter constants (8 bytes).
+- **`op1_246_rings_engine10b.op1`:** 10 modes, limiter fixed, as a fallback.
+- The unfixed `op1_246_rings_engine16.op1` and `op1_246_rings_engine.op1` were deleted to avoid mix-ups.
+
+**To check on the next flash:**
+- No pops when turning encoders on a ringing note.
+- The level: 1.9 dB louder than the first flash for quieter notes.
 - Which encoder does what. The code assumes params 0–3 = structure, brightness, damping, position; the screen still shows the phase engine graphics.
-- The output level, and whether there's distortion.
-- Stutters when playing many notes. If so, rebuild with fewer modes (`OP1RINGS_MODES_PER_VOICE`).

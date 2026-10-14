@@ -33,13 +33,26 @@ Non-negotiable rules (detail in `docs/brick-safety.md`):
   - **Not an artefact of the keyboard octave.** The recording was made with the keyboard an octave up, but the probe ignores pitch: the beep is a fixed waveform, and the call rate is timed by the cycle counter. Re-checked on 2026-10-14 (see `docs/device-tests.md`).
   - The stock phase engine steps its phase by `inc` per sample, one cycle per 2^32, so `inc = f / 88200 × 2^32`, and Rings follows the stock engine's pitch whatever the octave setting.
 - **Only sounding voices are rendered.** With one key held, exactly one voice object was called, once per interval, with no other render calls.
-- **Free CPU: not measured.** Probe v2 compared intervals against the *shortest* one, so normal jitter (~8%) looked like overload at once and it reported 0. Probe v3 fixes this.
+- **Free CPU:** v2's figure (0) was invalid. It compared intervals against the *shortest* one, so normal jitter (~8%) looked like overload at once.
 
-**Built and verified, not flashed** (both pass `verify_bootloader.py`; each decodes to stock with only `OP1_vdk.ldr` changed):
-- **`op1 firmware/op1_246_rings_probe3.op1`: probe v3.** It measures free CPU against the mean interval over 64-call windows and reports the held key's pitch. **Flash this next**; the procedure is in `docs/device-tests.md`.
-- **`op1 firmware/op1_246_rings_engine.op1`: the Rings modal engine on the phase engine,** now at 88.2 kHz. Rings runs at 44.1 kHz on 64 samples per call, then a 2× upsampler fills the 128 output samples. Simulated: ~38 MHz with one voice ringing, ~121 MHz with six.
+**Measured by probe v3** (2026-10-14, `incoming/probe/probe3_report.ogg`; lowest F held, octave 0):
+- **Free CPU: 81% of a block, ~324 MHz,** with one phase voice playing (no FX, no other tracks).
+- **Block period:** 1.450 ms (88.2 kHz confirmed again); the longest call interval was 1.54 ms.
+- **Held key:** 174.6 Hz = **F3, 0 cents**, under `inc = f / 88200 × 2^32`.
+
+**Rings runs on the device (first flash, 2026-10-14, `engine16`):**
+- **The setup:** 6 voices × 16 modes at 88.2 kHz. Rings runs at 44.1 kHz on 64 samples per call, and a 2× upsampler fills the 128 output samples. Simulated: ~47 MHz with one voice ringing, ~164 MHz with six (50% of the free CPU).
+- **The result:** the user says it "sounds amazing", with no stutters and no UI sluggishness.
+- **One problem:** slight pops when turning encoders on a ringing note.
+  - **Cause:** a wrong mono-limiter constant (0.896 instead of 1.12) made the gain jump 25% whenever the limiter's peak crossed 1.0.
+  - **Fixed and tested** (`make step-params`); details in `docs/device-tests.md`, Test 2.
+
+**Built and verified, not flashed** (each passes `verify_bootloader.py` and decodes to stock with only `OP1_vdk.ldr` changed):
+- **`op1 firmware/op1_246_rings_engine16b.op1`:** 16 modes, limiter fixed. **Flash this next.**
+- **`op1 firmware/op1_246_rings_engine10b.op1`:** 10 modes, limiter fixed, as a fallback.
 
 **Git:** branch `firmware-analysis-tooling` (the user wants to stay on it), pushed to `origin` (`<public repo URL>`). Latest commits:
+- `3b96e5e` 88.2 kHz engine and probe v3
 - `2e0d097` probe v2
 - `e20a050` injection pipeline
 - `ae09351` fixed-point voice
@@ -124,14 +137,17 @@ The full detail is in `docs/rings-port.md`.
   - The voice index is `(this - 0xffb00000) / 28`.
   - Pitch is per-sample phase increments at `0xff801950`, scaled for **88.2 kHz**: `inc = f / 88200 * 2^32`.
 - **Rate:** Rings runs at 44.1 kHz on 64 samples per call; `Upsampler` in `op1/engine.cc` (4-point Lagrange) doubles it to the 128 samples.
-- **Simulated cost** (`make sim-engine`, 10 modes per voice, at the real call rate): about 38 MHz with one voice ringing, 121 MHz with six.
+- **Simulated cost** (`make sim-engine`, at the real call rate), with one voice ringing / six ringing:
+  - 16 modes per voice (the default): about 47 / 164 MHz;
+  - 10 modes: about 37 / 121 MHz.
+  - The table for 10–24 modes is in `docs/device-tests.md`.
 - **Off-device checks:**
   - `make sim-engine` measures the CPU cost and writes `build/sim_engine.raw` (88.2 kHz, s16le) for pitch checks;
   - `make host-probe HOST_PROBE_ARGS="MHZ FREE% CALLS STRAY"` makes a WAV for testing the decoder.
 
 ## 6. Open questions
 
-- **Free CPU** while the OP-1 plays. Probe v3 is built to measure it (see §7).
+- **Free CPU under real load.** Probe v3 measured ~324 MHz with one phase voice and nothing else. Still unknown: the cost of other tracks, FX, more voices, and how much the UI needs.
 - **Encoder mapping:** which of `params[0..3]` is which encoder (blue, green, white, orange), and their range (assumed 0..32767).
 - **Envelope and output:** whether the OP-1's ADSR and FX come after render (inferred), and the expected output level.
 - **88.2 kHz:** is the rate fixed, or does it depend on settings? Does the core decimate the voice output to 44.1 kHz?
@@ -140,12 +156,15 @@ The full detail is in `docs/rings-port.md`.
 ## 7. Next steps (agreed direction: replace the phase engine with Rings; ask before every flash)
 
 1. ~~Adapt the engine to 88.2 kHz.~~ Done (2026-10-14): Rings at 44.1 kHz plus a 2× upsampler, with the packages rebuilt.
-2. **Flash probe v3** (`op1_246_rings_probe3.op1`), record, and decode. The procedure is in `docs/device-tests.md`.
-   - Set the keyboard octave to 0 and hold a key the user can name.
-   - Use the free-CPU result to size modes per voice (`OP1RINGS_MODES_PER_VOICE`).
-   - Not done: rendering a stock voice alongside it. Ask the user to watch the screen for sluggishness during the ramp.
-3. **First Rings flash.** Check the sound and its pitch against the stock engine, the encoder mapping (`kParamOrder` in `op1/engine.cc`), the level and stutters.
-4. **Then:**
+2. ~~Probe v3.~~ Done (2026-10-14): ~324 MHz free, the lowest F reads F3, and 88.2 kHz is confirmed. Modes per voice raised from 10 to 16.
+3. ~~First Rings flash.~~ Done (2026-10-14): it sounds right, with no stutters, but encoder turns popped. The limiter bug is fixed.
+4. **Flash `op1_246_rings_engine16b.op1`** and check:
+   - no pops when turning encoders;
+   - the level (quieter notes are now 1.9 dB louder);
+   - the encoder mapping (`kParamOrder` in `op1/engine.cc`).
+
+   If small clicks or zipper noise remain on fast turns, add upstream-style parameter smoothing (a one-pole, ~50 ms, as `cv_scaler.cc`) in `op1/engine.cc`. `tests/step_params.cc` already compares smoothed and raw steps.
+5. **Then:**
    - the string model, then sympathetic strings and the other Rings models;
    - the Rings screen (reverse-engineer the Pd screen class; the user's SVG and its handover are in `incoming/`);
    - possibly a separate 16th engine (needs the engine-list limit, the menu, the screen and preset handling; see the notes in `docs/engine-interface.md`).

@@ -87,7 +87,7 @@ OP1_LDFLAGS  := -nostdlib -nostartfiles -T op1/link.ld -Wl,--gc-sections \
 OP1_ENGINE_SRC := op1/engine.cc op1/support.cc src/op1_voice.cc \
                   src/modal_resonator.cc src/fixed_tables.cc src/mode_bank_bfin.S
 
-.PHONY: op1-probe op1-engine sim-engine host-probe
+.PHONY: op1-probe op1-engine sim-engine host-probe step-params
 
 $(BUILD)/op1_probe.elf: op1/probe.cc op1/support.cc op1/op1.h op1/link.ld | $(BUILD)
 	$(BFIN_CXX) $(OP1_CXXFLAGS) op1/probe.cc op1/support.cc $(OP1_LDFLAGS) -o $@ -lgcc
@@ -105,8 +105,10 @@ op1-engine: $(BUILD)/op1_engine.elf
 #                     voice 0's output -> build/sim_engine.raw (s16le, 88.2 kHz)
 #   make host-probe   the probe against a simulated OP-1 -> build/host_probe.wav
 #                     (decode with tools/decode_probe_beeps.py)
-SIM_CXXFLAGS := -O2 -std=c++17 -mcpu=bf524 -msim -fno-exceptions -fno-rtti                 -DOP1_SIM -I. $(WARN)
-SIM_ENGINE_SRC := tests/sim_engine.cc op1/engine.cc src/op1_voice.cc                   src/modal_resonator.cc src/fixed_tables.cc src/mode_bank_bfin.S
+SIM_CXXFLAGS := -O2 -std=c++17 -mcpu=bf524 -msim -fno-exceptions -fno-rtti \
+                -DOP1_SIM -I. $(WARN)
+SIM_ENGINE_SRC := tests/sim_engine.cc op1/engine.cc src/op1_voice.cc \
+                  src/modal_resonator.cc src/fixed_tables.cc src/mode_bank_bfin.S
 
 $(BUILD)/sim_engine.elf: $(SIM_ENGINE_SRC) op1/op1.h $(PORT_HDR) | $(BUILD)
 	$(BFIN_CXX) $(SIM_CXXFLAGS) $(SIM_ENGINE_SRC) -o $@
@@ -116,6 +118,18 @@ sim-engine: $(BUILD)/sim_engine.elf
 
 $(BUILD)/host_probe: tests/host_probe.cc op1/probe.cc op1/op1.h | $(BUILD)
 	$(HOST_CXX) -O2 -std=c++17 -DOP1_HOST_SIM -DOP1_SIM -I. $(WARN) tests/host_probe.cc op1/probe.cc -o $@
+
+#   make step-params  clicks from parameter steps, upstream vs port, and a
+#                     check that a sustained note has no discontinuities
+STEP_PARAMS_SRC := tests/step_params.cc src/modal_resonator.cc src/op1_voice.cc \
+                   src/fixed_tables.cc $(MI)/rings/dsp/resonator.cc \
+                   $(MI)/rings/resources.cc $(MI)/stmlib/dsp/units.cc
+
+$(BUILD)/step_params: $(STEP_PARAMS_SRC) $(PORT_HDR) | $(BUILD)
+	$(HOST_CXX) $(HOST_CXXFLAGS) $(STEP_PARAMS_SRC) -o $@ -lm
+
+step-params: $(BUILD)/step_params
+	$<
 
 HOST_PROBE_ARGS ?= 400 40 1 0
 host-probe: $(BUILD)/host_probe
