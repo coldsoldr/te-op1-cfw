@@ -82,6 +82,16 @@ Evidence: Pd `0x1a0bc5c` and St `0x1a4f098`.
   - Core evidently fills this array per voice, including bend, LFO and portamento, before each render call (**inferred**; the code is in encrypted L1).
 - **Global side effect:** Pd adds to a global at `0x1de4b8c` at the end of render, apparently a level or visualisation accumulator.
 
+## Measured on the device (probe v2, 2026-10-14)
+
+See `docs/device-tests.md`.
+- **CPU clock:** ~400 MHz.
+- **Voice render rate: 88.2 kHz.** Each `render` call produces 128 samples, about 689 calls per second per sounding voice.
+  - So the phase increments are `f / 88200 * 2^32`.
+  - Engines run 2× oversampled; the core presumably decimates (**inferred**).
+- **Only sounding voices are rendered.** With one key held, only that voice object's render was called, and nothing else called the slot.
+- **Call intervals jitter** between about 1.34 and 1.45 ms or more.
+
 ## Smallest hook to replace the phase engine's audio
 
 Phase (id 7) is a good host: its voice code is small, plain SDRAM, and its vtable is plain data.

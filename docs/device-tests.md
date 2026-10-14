@@ -49,6 +49,24 @@ It was checked end to end on the host (`tests/host_probe.cc`, a simulated OP-1 w
 
 **Decoding:** `python tools/decode_probe_beeps.py RECORDING` prints the clock, the free CPU, the render calls per block, the number of distinct voice objects called, and the calls per second.
 
+**Result (2026-10-14, `incoming/probe/probe2_report.ogg`):**
+
+Decoded numbers, the same in every cycle: `[524, 0, 1, 1, 1, 463]`.
+
+| Measurement | Value | Meaning |
+|---|---|---|
+| Clock | 399.6 MHz | from the beep timing |
+| Reference voice call interval (shortest) | 524 × 1024 = 536,576 cycles = 1.34 ms | |
+| Render calls in 2^28 cycles (0.67 s) | 463 | ~689 per second |
+| Calls per interval | 1 | |
+| Distinct voice objects | 1 | only the sounding voice is rendered; no other render calls |
+| Beep pitch | 2760 Hz | the 32-sample square, so the **voice output rate is 88.2 kHz**; 128-sample blocks give 689 Hz |
+
+Probe v1's doubled pitches and halved durations have the same cause.
+
+- **Free CPU: invalid (0).** The overload test compared intervals against the *shortest* one (1.34 ms), but they jitter around a 1.45 ms mean, so it tripped immediately.
+- **Probe v3 should:** use the median interval, and require several consecutive late intervals.
+
 ## Test 2: Rings engine (`op1_246_rings_engine.op1`)
 
 The phase engine's render and note-on become Rings' modal model (`ports/rings/op1/engine.cc`): 6 voices with 10 modes each. In the simulator this costs about 31 MHz with one voice ringing and about 116 MHz with all six.

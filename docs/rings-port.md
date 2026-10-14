@@ -143,6 +143,11 @@ The mode bank is ~91k of the steady figure. The rest (weights, exciter, limiter,
 
 ## Remaining work
 
+- **88.2 kHz (measured on the device).** The OP-1 renders voices at 88.2 kHz in 128-sample blocks. The engine currently treats them as 44.1 kHz:
+  - the frequency is `inc >> 1`, which is an octave low;
+  - all sample-rate-dependent behaviour is off by 2×.
+  The plan is to run Rings at 44.1 kHz on 64 samples per call (Rings frequency = `inc`), then upsample 2× to the 128 output samples. That keeps the CPU at the simulated figures instead of doubling them.
+
 - **Trim per-voice overhead:**
   - idle-voice skipping;
   - recompute the exciter only on change;
