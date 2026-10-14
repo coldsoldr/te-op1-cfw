@@ -201,3 +201,29 @@ The phase engine's render and note-on become Rings' modal model (`ports/rings/op
 - **Cost:** with all six ringing and three knobs turning continuously, the simulator measures ~226 MHz, about 70% of the measured free CPU. With knobs still it's 164 MHz. If that ever stutters, the coefficients could be recomputed every other call while smoothing.
 
 **To check on the next flash:** encoder turns, fast and slow, on six ringing notes. Listen for clicks and stutters.
+
+## Test 3: FM voice (`op1_246_rings_fm.op1`, not yet flashed)
+
+This is the engine of `engine16c` (knob smoothing included) with Rings' FM voice in place of the modal model (`-DOP1RINGS_MODEL=3`, `make op1-engine-fm`). It's a temporary build until model select (shift + blue) exists.
+
+**The FM voice** (`src/fm_voice_fixed.*`) is a fixed-point port of upstream's `FMVoice`. Each strike triggers its internal envelope.
+
+| Encoder | FM parameter |
+|---|---|
+| Blue (structure) | frequency ratio, quantized to Rings' table (0.5 to 8, including detuned and irrational ratios) |
+| Green (brightness) | FM amount |
+| White (damping) | decay; above 0.9 it fades into a sustained oscillator |
+| Orange (position) | feedback: centre = none, right = operator feedback, left = phase feedback |
+
+**Against upstream** (`make test-fm`, 48 kHz, 11 scenarios: ratios, pitches up to 1760 Hz, decays, oscillator mode, both feedbacks):
+- **Match:** 42–78 dB SNR, with level within 0.01 dB and the same spectral centroid.
+- **Ratio tuning:** the modulator ratio is floored to 1/256 semitone, as upstream's `SemitonesToRatio` does. Tuned exactly, it drifted from upstream (5 dB SNR at 1760 Hz).
+
+**In the simulator** (`make sim-engine-fm`):
+- **Cost:** ~106 MHz with six voices ringing, 110 MHz with knobs turning (modal: 164 / 226).
+- **Discontinuities:** none; the worst high-frequency burst is −74.5 dB.
+
+**To check on the device:**
+- the sound across the four encoders;
+- the level against the modal build: upstream's FM limiter pre-gain is 0.7, half the modal model's;
+- clicks and stutters.

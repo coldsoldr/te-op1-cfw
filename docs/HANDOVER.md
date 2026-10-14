@@ -51,6 +51,7 @@ Non-negotiable rules (detail in `docs/brick-safety.md`):
 - **`op1 firmware/op1_246_rings_engine16c.op1`:** 16 modes, limiter fixed, plus ~50 ms knob smoothing. **Flash this next.**
 - **`op1 firmware/op1_246_rings_engine16b.op1`:** the same without smoothing. Flashed; the user says it's "sounding amazing".
 - **`op1 firmware/op1_246_rings_engine10b.op1`:** 10 modes, limiter fixed, as a fallback.
+- **`op1 firmware/op1_246_rings_fm.op1`:** the FM voice in place of modal (with smoothing). A temporary test build; see `docs/device-tests.md`, Test 3.
 
 **Git:** branch `firmware-analysis-tooling` (the user wants to stay on it), pushed to `origin` (`<public repo URL>`). Latest commits:
 - `3b96e5e` 88.2 kHz engine and probe v3
@@ -121,10 +122,10 @@ The full detail is in `docs/rings-port.md`.
   - a mono path with a cheaper limiter for the OP-1;
   - idle-voice sleep and exciter sleep.
 - **Validation:** the harness renders identical scenarios through upstream Rings and the port. Modal results are 44–66 dB SNR, with at most 0.05 dB mean spectral difference.
+- **FM voice:** ported to fixed point (`src/fm_voice_fixed.*`); `make test-fm` gives 42–78 dB SNR against upstream. `RingsVoice::set_model` selects modal or FM.
 - **Not started:**
   - the string model;
   - sympathetic strings;
-  - FM voice;
   - reverb;
   - the screen (the user's `incoming/rings.svg`).
 
@@ -170,11 +171,9 @@ The full detail is in `docs/rings-port.md`.
   - **Polyphony has 4 states: 1, 2, 4 and "all".** States 1/2/4 trade voices for resonances as Rings does (64/poly − 4 = 60/28/12 modes), using least-recently-used resonator assignment; a stolen OP-1 voice fades out. "All" is 6 voices × 16 modes and lights all three poly squares.
   - Store the model and polyphony in presets if there's a spare slot.
 - **Steps:**
-  1. **FM voice:**
-     - convert the float copy in `src/fm_voice.*` to fixed point;
-     - compare against upstream in the harness and measure the cost;
-     - make a test package where FM replaces modal (no model switching yet).
+  1. ~~FM voice.~~ Done (2026-10-14): `src/fm_voice_fixed.*`, `make test-fm`, test package `op1_246_rings_fm.op1`. ~106 MHz for six voices.
      - Upstream mapping: structure = ratio, brightness = FM amount, damping = decay, position = feedback.
+     - It costs more than expected (~17 MHz per voice), which could be optimised later.
   2. **In parallel, read-only investigation of the screen and input code,** written up in `docs/screen-interface.md`:
      - the phase engine's screen class: how it loads `content/display/pd.svg`, looks up ids (`static`, `blue`, `green`, `white`, `red1`, `red2`, `new`) and updates them;
      - the SVG API it calls;

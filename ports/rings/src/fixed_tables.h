@@ -22,6 +22,8 @@ extern const int32_t kInvRhoQ30[257];  // sqrt(1 + 0.5 i / 256)
 extern const int32_t kRecip1mQ30[257];  // 1 / (1 - 0.5 i / 256)
 extern const int32_t kSoftLimitQ30[257];  // SoftLimit(4 i / 256)
 extern const int32_t kStiffnessQ28[257];  // Rings' lut_stiffness
+extern const int32_t kSineQ31[4097];  // sin(2 pi i / 4096)
+extern const int32_t kFmRatioSemitonesQ24[129];  // Rings' lut_fm_frequency_quantizer (semitones)
 
 }  // namespace op1rings
 

@@ -15,6 +15,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "src/ffloat.h"
+#include "src/fm_voice_fixed.h"
 #include "src/modal_resonator.h"
 
 namespace op1rings {
@@ -77,17 +79,36 @@ class Limiter {
   int32_t gain_;   // 1 / max(peak, 1), Q31
 };
 
+// Rings' resonator models (upstream order, as rings::ResonatorModel). The
+// OP-1 voice implements the modal model and the FM voice so far.
+enum ResonatorModel {
+  MODEL_MODAL = 0,
+  MODEL_SYMPATHETIC_STRING = 1,
+  MODEL_STRING = 2,
+  MODEL_FM_VOICE = 3,
+  MODEL_SYMPATHETIC_STRING_QUANTIZED = 4,
+  MODEL_STRING_AND_REVERB = 5,
+};
+
+// The limiter's fixed gains for a model: upstream's pre-gain
+// (Part::model_gains_) and pre-gain * 0.8 (the gain below the threshold).
+struct LimiterGains {
+  int32_t pre_q28;
+  int32_t out_q30;
+  FFloat out;
+};
+
 // Mono limiter for the OP-1 build (the voice's two outputs are summed): same
 // peak follower as Rings' limiter, with the gain (1 / peak) updated once per
 // sub-block and the fixed gains folded into one multiply.
 class MonoLimiter {
  public:
   void Init();
-  void Process(int32_t* x, size_t size);
+  void Process(int32_t* x, size_t size, const LimiterGains& gains);
 
  private:
   int32_t peak_;   // Q27
-  int32_t gain_;   // 1.4 * 0.8 / max(peak, 1), Q30
+  int32_t gain_;   // pre-gain * 0.8 / max(peak, 1), Q30
 };
 
 class RingsVoice {
@@ -95,13 +116,17 @@ class RingsVoice {
   void Init(int32_t resolution);
   void NoteOn() { strum_ = true; silent_blocks_ = 0; }
 
+  // MODEL_MODAL or MODEL_FM_VOICE (RenderMono only; Render is modal).
+  void set_model(ResonatorModel model) { model_ = model; }
+
   // phase_increment: size values (f / fs * 2^32); out, aux: size Q27 samples
   // (after the limiter, ~[-1, 1]). size must be a multiple of
   // kControlBlockSize.
   void Render(const uint32_t* phase_increment, const VoicePatch& patch,
               int32_t* out, int32_t* aux, size_t size);
 
-  // OP-1 build: odd + even modes, mono limiter. out: size Q27 samples.
+  // OP-1 build: the model's two outputs summed, mono limiter. out: size Q27
+  // samples.
   void RenderMono(const uint32_t* phase_increment, const VoicePatch& patch,
                   int32_t* out, size_t size);
 
@@ -109,11 +134,16 @@ class RingsVoice {
   void RenderSubblock(uint32_t phase_increment, const VoicePatch& patch,
                       int32_t* out, int32_t* aux);
 
+  void RenderFmSubblock(uint32_t phase_increment, const VoicePatch& patch,
+                        int32_t* out);
+
+  ResonatorModel model_;
   bool strum_;
   int32_t silent_blocks_;               // consecutive renders below -96 dBFS
   int32_t excitation_[kSubblockSize];   // scratch, kept off the stack
   int32_t aux_[kSubblockSize];          // scratch for RenderMono
   ModalResonator resonator_;
+  FmVoiceFixed fm_voice_;
   ExcitationFilter excitation_filter_;
   Limiter limiter_;
   MonoLimiter mono_limiter_;

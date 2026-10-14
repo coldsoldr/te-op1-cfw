@@ -84,10 +84,10 @@ OP1_CXXFLAGS := -O2 -std=c++17 -mcpu=bf524 -ffreestanding -fno-exceptions \
                 -ffunction-sections -fdata-sections -I. $(WARN)
 OP1_LDFLAGS  := -nostdlib -nostartfiles -T op1/link.ld -Wl,--gc-sections \
                 -Wl,--no-undefined
-OP1_ENGINE_SRC := op1/engine.cc op1/support.cc src/op1_voice.cc \
+OP1_ENGINE_SRC := op1/engine.cc op1/support.cc src/op1_voice.cc src/fm_voice_fixed.cc \
                   src/modal_resonator.cc src/fixed_tables.cc src/mode_bank_bfin.S
 
-.PHONY: op1-probe op1-engine sim-engine host-probe step-params
+.PHONY: op1-probe op1-engine op1-engine-fm sim-engine sim-engine-fm host-probe step-params test-fm
 
 $(BUILD)/op1_probe.elf: op1/probe.cc op1/support.cc op1/op1.h op1/link.ld | $(BUILD)
 	$(BFIN_CXX) $(OP1_CXXFLAGS) op1/probe.cc op1/support.cc $(OP1_LDFLAGS) -o $@ -lgcc
@@ -97,8 +97,14 @@ $(BUILD)/op1_engine.elf: $(OP1_ENGINE_SRC) op1/op1.h op1/param_smoother.h op1/li
 	$(BFIN_CXX) $(OP1_CXXFLAGS) $(OP1_ENGINE_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
 	$(BFIN_BIN)/bfin-elf-size -A $@
 
+#   make op1-engine-fm  the engine with the FM voice instead of the modal model
+$(BUILD)/op1_engine_fm.elf: $(OP1_ENGINE_SRC) op1/op1.h op1/param_smoother.h op1/link.ld $(PORT_HDR) | $(BUILD)
+	$(BFIN_CXX) $(OP1_CXXFLAGS) -DOP1RINGS_MODEL=3 $(OP1_ENGINE_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
+	$(BFIN_BIN)/bfin-elf-size -A $@
+
 op1-probe: $(BUILD)/op1_probe.elf
 op1-engine: $(BUILD)/op1_engine.elf
+op1-engine-fm: $(BUILD)/op1_engine_fm.elf
 
 # Checks of the images' code off the device:
 #   make sim-engine   the engine's entry points in bfin-elf-run: CPU cost, and
@@ -107,7 +113,7 @@ op1-engine: $(BUILD)/op1_engine.elf
 #                     (decode with tools/decode_probe_beeps.py)
 SIM_CXXFLAGS := -O2 -std=c++17 -mcpu=bf524 -msim -fno-exceptions -fno-rtti \
                 -DOP1_SIM -I. $(WARN)
-SIM_ENGINE_SRC := tests/sim_engine.cc op1/engine.cc src/op1_voice.cc \
+SIM_ENGINE_SRC := tests/sim_engine.cc op1/engine.cc src/op1_voice.cc src/fm_voice_fixed.cc \
                   src/modal_resonator.cc src/fixed_tables.cc src/mode_bank_bfin.S
 
 $(BUILD)/sim_engine.elf: $(SIM_ENGINE_SRC) op1/op1.h op1/param_smoother.h $(PORT_HDR) | $(BUILD)
@@ -116,19 +122,37 @@ $(BUILD)/sim_engine.elf: $(SIM_ENGINE_SRC) op1/op1.h op1/param_smoother.h $(PORT
 sim-engine: $(BUILD)/sim_engine.elf
 	$(BFIN_RUN) $< $(BUILD)/sim_engine.raw
 
+#   make sim-engine-fm  the same with the FM voice -> build/sim_engine_fm.raw
+$(BUILD)/sim_engine_fm.elf: $(SIM_ENGINE_SRC) op1/op1.h op1/param_smoother.h $(PORT_HDR) | $(BUILD)
+	$(BFIN_CXX) $(SIM_CXXFLAGS) -DOP1RINGS_MODEL=3 $(SIM_ENGINE_SRC) -o $@
+
+sim-engine-fm: $(BUILD)/sim_engine_fm.elf
+	$(BFIN_RUN) $< $(BUILD)/sim_engine_fm.raw
+
 $(BUILD)/host_probe: tests/host_probe.cc op1/probe.cc op1/op1.h | $(BUILD)
 	$(HOST_CXX) -O2 -std=c++17 -DOP1_HOST_SIM -DOP1_SIM -I. $(WARN) tests/host_probe.cc op1/probe.cc -o $@
 
 #   make step-params  clicks from parameter steps, upstream vs port, and a
 #                     check that a sustained note has no discontinuities
 STEP_PARAMS_SRC := tests/step_params.cc src/modal_resonator.cc src/op1_voice.cc \
-                   src/fixed_tables.cc $(MI)/rings/dsp/resonator.cc \
+                   src/fm_voice_fixed.cc src/fixed_tables.cc $(MI)/rings/dsp/resonator.cc \
                    $(MI)/rings/resources.cc $(MI)/stmlib/dsp/units.cc
 
 $(BUILD)/step_params: $(STEP_PARAMS_SRC) op1/param_smoother.h $(PORT_HDR) | $(BUILD)
 	$(HOST_CXX) $(HOST_CXXFLAGS) $(STEP_PARAMS_SRC) -o $@ -lm
 
 step-params: $(BUILD)/step_params
+	$<
+
+#   make test-fm      the fixed-point FM voice against upstream's float FMVoice
+TEST_FM_SRC := tests/test_fm_voice.cc src/fm_voice_fixed.cc src/fixed_tables.cc \
+               $(MI)/rings/dsp/fm_voice.cc $(MI)/rings/resources.cc \
+               $(MI)/stmlib/dsp/units.cc
+
+$(BUILD)/test_fm_voice: $(TEST_FM_SRC) $(PORT_HDR) | $(BUILD)
+	$(HOST_CXX) $(HOST_CXXFLAGS) -DOP1RINGS_SAMPLE_RATE=48000 $(TEST_FM_SRC) -o $@ -lm
+
+test-fm: $(BUILD)/test_fm_voice
 	$<
 
 HOST_PROBE_ARGS ?= 400 40 1 0

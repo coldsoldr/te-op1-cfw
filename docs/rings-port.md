@@ -151,6 +151,17 @@ The mode bank is ~91k of the steady figure. The rest (weights, exciter, limiter,
 - `tools/inject_app.py` adds the image to `OP1_vdk.ldr` just before FINAL and patches the vtable.
 - Device tests and packages: `docs/device-tests.md`.
 
+## FM voice (done; not yet run on the device)
+
+`src/fm_voice_fixed.*` is a fixed-point port of upstream's `FMVoice`. The float copy in `src/fm_voice.*` stays for the harness `Part`.
+- **Kept per sample, in upstream's order:** the operators (Q31 sine table, 4096 entries), the FM amount slew, the envelopes, the feedback paths and the gain one-pole.
+- **Phase modulation** is applied as an offset modulo 2^32, which is what upstream's `(fm + 4)` bias computes.
+- **Dropped: the envelope follower.** With the internal exciter its input is silent and its outputs are exactly 0, so the envelopes only decay from each strum.
+- **Modulator ratio:** from Rings' quantizer table (`kFmRatioSemitonesQ24`, regenerated from upstream's Python). It's floored to 1/256 semitone like upstream's `SemitonesToRatio`. Without that floor, the 16-cent detuned ratios drifted from upstream's phase.
+- **Output:** upstream's out + aux (carrier + modulator) into the mono limiter with FM's pre-gain of 0.7. `MonoLimiter` now takes per-model gains; the modal output is bit-identical.
+- **Match:** `make test-fm` gives 42–78 dB SNR against upstream over 11 scenarios.
+- **Cost:** ~106 MHz for six voices on the Blackfin simulator.
+
 ## Remaining work
 
 - **Trim per-voice overhead:**

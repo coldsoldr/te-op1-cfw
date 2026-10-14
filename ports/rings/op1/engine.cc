@@ -26,6 +26,12 @@
 #define OP1RINGS_MODES_PER_VOICE 16
 #endif
 
+// Resonator model, until model select (shift + blue) is wired up:
+// 0 = modal, 3 = FM voice (op1rings::ResonatorModel).
+#ifndef OP1RINGS_MODEL
+#define OP1RINGS_MODEL 0
+#endif
+
 namespace {
 
 using op1rings::RingsVoice;
@@ -77,6 +83,7 @@ int32_t out_buffer[kRingsBlockSize];
 void InitAll() {
   for (int32_t v = 0; v < op1::kNumVoices; ++v) {
     voices[v].Init(OP1RINGS_MODES_PER_VOICE);
+    voices[v].set_model(static_cast<op1rings::ResonatorModel>(OP1RINGS_MODEL));
     upsamplers[v].Init();
     smoothers[v].Init();
   }

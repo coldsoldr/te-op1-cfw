@@ -50,6 +50,10 @@ inline int32_t SoftLimitQ27(int32_t x) {
 
 inline int32_t Abs(int32_t x) { return x < 0 ? -x : x; }
 
+// Limiter gains per model (upstream Part::model_gains_: modal 1.4, FM 0.7).
+constexpr LimiterGains kModalGains = { 375809638, 1202590843, FFloat(1.12) };
+constexpr LimiterGains kFmGains = { 187904819, 601295421, FFloat(0.56) };
+
 }  // namespace
 
 // --- ExcitationFilter ---------------------------------------------------
@@ -158,43 +162,42 @@ void Limiter::Process(int32_t* l, int32_t* r, size_t size, int32_t pre_gain_q28)
 
 void MonoLimiter::Init() {
   peak_ = 1 << 26;          // 0.5
-  gain_ = 1202590843;       // 1.4 * 0.8 in Q30
+  gain_ = 1202590843;       // 1.4 * 0.8 in Q30 (the modal model's)
 }
 
-void MonoLimiter::Process(int32_t* x, size_t size) {
+void MonoLimiter::Process(int32_t* x, size_t size, const LimiterGains& gains) {
   const int32_t kAttack = 107374182;     // 0.05, Q31
   const int32_t kRelease = 42950;        // 0.00002, Q31
-  const int32_t k1_4 = 375809638;        // 1.4, Q28
-  const int32_t k1_12 = 1202590843;      // 1.4 * 0.8, Q30
   int32_t peak = peak_;
   const int32_t gain = gain_;
   for (size_t i = 0; i < size; ++i) {
-    // Peak follower on the pre-gain signal (x * 1.4).
-    int32_t pre = MulQ31Fast(x[i], k1_4) << 3;   // Q27 (no overflow: |x| < 2)
+    // Peak follower on the pre-gain signal.
+    int32_t pre = MulQ31Fast(x[i], gains.pre_q28) << 3;   // Q27 (no overflow: |x| < 2)
     int32_t a = pre < 0 ? -pre : pre;
     int32_t error = a - peak;
     peak += MulQ31Fast(error, error > 0 ? kAttack : kRelease);
-    // y = SoftLimit(x * 1.4 * 0.8 / max(peak, 1)).
+    // y = SoftLimit(x * pre-gain * 0.8 / max(peak, 1)).
     x[i] = SoftLimitQ27(ShlSat(MulQ31Fast(x[i], gain), 1));
   }
   peak_ = peak;
-  // Gain for the next sub-block: 1.4 * 0.8 / max(peak, 1). Once per
+  // Gain for the next sub-block: pre-gain * 0.8 / max(peak, 1). Once per
   // sub-block, so FFloat's self-seeding reciprocal is affordable.
   if (peak <= (1 << 27)) {
-    gain_ = k1_12;
+    gain_ = gains.out_q30;
   } else {
-    static constexpr FFloat k1_12f = FFloat(1.12);
-    gain_ = (k1_12f * FFloat::Reciprocal(FFloat::FromQ(peak, 27))).ToQ(30);
+    gain_ = (gains.out * FFloat::Reciprocal(FFloat::FromQ(peak, 27))).ToQ(30);
   }
 }
 
 // --- RingsVoice -----------------------------------------------------------
 
 void RingsVoice::Init(int32_t resolution) {
+  model_ = MODEL_MODAL;
   strum_ = false;
   silent_blocks_ = 0;
   resonator_.Init();
   resonator_.set_resolution(resolution);
+  fm_voice_.Init();
   excitation_filter_.Init();
   limiter_.Init();
   mono_limiter_.Init();
@@ -264,6 +267,23 @@ void RingsVoice::Render(const uint32_t* phase_increment, const VoicePatch& patch
   silent_blocks_ = peak < kSilence ? silent_blocks_ + 1 : 0;
 }
 
+// Upstream Part::RenderFMVoice with the internal exciter: a strum triggers
+// the voice's envelope; ratio = structure, brightness = brightness (not
+// squared), damping = damping, feedback = position.
+void RingsVoice::RenderFmSubblock(uint32_t phase_increment,
+                                  const VoicePatch& patch, int32_t* out) {
+  if (strum_) {
+    fm_voice_.TriggerInternalEnvelope();
+    strum_ = false;
+  }
+  fm_voice_.set_frequency(static_cast<int32_t>(phase_increment >> 1));
+  fm_voice_.set_ratio(patch.structure);
+  fm_voice_.set_brightness(patch.brightness);
+  fm_voice_.set_damping(patch.damping);
+  fm_voice_.set_feedback_amount(patch.position);
+  fm_voice_.Process(out, kSubblockSize);
+}
+
 void RingsVoice::RenderMono(const uint32_t* phase_increment,
                             const VoicePatch& patch, int32_t* out, size_t size) {
   const int32_t kSilence = 1 << 11;          // ~ -96 dBFS in Q27
@@ -272,17 +292,22 @@ void RingsVoice::RenderMono(const uint32_t* phase_increment,
     for (size_t i = 0; i < size; ++i) out[i] = 0;
     return;
   }
+  const bool fm = model_ == MODEL_FM_VOICE;
   int32_t peak = 0;
   for (size_t i = 0; i < size; i += kControlBlockSize) {
     for (size_t j = 0; j < kControlBlockSize; j += kSubblockSize) {
       int32_t* o = out + i + j;
-      RenderSubblock(phase_increment[i], patch, o, aux_);
+      if (fm) {
+        RenderFmSubblock(phase_increment[i], patch, o);
+      } else {
+        RenderSubblock(phase_increment[i], patch, o, aux_);
+        for (size_t k = 0; k < kSubblockSize; ++k) o[k] += aux_[k];
+      }
       for (size_t k = 0; k < kSubblockSize; ++k) {
-        o[k] += aux_[k];
         int32_t a = o[k] < 0 ? -o[k] : o[k];
         if (a > peak) peak = a;
       }
-      mono_limiter_.Process(o, kSubblockSize);
+      mono_limiter_.Process(o, kSubblockSize, fm ? kFmGains : kModalGains);
     }
   }
   silent_blocks_ = peak < kSilence ? silent_blocks_ + 1 : 0;
