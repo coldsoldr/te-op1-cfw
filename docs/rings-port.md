@@ -125,28 +125,28 @@ The mode bank is ~91k of the steady figure. The rest (weights, exciter, limiter,
   - large temporaries kept off the stack, because render may run on a small interrupt stack.
 - `op1/engine.cc`:
   - six `RingsVoice`s, voice index = `(this - 0xffb00000) / 28`;
-  - pitch from the phase-increment buffer at `0xff801950`;
+  - pitch from the phase-increment buffer at `0xff801950`, latched at the start of the block;
   - parameters from the four `int16` values;
   - mono output (odd + even modes) through a mono limiter.
+- **88.2 kHz:** the OP-1 renders voices at 88.2 kHz in 128-sample blocks (measured on the device).
+  - Rings runs at 44.1 kHz on 64 samples per call, so its Q31 frequency `f / 44100` is the OP-1 increment `f / 88200 × 2^32` unchanged.
+  - A 4-point Lagrange 2× upsampler (`Upsampler` in `op1/engine.cc`) produces the 128 output samples: −0.4 dB at 10 kHz, −1.6 dB at 15 kHz, images at about −83 dB, and 2 samples of latency.
+  - Running at half rate keeps the CPU near the 44.1 kHz figures instead of doubling it.
 - **Idle cost:**
   - idle voices sleep after 8 silent blocks;
   - the exciter sleeps a few ms after each strum.
-- `tests/sim_engine.cc` calls the real entry points in the simulator. With 10 modes per voice:
+- `tests/sim_engine.cc` (`make sim-engine`) calls the real entry points in the simulator at the real call rate, with 10 modes per voice. It also writes voice 0's output to `build/sim_engine.raw`; a 220 Hz key gives a 220.0 Hz fundamental.
 
 | Case | CPU |
 |---|---|
-| 1 voice ringing, 5 idle | ~31 MHz |
-| All 6 ringing | ~116 MHz |
+| 1 voice ringing, 5 idle | ~38 MHz |
+| All 6 ringing | ~121 MHz |
 
+  - The upsampler, plus per-call overhead now running twice as often, adds about 5 MHz over the old 44.1 kHz figures (31 and 116 MHz). On the device only sounding voices are rendered, so idle voices cost nothing.
 - `tools/inject_app.py` adds the image to `OP1_vdk.ldr` just before FINAL and patches the vtable.
 - Device tests and packages: `docs/device-tests.md`.
 
 ## Remaining work
-
-- **88.2 kHz (measured on the device).** The OP-1 renders voices at 88.2 kHz in 128-sample blocks. The engine currently treats them as 44.1 kHz:
-  - the frequency is `inc >> 1`, which is an octave low;
-  - all sample-rate-dependent behaviour is off by 2×.
-  The plan is to run Rings at 44.1 kHz on 64 samples per call (Rings frequency = `inc`), then upsample 2× to the 128 output samples. That keeps the CPU at the simulated figures instead of doubling them.
 
 - **Trim per-voice overhead:**
   - idle-voice skipping;

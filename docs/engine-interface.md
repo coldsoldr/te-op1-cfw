@@ -116,4 +116,4 @@ The phase engine's screen keeps drawing its own graphics; only the sound changes
 - **Idle voices:** does Core call render for idle voices? It decides the real CPU cost of 6 Rings voices. Find out with an on-device cycle-count probe.
 - **Param scaling:** the exact scaling of `params[]` (0..0x7fff?) and whether the values are smoothed.
 - **Slot `+0x24`:** what it means. Pd and St return 0.
-- **Time budget:** the per-block budget. The audio callback runs every 128 samples (2.9 ms at 44.1 kHz), and the time left after the stock engines and FX is unknown. Measure it on the device with a CPU-burner hook before relying on any figure.
+- **Time budget:** the per-block budget. Each voice's render runs every 128 samples at 88.2 kHz (1.45 ms), and the time left after the stock engines and FX is unknown. Probe v3 measures it (`docs/device-tests.md`).

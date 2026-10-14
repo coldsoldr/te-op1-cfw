@@ -18,6 +18,11 @@ const int32_t kNumVoices = 6;
 const uint32_t kPitchBuffer = 0xff801950;
 const int32_t kBlockSize = 128;
 
+// Voices render at 88.2 kHz (measured by probe v2; the stock phase engine
+// does phase += inc per sample with one cycle per 2^32, so the increments
+// are f / 88200 * 2^32).
+const int32_t kVoiceSampleRate = 88200;
+
 // The stock phase engine's methods (vtable at 0x191113c).
 typedef void (*RenderFn)(void* self, int16_t* out, const int16_t* params);
 typedef void (*VoidFn)(void* self);

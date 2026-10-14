@@ -87,7 +87,7 @@ OP1_LDFLAGS  := -nostdlib -nostartfiles -T op1/link.ld -Wl,--gc-sections \
 OP1_ENGINE_SRC := op1/engine.cc op1/support.cc src/op1_voice.cc \
                   src/modal_resonator.cc src/fixed_tables.cc src/mode_bank_bfin.S
 
-.PHONY: op1-probe op1-engine
+.PHONY: op1-probe op1-engine sim-engine host-probe
 
 $(BUILD)/op1_probe.elf: op1/probe.cc op1/support.cc op1/op1.h op1/link.ld | $(BUILD)
 	$(BFIN_CXX) $(OP1_CXXFLAGS) op1/probe.cc op1/support.cc $(OP1_LDFLAGS) -o $@ -lgcc
@@ -99,6 +99,27 @@ $(BUILD)/op1_engine.elf: $(OP1_ENGINE_SRC) op1/op1.h op1/link.ld $(PORT_HDR) | $
 
 op1-probe: $(BUILD)/op1_probe.elf
 op1-engine: $(BUILD)/op1_engine.elf
+
+# Checks of the images' code off the device:
+#   make sim-engine   the engine's entry points in bfin-elf-run: CPU cost, and
+#                     voice 0's output -> build/sim_engine.raw (s16le, 88.2 kHz)
+#   make host-probe   the probe against a simulated OP-1 -> build/host_probe.wav
+#                     (decode with tools/decode_probe_beeps.py)
+SIM_CXXFLAGS := -O2 -std=c++17 -mcpu=bf524 -msim -fno-exceptions -fno-rtti                 -DOP1_SIM -I. $(WARN)
+SIM_ENGINE_SRC := tests/sim_engine.cc op1/engine.cc src/op1_voice.cc                   src/modal_resonator.cc src/fixed_tables.cc src/mode_bank_bfin.S
+
+$(BUILD)/sim_engine.elf: $(SIM_ENGINE_SRC) op1/op1.h $(PORT_HDR) | $(BUILD)
+	$(BFIN_CXX) $(SIM_CXXFLAGS) $(SIM_ENGINE_SRC) -o $@
+
+sim-engine: $(BUILD)/sim_engine.elf
+	$(BFIN_RUN) $< $(BUILD)/sim_engine.raw
+
+$(BUILD)/host_probe: tests/host_probe.cc op1/probe.cc op1/op1.h | $(BUILD)
+	$(HOST_CXX) -O2 -std=c++17 -DOP1_HOST_SIM -DOP1_SIM -I. $(WARN) tests/host_probe.cc op1/probe.cc -o $@
+
+HOST_PROBE_ARGS ?= 400 40 1 0
+host-probe: $(BUILD)/host_probe
+	$(BUILD)/host_probe $(BUILD)/host_probe.wav $(HOST_PROBE_ARGS)
 
 clean:
 	rm -rf $(BUILD) $(OUT)

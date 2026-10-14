@@ -1,6 +1,6 @@
 # Handover: OP-1 custom firmware project
 
-Last updated 2026-10-14 (evening). Read this first in a fresh session, then the docs it links to.
+Last updated 2026-10-14 (late evening). Read this first in a fresh session, then the docs it links to.
 
 ## 1. Goal and hard rules
 
@@ -30,10 +30,14 @@ Non-negotiable rules (detail in `docs/brick-safety.md`):
 - **CPU clock: ~400 MHz** (399.6).
 - **Synth voices render at 88.2 kHz.** Blocks are 128 samples, so each voice's render is called ~689 times per second. The probe's beep (a 32-sample square) came out at 2760 Hz, which means 88.3 kHz; probe v1 heard pitches and times doubled for the same reason.
   - Call intervals jitter: the shortest is 1.34 ms, the mean 1.45 ms.
+  - **Not an artefact of the keyboard octave.** The recording was made with the keyboard an octave up, but the probe ignores pitch: the beep is a fixed waveform, and the call rate is timed by the cycle counter. Re-checked on 2026-10-14 (see `docs/device-tests.md`).
+  - The stock phase engine steps its phase by `inc` per sample, one cycle per 2^32, so `inc = f / 88200 × 2^32`, and Rings follows the stock engine's pitch whatever the octave setting.
 - **Only sounding voices are rendered.** With one key held, exactly one voice object was called, once per interval, with no other render calls.
-- **Free CPU: not measured.** Probe v2 compared intervals against the *shortest* one, so normal jitter (~8%) looked like overload at once and it reported 0. Fix: compare against the median or mean interval, and require several late intervals in a row.
+- **Free CPU: not measured.** Probe v2 compared intervals against the *shortest* one, so normal jitter (~8%) looked like overload at once and it reported 0. Probe v3 fixes this.
 
-**Built but not flashed:** `op1 firmware/op1_246_rings_engine.op1`, the Rings modal engine on the phase engine. **It needs updating for 88.2 kHz first** (see §7).
+**Built and verified, not flashed** (both pass `verify_bootloader.py`; each decodes to stock with only `OP1_vdk.ldr` changed):
+- **`op1 firmware/op1_246_rings_probe3.op1`: probe v3.** It measures free CPU against the mean interval over 64-call windows and reports the held key's pitch. **Flash this next**; the procedure is in `docs/device-tests.md`.
+- **`op1 firmware/op1_246_rings_engine.op1`: the Rings modal engine on the phase engine,** now at 88.2 kHz. Rings runs at 44.1 kHz on 64 samples per call, then a 2× upsampler fills the 128 output samples. Simulated: ~38 MHz with one voice ringing, ~121 MHz with six.
 
 **Git:** branch `firmware-analysis-tooling` (the user wants to stay on it), pushed to `origin` (`<public repo URL>`). Latest commits:
 - `2e0d097` probe v2
@@ -119,11 +123,15 @@ The full detail is in `docs/rings-port.md`.
 - **Render ABI:** `render(this = R0, int16 out[128] = R1, int16 params[4] = R2)`.
   - The voice index is `(this - 0xffb00000) / 28`.
   - Pitch is per-sample phase increments at `0xff801950`, scaled for **88.2 kHz**: `inc = f / 88200 * 2^32`.
-- **Simulated cost, at 10 modes per voice and 44.1 kHz:** about 31 MHz with one voice ringing, 116 MHz with six. **At 88.2 kHz that doubles.**
+- **Rate:** Rings runs at 44.1 kHz on 64 samples per call; `Upsampler` in `op1/engine.cc` (4-point Lagrange) doubles it to the 128 samples.
+- **Simulated cost** (`make sim-engine`, 10 modes per voice, at the real call rate): about 38 MHz with one voice ringing, 121 MHz with six.
+- **Off-device checks:**
+  - `make sim-engine` measures the CPU cost and writes `build/sim_engine.raw` (88.2 kHz, s16le) for pitch checks;
+  - `make host-probe HOST_PROBE_ARGS="MHZ FREE% CALLS STRAY"` makes a WAV for testing the decoder.
 
 ## 6. Open questions
 
-- **Free CPU** while the OP-1 plays. Needs probe v3 (see §7).
+- **Free CPU** while the OP-1 plays. Probe v3 is built to measure it (see §7).
 - **Encoder mapping:** which of `params[0..3]` is which encoder (blue, green, white, orange), and their range (assumed 0..32767).
 - **Envelope and output:** whether the OP-1's ADSR and FX come after render (inferred), and the expected output level.
 - **88.2 kHz:** is the rate fixed, or does it depend on settings? Does the core decimate the voice output to 44.1 kHz?
@@ -131,17 +139,12 @@ The full detail is in `docs/rings-port.md`.
 
 ## 7. Next steps (agreed direction: replace the phase engine with Rings; ask before every flash)
 
-1. **Adapt the engine to 88.2 kHz.** Run Rings at 44.1 kHz internally (upstream runs at 48 kHz, so that's authentic) and upsample 2× to the 128-sample, 88.2 kHz output. That halves the CPU cost.
-   - Process 64 samples per call, then interpolate to 128.
-   - Rings frequency (Q31 `f / 44100`) = `inc` directly, instead of `inc >> 1`.
-   - Use the pitch at the start of the block, or average the increments.
-   - Update `tests/sim_engine.cc` and rebuild `op1_246_rings_engine.op1`.
-2. **Probe v3:**
-   - measure lateness against the median interval;
-   - require several consecutive late intervals;
-   - optionally render a stock voice at the same time.
-   Flash it, record, decode. Use the result to size modes per voice (`OP1RINGS_MODES_PER_VOICE`).
-3. **First Rings flash.** Check the sound, the encoder mapping (`kParamOrder` in `op1/engine.cc`), the level and stutters.
+1. ~~Adapt the engine to 88.2 kHz.~~ Done (2026-10-14): Rings at 44.1 kHz plus a 2× upsampler, with the packages rebuilt.
+2. **Flash probe v3** (`op1_246_rings_probe3.op1`), record, and decode. The procedure is in `docs/device-tests.md`.
+   - Set the keyboard octave to 0 and hold a key the user can name.
+   - Use the free-CPU result to size modes per voice (`OP1RINGS_MODES_PER_VOICE`).
+   - Not done: rendering a stock voice alongside it. Ask the user to watch the screen for sluggishness during the ramp.
+3. **First Rings flash.** Check the sound and its pitch against the stock engine, the encoder mapping (`kParamOrder` in `op1/engine.cc`), the level and stutters.
 4. **Then:**
    - the string model, then sympathetic strings and the other Rings models;
    - the Rings screen (reverse-engineer the Pd screen class; the user's SVG and its handover are in `incoming/`);

@@ -64,12 +64,76 @@ Decoded numbers, the same in every cycle: `[524, 0, 1, 1, 1, 463]`.
 
 Probe v1's doubled pitches and halved durations have the same cause.
 
+- **The keyboard octave doesn't affect these numbers.** The recording was made with the keyboard an octave up, but the probe ignores the key's pitch.
+  - The beep is a fixed 32-sample square written straight into the output, and the call rate comes from the cycle counter.
+  - Re-measured from the recording, the beeps sit at ~2760 Hz.
+  - 64-sample blocks at 44.1 kHz would also give 689 calls per second, but would put the beep at 1378 Hz.
 - **Free CPU: invalid (0).** The overload test compared intervals against the *shortest* one (1.34 ms), but they jitter around a 1.45 ms mean, so it tripped immediately.
-- **Probe v3 should:** use the median interval, and require several consecutive late intervals.
+
+## Test 1c: probe v3 (`op1_246_rings_probe3.op1`)
+
+Probe v3 fixes v2's free-CPU measurement and reads the held key's pitch (`ports/rings/op1/probe.cc`):
+- **Calibration (~2 s):** records three things:
+  - the reference voice's *mean* call interval over ~1400 calls (the block period);
+  - its longest interval;
+  - the held key's phase increment.
+- **Overload:** judged on the mean interval over each 64-call ramp step.
+  - The intervals telescope, so jitter barely moves the mean.
+  - A step whose mean is over 2% longer than the period counts as overload.
+  - The report gives the last burn that ran clean, less that 2% margin.
+- **Report:** five numbers.
+  1. `3`, the version;
+  2. block period / 1024;
+  3. free cycles per block / 1024;
+  4. the held key's pitch in 0.1 Hz, assuming 88.2 kHz;
+  5. the longest call interval / 1024.
+
+**Checked on the host** (`make host-probe`). The test simulates an OP-1 with 88.2 kHz blocks, calls jittered by up to 8% of a block as on the device, and a held A4. The decoder recovers:
+- 55% at 400 MHz;
+- 30% with 3 calls per block and stray calls;
+- 70% at 380 MHz.
+
+It reads the key as 440.0 Hz in every case.
+
+**Caveats:**
+- **The figure is what the audio path leaves.** The UI may run in that time too, so watch the screen during the ramp. If the screen gets sluggish before the audio stutters, the real budget for an engine is lower.
+- **Overload could show late.** If the core buffers audio ahead, overload could show a step or two late, which would make free CPU read up to ~1% high.
+
+**Procedure:**
+1. Flash `op1_246_rings_probe3.op1` through te-boot.
+2. Set the keyboard octave back to 0. Select the phase engine and hold one key you can name (e.g. "the lowest F") for about 45 s.
+   - First the normal sound plays (~2 s).
+   - Then the CPU ramps (up to ~20 s); stutters are expected near the end.
+   - Then it beeps: a long sync tone, then groups of short beeps.
+3. Keep holding the key and record at least 40 s of beeping (a full report is about 12 s at 400 MHz). Save the file in `incoming/probe/`.
+4. A continuous tone with no beeps means something wrote into the free region.
+
+**Decoding:** `python tools/decode_probe_beeps.py RECORDING` prints:
+- the clock;
+- the block period and rate;
+- the free CPU, in % and MHz;
+- the held key as a note name;
+- the longest call interval.
+
+It still decodes v2 recordings.
+
+**What the pitch tells us.**
+- The stock phase engine does `phase += inc` per sample, with one cycle per 2^32, and its output is consumed at 88.2 kHz.
+- So Rings with `f = inc / 2^32 × 88200` plays at the same pitch as the stock engine on any key.
+- The reported note checks the absolute tuning against the key held.
 
 ## Test 2: Rings engine (`op1_246_rings_engine.op1`)
 
-The phase engine's render and note-on become Rings' modal model (`ports/rings/op1/engine.cc`): 6 voices with 10 modes each. In the simulator this costs about 31 MHz with one voice ringing and about 116 MHz with all six.
+The phase engine's render and note-on become Rings' modal model (`ports/rings/op1/engine.cc`), with 6 voices of 10 modes each.
+- **Rate:** Rings runs at 44.1 kHz on 64 samples per call. A 4-point Lagrange 2× upsampler then produces the 128 output samples at 88.2 kHz.
+- **Pitch:** Rings' frequency is the OP-1 increment doubled (`f / 44100`), latched at the start of the block.
+
+**In the simulator** (`make sim-engine`, at the real call rate):
+- **CPU:** about 38 MHz with one voice ringing and 121 MHz with all six. The old engine was simulated at 31 and 116 MHz, but at 44.1 kHz; at 88.2 kHz it would have needed twice that.
+- **Pitch:** a 220 Hz key gives a 220.0 Hz fundamental, with no energy at 110 Hz.
+- **Upsampling images:** at −83 dB.
+
+The previous `op1_246_rings_engine.op1` was built before the 88.2 kHz fix and played an octave low. It was never flashed, and it has been replaced.
 
 **To check:**
 - Pressing a key gives a struck, bell- or plate-like resonance at the key's pitch.

@@ -2,6 +2,10 @@
 // (vtable +0x14, +0x1c). Six voices, one RingsVoice each; the OP-1 core
 // allocates voices and applies its envelope after render.
 //
+// The OP-1 renders voices at 88.2 kHz, 128 samples per call. Rings runs at
+// half that (44.1 kHz, 64 samples per call; upstream runs at 48 kHz) and is
+// upsampled 2x, which halves its CPU cost.
+//
 // Encoders (params[0..3], assumed 0..32767): structure, brightness, damping,
 // position. The order is a guess to check on the device; see kParamOrder.
 
@@ -20,16 +24,52 @@ namespace {
 using op1rings::RingsVoice;
 using op1rings::VoicePatch;
 
+const int32_t kRingsBlockSize = op1::kBlockSize / 2;
+
 // params[] index for structure, brightness, damping, position.
 const int32_t kParamOrder[4] = { 0, 1, 2, 3 };
 
+// 2x upsampler. Even outputs are the input samples; odd outputs are the
+// 4-point Lagrange midpoint (-x[-1] + 9 x[0] + 9 x[1] - x[2]) / 16, which is
+// -0.4 dB at 10 kHz and -1.6 dB at 15 kHz. Delays the signal by 2 input
+// samples (45 us). Works on 16-bit-scaled samples, so the sums can't
+// overflow.
+class Upsampler {
+ public:
+  void Init() { history_[0] = history_[1] = history_[2] = 0; }
+
+  // in: kRingsBlockSize Q27 samples; out: 2 * kRingsBlockSize samples.
+  void Process(const int32_t* in, int16_t* out) {
+    int32_t* x = extended_;
+    x[0] = history_[0];
+    x[1] = history_[1];
+    x[2] = history_[2];
+    for (int32_t i = 0; i < kRingsBlockSize; ++i) x[i + 3] = in[i] >> 12;
+    for (int32_t k = 0; k < kRingsBlockSize; ++k) {
+      out[2 * k] = op1::Saturate16(x[k + 1]);
+      out[2 * k + 1] = op1::Saturate16((9 * (x[k + 1] + x[k + 2]) - x[k] - x[k + 3]) >> 4);
+    }
+    history_[0] = x[kRingsBlockSize];
+    history_[1] = x[kRingsBlockSize + 1];
+    history_[2] = x[kRingsBlockSize + 2];
+  }
+
+ private:
+  int32_t history_[3];   // last three inputs of the previous block
+  static int32_t extended_[kRingsBlockSize + 3];   // scratch, kept off the stack
+};
+
+int32_t Upsampler::extended_[kRingsBlockSize + 3];
+
 RingsVoice voices[op1::kNumVoices];
+Upsampler upsamplers[op1::kNumVoices];
 bool initialized;
-int32_t out_buffer[op1::kBlockSize];
+int32_t out_buffer[kRingsBlockSize];
 
 void InitAll() {
   for (int32_t v = 0; v < op1::kNumVoices; ++v) {
     voices[v].Init(OP1RINGS_MODES_PER_VOICE);
+    upsamplers[v].Init();
   }
   initialized = true;
 }
@@ -42,17 +82,19 @@ inline int32_t ParamToQ31(int16_t p) {
 
 extern "C" void RingsRender(void* self, int16_t* out, const int16_t* params) {
   if (!initialized) InitAll();
-  RingsVoice& voice = voices[op1::VoiceIndex(self)];
+  const int32_t v = op1::VoiceIndex(self);
   VoicePatch patch;
   patch.structure = ParamToQ31(params[kParamOrder[0]]);
   patch.brightness = ParamToQ31(params[kParamOrder[1]]);
   patch.damping = ParamToQ31(params[kParamOrder[2]]);
   patch.position = ParamToQ31(params[kParamOrder[3]]);
-  voice.RenderMono(op1::PitchBuffer(), patch, out_buffer, op1::kBlockSize);
-  // Q27 (limited to about +-1) -> 16 bit.
-  for (int32_t i = 0; i < op1::kBlockSize; ++i) {
-    out[i] = op1::Saturate16(out_buffer[i] >> 12);
-  }
+  // The OP-1's increment is f / 88200 * 2^32; at half the rate it doubles.
+  // Pitch is latched at the start of the block (as the stock string engine
+  // does).
+  const uint32_t inc = op1::PitchBuffer()[0];
+  const uint32_t rings_inc = inc < 0x80000000u ? inc << 1 : 0xffffffffu;
+  voices[v].RenderMono(&rings_inc, patch, out_buffer, kRingsBlockSize);
+  upsamplers[v].Process(out_buffer, out);
 }
 
 extern "C" void RingsNoteOn(void* self) {
@@ -62,5 +104,5 @@ extern "C" void RingsNoteOn(void* self) {
 
 extern "C" __attribute__((section(".op1header"), used))
 const op1::Header op1_header = {
-  op1::kHeaderMagic, 1, &RingsRender, &RingsNoteOn, nullptr, { 0, 0, 0 },
+  op1::kHeaderMagic, 2, &RingsRender, &RingsNoteOn, nullptr, { 0, 0, 0 },
 };
