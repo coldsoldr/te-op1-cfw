@@ -21,41 +21,33 @@ python tools/build_package.py "op1 firmware/work_probe" "op1 firmware/op1_246_ri
 - the phase engine's vtable entries (render `0x1911150`, and for the engine build note-on `0x1911158`);
 - the new blocks, inserted before FINAL. The stock FINAL and the trailing IGNORE block are appended byte-identical.
 
-## Test 1: probe (`op1_246_rings_probe.op1`)
+## Test 1: probe v1 (`op1_246_rings_probe.op1`), run 2026-10-14
 
-The phase engine's render becomes `ports/rings/op1/probe.cc`. It's injected at `0x02c00000`; the rest of `0x02c00000–0x02ffffff` is filled with `0xa5a5a5a5`.
+**Result:**
+- **Injected code runs from `0x02c00000`.** The phase engine worked and the probe produced its report.
+- **The CPU ramp didn't crash the OP-1.** It overloaded the audio, backed off and recovered.
+- **No siren**, so nothing overwrote the free region while it was checked.
 
-**What it answers:**
-1. Does injected code run from the free region (the phase engine still sounds normal)?
-2. What is the CPU clock?
-3. How much CPU is free?
-4. Does the OP-1 render idle voices?
-5. Does anything else write to the free region?
+**The report itself was unreadable** (`incoming/probe/probe_report.ogg`, decoded with `tools/decode_probe_tones.py`). There were three tones of about 378, 643 and 905 Hz, at twice the expected speed.
+- **Cause:** a probe bug. All render calls shared one tone oscillator, so with several calls per block each voice's audio jumped in phase and the pitches came out scrambled. A model of this reproduces the scrambling (`%TEMP%` script, not kept).
+- **What it does tell us:** there are several render calls per audio block, and the old gap-based block detection fired twice per block. That points to idle voices being rendered, or extra render calls.
+
+## Test 1b: probe v2 (`op1_246_rings_probe2.op1`)
+
+The report no longer uses pitch. It uses beep counts timed by the CPU's cycle counter (`ports/rings/op1/probe.cc`). Free CPU is measured from one reference voice's call interval. The report also includes the raw call pattern.
+
+It was checked end to end on the host (`tests/host_probe.cc`, a simulated OP-1 with a known clock, free CPU and call pattern), plus `tools/decode_probe_beeps.py`. For a simulated 400 MHz with 55% free, it recovers 399.8 MHz and 55%.
 
 **Procedure:**
-1. Flash through the te-boot menu. Boot normally.
-2. Select the **phase** engine. Set an envelope with full sustain, and preferably turn the effect off.
-3. **Hold one key for about 45 seconds.**
-   - First the normal phase sound plays.
-   - The CPU load then ramps up slowly. Brief stutters near the end are expected.
-   - Then the sound turns into a repeating sequence of three tones, each 1.5 s, separated by 0.5 s gaps and then a 2 s pause.
-4. Keep holding a key and read the three tones' frequencies in Hz:
-   - with a tuner app that shows Hz,
-   - or record about 15 s with a phone and save the file in `incoming/`.
-5. Optionally, then use tape, the sampler and USB disk mode for a while and check whether you hear a **two-tone siren**.
+1. Flash `op1_246_rings_probe2.op1` through te-boot.
+2. Select the phase engine and hold one key for about 45 s.
+   - First the normal sound plays.
+   - Then the CPU ramps; stutters are expected.
+   - Then it beeps: a long sync tone, then groups of short beeps.
+3. Keep holding the key and record at least 40 s of beeping (a full report is about 17 s at 400 MHz). Save the file in `incoming/`.
+4. A continuous tone with no beeps means something wrote into the free region.
 
-**Reading the tones:**
-
-| Tone | Meaning | Example |
-|---|---|---|
-| 1 | CPU clock in MHz, as Hz | 400 Hz means 400 MHz |
-| 2 | free CPU in MHz, as Hz | 230 Hz means about 230 MHz free while the phase engine plays |
-| 3 | 100 × (fewest voices rendered in any block) + 50 Hz | holding one key: 150 Hz means only playing voices are rendered; 650 Hz means all 6 always are |
-| siren (1000/1500 Hz) | something wrote into the free region | the region isn't safe; report it |
-
-**If it goes wrong:**
-- **Freeze or reboot loop when the phase engine is selected:** the region isn't executable, or it's in use. Flash stock via te-boot.
-- **No change after 45 s while holding a key:** report it, with the engine and key used.
+**Decoding:** `python tools/decode_probe_beeps.py RECORDING` prints the clock, the free CPU, the render calls per block, the number of distinct voice objects called, and the calls per second.
 
 ## Test 2: Rings engine (`op1_246_rings_engine.op1`)
 

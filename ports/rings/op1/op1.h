@@ -25,7 +25,7 @@ const uint32_t kPhaseRender = 0x01a0bc5c;
 const uint32_t kPhaseNoteOn = 0x01a0be82;
 
 inline int32_t VoiceIndex(const void* self) {
-  uint32_t offset = reinterpret_cast<uint32_t>(self) - kVoiceObjectBase;
+  uint32_t offset = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(self)) - kVoiceObjectBase;
   uint32_t v = offset / kPhaseVoiceObjectSize;
   return v < static_cast<uint32_t>(kNumVoices) ? static_cast<int32_t>(v) : 0;
 }
@@ -41,11 +41,21 @@ inline const uint32_t* PitchBuffer() {
 }
 #endif
 
+#ifdef OP1_HOST_SIM
+// Host simulation (tests/host_probe.cc): a simulated cycle counter.
+extern uint32_t host_cycles;
+inline uint32_t Cycles() { return host_cycles; }
+inline void BusyWait(uint32_t start, uint32_t cycles) { host_cycles = start + cycles; }
+#else
 inline uint32_t Cycles() {
   uint32_t c;
   __asm__ __volatile__("%0 = CYCLES;" : "=d"(c));
   return c;
 }
+inline void BusyWait(uint32_t start, uint32_t cycles) {
+  while (Cycles() - start < cycles) { }
+}
+#endif
 
 inline int16_t Saturate16(int32_t x) {
   return static_cast<int16_t>(x > 32767 ? 32767 : (x < -32768 ? -32768 : x));

@@ -1,22 +1,36 @@
-// Probe build: measures the OP-1's free CPU from inside the phase engine and
-// reports it as tones. Replaces the phase engine's render (vtable +0x14).
+// Probe build v2: measures the OP-1's render call pattern, clock and free
+// CPU from inside the phase engine and reports them as beep counts. Replaces
+// the phase engine's render (vtable +0x14).
+//
+// v1 reported values as tone pitches from one oscillator shared by all
+// render calls; with several calls per block the pitches came out scrambled
+// (and its block detection fired twice per block). v2 avoids pitch entirely.
 //
 // While a key is held:
-//   1. ~2 s: plays the stock phase sound and measures the audio block period
-//      in CPU cycles (the shortest gap between blocks).
-//   2. Ramp: each block, busy-waits B cycles, raising B by 0.5% of the period
-//      every 64 blocks, until a block arrives > 30% late (overload). It then
-//      stops burning and keeps the last good B.
-//   3. Report, repeating, on every voice (so hold a key to hear it):
-//        tone 1: clock in MHz, as Hz         (e.g. 400 MHz -> 400 Hz)
-//        tone 2: free CPU in MHz, as Hz      (the largest B that kept up)
-//        tone 3: 100 * (fewest voices rendered in any block) + 50 Hz
-//      1.5 s each with 0.5 s gaps, then 2 s of silence.
-// Throughout: the rest of the injected region holds a fill pattern
-// (written by the LDR). Each call checks 64 words of it; if any word changed,
-// a two-tone siren replaces the output from then on.
+//   1. Calibrate (~2 s, plays the stock phase sound). The first voice object
+//      seen is the reference voice. Records its call interval (the audio
+//      block period, in cycles), the number of render calls between two of
+//      its calls (min and max), the number of distinct voice objects called,
+//      and the total number of calls in a window of 2^28 cycles.
+//   2. Ramp: in each reference-voice call, busy-waits B cycles, raising B by
+//      0.5% of the period every 64 of its calls, until one of its calls
+//      arrives > 5% late (overload). Then stops burning.
+//   3. Report, repeating, on every call (hold a key to hear it):
+//        sync: one long tone (12 units), 12 units silence
+//        then six numbers, each as decimal digits:
+//          digit d -> d beeps (0 -> 10 beeps), each 2 units on, 2 off;
+//          6 more units silence between digits, 20 between numbers.
+//        numbers: block period / 1024, burn / 1024 (free CPU per block),
+//                 min calls per block, max calls per block,
+//                 distinct voices, calls in 2^28 cycles
+//      One unit is 2^23 CPU cycles, so the beep timing in a recording gives
+//      the clock: 4 units (one beep period) = 2^25 cycles.
+// Throughout: the rest of the injected region holds a fill pattern (written by
+// the LDR). Each call checks 64 words of it; if any word changed, the output
+// becomes a continuous tone from then on.
 //
-// No floating point; integer division only outside the per-sample loops.
+// Tones are a square wave with a 32-sample period, identical in every
+// 128-sample buffer, so they're continuous whatever the call pattern.
 
 #include <cstdint>
 
@@ -24,38 +38,43 @@
 
 namespace {
 
-const uint32_t kNewBlockGap = 200000;     // cycles between calls = new block
-const int32_t kCalibrationBlocks = 700;   // ~2 s
-const int32_t kRampStepBlocks = 64;       // ~186 ms per 0.5% step
+const int32_t kCalibrationCalls = 700;    // reference-voice calls (~2 s)
+const int32_t kRampStepCalls = 64;
+const uint32_t kWindow = 1u << 28;        // cycles, for counting calls
 const uint32_t kFillPattern = 0xa5a5a5a5u;
 const uint32_t kRegionEnd = 0x03000000;
+const int32_t kNumbers = 6;
 
 enum Phase { CALIBRATE, RAMP, REPORT };
 
 Phase phase;
 bool initialized;
-uint32_t last_call_end;
-uint32_t last_block_start;
-uint32_t period;            // shortest block period seen during calibration
-uint32_t burn;              // current burn per block, cycles
-uint32_t best_burn;         // largest burn that kept up
-int32_t blocks;
-int32_t voices_this_block;
-int32_t min_voices;
-uint32_t report_hz[3];
-uint32_t report_phase;      // tone oscillator phase
-int32_t report_sample;      // position in the report cycle, samples
+int32_t reference_voice;
+uint32_t last_reference_call;
+uint32_t period;               // shortest reference-voice call interval
+uint32_t burn;
+uint32_t best_burn;
+int32_t reference_calls;
+int32_t calls_since_reference;
+int32_t min_calls_per_block;
+int32_t max_calls_per_block;
+uint32_t voices_seen;          // bit mask of voice indices
+uint32_t window_start;
+int32_t window_calls;
+int32_t window_result;
+uint64_t report_cycles;        // cycles since the report started
+uint32_t last_now;
+uint32_t numbers[kNumbers];
 bool corrupted;
 uint32_t check_address;
 
 extern "C" char __image_end[];
 
-uint32_t FillStart() {
-  return (reinterpret_cast<uint32_t>(__image_end) + 4095) & ~4095u;
-}
-
 void CheckFill() {
-  const uint32_t start = FillStart();
+#ifdef OP1_HOST_SIM
+  return;   // the region doesn't exist on the host
+#endif
+  const uint32_t start = (static_cast<uint32_t>(reinterpret_cast<uintptr_t>(__image_end)) + 4095) & ~4095u;
   if (check_address < start || check_address + 256 > kRegionEnd) {
     check_address = start;
   }
@@ -66,124 +85,164 @@ void CheckFill() {
   check_address += 256;
 }
 
-// Cycles per block -> MHz, for 128-sample blocks at 44.1 kHz.
-uint32_t CyclesPerBlockToMHz(uint32_t cycles) {
-  return (cycles / 1000) * 44100 / 128000;
-}
-
-void OnBlockStart(uint32_t now) {
-  uint32_t gap = now - last_block_start;
-  last_block_start = now;
-  if (blocks > 0 && voices_this_block < min_voices) min_voices = voices_this_block;
-  voices_this_block = 0;
-  ++blocks;
-  switch (phase) {
-    case CALIBRATE:
-      if (blocks > 4 && gap < period) period = gap;
-      if (blocks >= kCalibrationBlocks) {
-        phase = RAMP;
-        blocks = 0;
-      }
-      break;
-    case RAMP:
-      if (blocks > 2 && gap > period + period * 3 / 10) {
-        // Late block: overload. Stop burning; report the previous level.
-        phase = REPORT;
-        burn = 0;
-        report_hz[0] = CyclesPerBlockToMHz(period);
-        report_hz[1] = CyclesPerBlockToMHz(best_burn);
-        report_hz[2] = 100 * static_cast<uint32_t>(min_voices) + 50;
-        report_sample = 0;
-        break;
-      }
-      best_burn = burn;
-      if (blocks % kRampStepBlocks == 0) {
-        burn += period / 200;
-        if (burn >= period) {
-          // Never overloaded: report everything as free.
-          best_burn = period;
-          phase = REPORT;
-          burn = 0;
-          report_hz[0] = CyclesPerBlockToMHz(period);
-          report_hz[1] = CyclesPerBlockToMHz(best_burn);
-          report_hz[2] = 100 * static_cast<uint32_t>(min_voices) + 50;
-          report_sample = 0;
-        }
-      }
-      break;
-    case REPORT:
-      break;
+void Square(int16_t* out, bool on) {
+  for (int32_t i = 0; i < op1::kBlockSize; ++i) {
+    out[i] = on ? ((i & 16) ? 8192 : -8192) : 0;
   }
 }
 
-// Triangle wave at `hz` into out (a quarter of full scale).
-void Tone(int16_t* out, uint32_t hz, int32_t size) {
-  const uint32_t increment = hz * 97392u;   // hz / 44100 * 2^32
-  for (int32_t i = 0; i < size; ++i) {
-    report_phase += increment;
-    int32_t t = static_cast<int32_t>(report_phase >> 16) - 32768;   // saw
-    int32_t tri = (t < 0 ? -t : t) - 16384;                         // triangle
-    out[i] = static_cast<int16_t>(tri >> 1);
-  }
+// Voice slot from the object address: 0-5 for the phase engine's voices;
+// anything else (an object outside the voice array) counts as 31.
+int32_t RawIndex(const void* self) {
+  uint32_t offset = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(self)) - op1::kVoiceObjectBase;
+  uint32_t index = offset / op1::kPhaseVoiceObjectSize;
+  return index < 31 ? static_cast<int32_t>(index) : 31;
 }
 
-void ReportOutput(int16_t* out) {
-  const int32_t kTone = 66150, kGap = 22050, kPause = 88200;
-  const int32_t kCycle = 3 * kTone + 2 * kGap + kPause;
-  if (corrupted) {
-    Tone(out, (report_sample / 11025) & 1 ? 1500 : 1000, op1::kBlockSize);
-  } else {
-    int32_t t = report_sample % kCycle;
-    int32_t slot = -1;
-    for (int32_t k = 0; k < 3; ++k) {
-      int32_t start = k * (kTone + kGap);
-      if (t >= start && t < start + kTone) slot = k;
+int32_t CountBits(uint32_t x) {
+  int32_t n = 0;
+  while (x) { n += x & 1; x >>= 1; }
+  return n;
+}
+
+// Whether the report pattern is "on" at `units` (in units of 2^23 cycles)
+// after the start of a report cycle; also returns the cycle length.
+bool ReportOn(uint32_t units, uint32_t* cycle_length) {
+  // Build the pattern on the fly: sync, then numbers.
+  uint32_t t = 0;
+  bool on = false;
+  bool found = false;
+  // sync
+  if (units < 12) { on = true; found = true; }
+  t = 24;
+  for (int32_t k = 0; k < kNumbers; ++k) {
+    // digits, most significant first
+    uint32_t value = numbers[k];
+    uint32_t digits[10];
+    int32_t n = 0;
+    do { digits[n++] = value % 10; value /= 10; } while (value && n < 10);
+    for (int32_t d = n - 1; d >= 0; --d) {
+      uint32_t beeps = digits[d] ? digits[d] : 10;
+      for (uint32_t b = 0; b < beeps; ++b) {
+        if (!found && units >= t && units < t + 2) { on = true; found = true; }
+        t += 4;
+      }
+      t += 6;
     }
-    if (slot >= 0) {
-      Tone(out, report_hz[slot], op1::kBlockSize);
-    } else {
-      for (int32_t i = 0; i < op1::kBlockSize; ++i) out[i] = 0;
-    }
+    t += 20;
   }
+  *cycle_length = t;
+  return on;
 }
 
 }  // namespace
 
 extern "C" void ProbeRender(void* self, int16_t* out, const int16_t* params) {
-  uint32_t now = op1::Cycles();
+  const uint32_t now = op1::Cycles();
+  const int32_t voice = RawIndex(self);
   if (!initialized) {
     initialized = true;
     phase = CALIBRATE;
+    reference_voice = voice;
+    last_reference_call = now;
     period = 0xffffffffu;
     burn = best_burn = 0;
-    blocks = 0;
-    voices_this_block = 0;
-    min_voices = op1::kNumVoices;
-    last_block_start = now;
-    last_call_end = now;
+    reference_calls = 0;
+    calls_since_reference = 0;
+    min_calls_per_block = 1 << 30;
+    max_calls_per_block = 0;
+    voices_seen = 0;
+    window_start = now;
+    window_calls = 0;
+    window_result = -1;
     corrupted = false;
     check_address = 0;
+    last_now = now;
   }
-  if (now - last_call_end > kNewBlockGap) {
-    OnBlockStart(now);
-    if (phase == REPORT || corrupted) report_sample += op1::kBlockSize;
-    // Burn once per block.
-    if (burn) {
-      while (op1::Cycles() - now < burn) { }
+  const uint32_t delta = now - last_now;
+  last_now = now;
+
+  if (phase == CALIBRATE) {
+    voices_seen |= 1u << voice;
+    if (window_result < 0) {
+      if (now - window_start < kWindow) {
+        ++window_calls;
+      } else {
+        window_result = window_calls;
+      }
     }
   }
-  ++voices_this_block;
-  CheckFill();
+  ++calls_since_reference;
 
-  if (phase == REPORT || corrupted) {
-    ReportOutput(out);
-  } else {
-    reinterpret_cast<op1::RenderFn>(op1::kPhaseRender)(self, out, params);
+  if (voice == reference_voice) {
+    const uint32_t interval = now - last_reference_call;
+    last_reference_call = now;
+    ++reference_calls;
+    if (reference_calls > 4 && phase != REPORT) {
+      if (calls_since_reference < min_calls_per_block) min_calls_per_block = calls_since_reference;
+      if (calls_since_reference > max_calls_per_block) max_calls_per_block = calls_since_reference;
+    }
+    calls_since_reference = 0;
+    switch (phase) {
+      case CALIBRATE:
+        if (reference_calls > 4 && interval < period) period = interval;
+        if (reference_calls >= kCalibrationCalls && window_result >= 0) {
+          phase = RAMP;
+          reference_calls = 0;
+        }
+        break;
+      case RAMP:
+        if (reference_calls > 2 && interval > period + period / 20) {
+          phase = REPORT;
+          burn = 0;
+        } else {
+          best_burn = burn;
+          if (reference_calls % kRampStepCalls == 0) {
+            burn += period / 200;
+            if (burn >= period) {
+              best_burn = period;
+              phase = REPORT;
+              burn = 0;
+            }
+          }
+        }
+        if (phase == REPORT) {
+          numbers[0] = period >> 10;
+          // Overload is detected 5% past the limit: report the burn minus
+          // that margin.
+          numbers[1] = (best_burn > period / 20 ? best_burn - period / 20 : 0) >> 10;
+          numbers[2] = static_cast<uint32_t>(min_calls_per_block);
+          numbers[3] = static_cast<uint32_t>(max_calls_per_block);
+          numbers[4] = static_cast<uint32_t>(CountBits(voices_seen));
+          numbers[5] = static_cast<uint32_t>(window_result);
+          report_cycles = 0;
+        }
+        break;
+      case REPORT:
+        break;
+    }
+    if (burn) op1::BusyWait(now, burn);
   }
-  last_call_end = op1::Cycles();
+
+  CheckFill();
+  if (corrupted) {
+    Square(out, true);
+  } else if (phase == REPORT) {
+    uint32_t cycle_length;
+    report_cycles += delta;
+    uint32_t units = static_cast<uint32_t>(report_cycles >> 23);
+    ReportOn(0, &cycle_length);
+    Square(out, ReportOn(units % cycle_length, &cycle_length));
+  } else {
+#ifdef OP1_HOST_SIM
+    for (int32_t i = 0; i < op1::kBlockSize; ++i) out[i] = 0;   // stock sound
+#else
+    reinterpret_cast<op1::RenderFn>(op1::kPhaseRender)(self, out, params);
+#endif
+  }
 }
 
 extern "C" __attribute__((section(".op1header"), used))
 const op1::Header op1_header = {
-  op1::kHeaderMagic, 1, &ProbeRender, nullptr, nullptr, { 0, 0, 0 },
+  op1::kHeaderMagic, 2, &ProbeRender, nullptr, nullptr, { 0, 0, 0 },
 };
