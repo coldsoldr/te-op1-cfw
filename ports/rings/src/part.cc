@@ -315,7 +315,7 @@ void Part::RenderModalVoice(
   excitation_filter_[voice].Process<FILTER_MODE_LOW_PASS>(
       resonator_input_, resonator_input_, size);
 
-  Resonator& r = resonator_[voice];
+  PartResonator& r = resonator_[voice];
   r.set_frequency(frequency);
   r.set_structure(patch.structure);
   r.set_brightness(patch.brightness * patch.brightness);

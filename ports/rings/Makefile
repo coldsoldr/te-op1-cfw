@@ -19,7 +19,8 @@ STMLIB_SRC := $(MI)/stmlib/dsp/units.cc $(MI)/stmlib/utils/random.cc
 REF_SRC    := $(MI)/rings/dsp/part.cc $(MI)/rings/dsp/resonator.cc \
               $(MI)/rings/dsp/string.cc $(MI)/rings/dsp/fm_voice.cc \
               $(MI)/rings/resources.cc $(STMLIB_SRC)
-PORT_SRC   := src/part.cc src/resonator.cc src/string.cc src/fm_voice.cc \
+PORT_SRC   := src/part.cc src/resonator.cc src/modal_resonator.cc src/fixed_tables.cc \
+              src/string.cc src/fm_voice.cc \
               src/resources.cc $(STMLIB_SRC)
 PORT_HDR   := $(wildcard src/*.h src/fx/*.h)
 HARNESS    := harness/render.cc $(wildcard harness/*.h)

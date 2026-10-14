@@ -115,8 +115,9 @@ def spectral(ref_path, test_path, frame=2048):
     """Compares the per-frame spectra in third-octave-ish bands.
 
     Reports the mean absolute band level difference (dB) over bands that are
-    within 60 dB of the frame's loudest band, which ignores phase and is closer
-    to what is audible than a waveform SNR.
+    within 60 dB of the frame's loudest band and above -100 dBFS (so
+    near-silent frames, where fixed-point noise dominates, don't count). It
+    ignores phase and is closer to what is audible than a waveform SNR.
     """
     r_rate, ref = read_wav(ref_path)
     _, test = read_wav(test_path)
@@ -127,6 +128,10 @@ def spectral(ref_path, test_path, frame=2048):
         f *= 2 ** (1.0 / 3)
     edges.append(frame // 2)
     bands = [(lo, hi) for lo, hi in zip(edges, edges[1:]) if hi > lo]
+    # Band level of a full-scale sine, for the absolute floor.
+    sine = [math.sin(2 * math.pi * 1000.0 * i / r_rate) for i in range(frame)]
+    full_scale = max(band_energies(sine, frame, bands)[0])
+    floor = full_scale - 100.0
     out = []
     for name, a, b in zip('LR', ref, test):
         ea = band_energies(a, frame, bands)
@@ -134,7 +139,8 @@ def spectral(ref_path, test_path, frame=2048):
         diffs = []
         for fa, fb in zip(ea, eb):
             top = max(fa)
-            diffs += [abs(x - y) for x, y in zip(fa, fb) if x > top - 60.0]
+            diffs += [abs(x - y) for x, y in zip(fa, fb)
+                      if x > top - 60.0 and x > floor]
         diffs.sort()
         mean = sum(diffs) / max(1, len(diffs))
         p95 = diffs[int(0.95 * (len(diffs) - 1))] if diffs else 0.0

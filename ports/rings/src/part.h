@@ -44,6 +44,7 @@
 #include "src/performance_state.h"
 #include "src/plucker.h"
 #include "src/resonator.h"
+#include "src/modal_resonator.h"
 #include "src/string.h"
 
 namespace op1rings {
@@ -61,6 +62,34 @@ enum ResonatorModel {
 };
 
 const int32_t kMaxPolyphony = 4;
+
+#if OP1RINGS_RESONATOR == 3
+// Float interface over the fixed-point ModalResonator, while the rest of
+// Part is still float (host builds only).
+class PartResonator {
+ public:
+  void Init() { r_.Init(); }
+  void set_resolution(int32_t n) { r_.set_resolution(n); }
+  void set_frequency(float f) { r_.set_frequency(FloatToQ31(f)); }
+  void set_structure(float x) { r_.set_structure(FloatToQ31(x)); }
+  void set_brightness(float x) { r_.set_brightness(FloatToQ31(x)); }
+  void set_damping(float x) { r_.set_damping(FloatToQ31(x)); }
+  void set_position(float x) { r_.set_position(FloatToQ31(x)); }
+  void Process(const float* in, float* out, float* aux, size_t size) {
+    int32_t in_q[kMaxModalBlockSize], out_q[kMaxModalBlockSize], aux_q[kMaxModalBlockSize];
+    for (size_t i = 0; i < size; ++i) in_q[i] = FloatToQ27(in[i]);
+    r_.Process(in_q, out_q, aux_q, size);
+    for (size_t i = 0; i < size; ++i) {
+      out[i] = Q27ToFloat(out_q[i]);
+      aux[i] = Q27ToFloat(aux_q[i]);
+    }
+  }
+ private:
+  ModalResonator r_;
+};
+#else
+typedef Resonator PartResonator;
+#endif
 const int32_t kNumStrings = kMaxPolyphony * 2;
 
 class Part {
@@ -160,7 +189,7 @@ class Part {
   uint32_t step_counter_;
   int32_t polyphony_;
   
-  Resonator resonator_[kMaxPolyphony];
+  PartResonator resonator_[kMaxPolyphony];
   String string_[kNumStrings];
   stmlib::CosineOscillator lfo_[kNumStrings];
   FMVoice fm_voice_[kMaxPolyphony];

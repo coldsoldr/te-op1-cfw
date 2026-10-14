@@ -68,26 +68,71 @@ Results:
 
 **Mode count.** Rings uses 60 modes for one voice. When polyphonic it uses `64/poly − 4` per voice (12 at 4 voices), so the total stays around 50–60. An OP-1 version with 6 voices × ~10 modes would cost about the same as one full voice.
 
+## Per-block maths (done for the modal model)
+
+- **FFloat** (`src/ffloat.h`): a software float with a 32-bit mantissa and a separate exponent, built on the fast multiply and `SIGNBITS`.
+  - Worst relative error is 2–6×10⁻⁹ (float's epsilon is 1.2×10⁻⁷).
+  - Host and Blackfin results are bit-identical (`tests/test_ffloat.cc`).
+  - About 5–7× faster than libgcc's soft-float: roughly 50 cycles per multiply and 145 per divide.
+  - Used only where few operations run per block.
+- **Modal coefficients** (`src/modal_resonator.cc`) are fixed point from tables (`resources/gen_fixed_tables.py`):
+  - sin, cos, sec and tan of `phi = atan(tan_fast(pf))` include upstream's `tan` approximation, so partials are tuned exactly as upstream, including its flattening near Nyquist;
+  - `r = 1/Q` comes from log2/exp2 tables;
+  - `rho = (1 + x)^-1/2` and the reciprocals come from tables;
+  - the partial frequencies use FFloat.
+  - Against upstream float over a parameter grid (`tests/test_modal_coefficients.cc`), the error is under 1×10⁻⁵ for `f` and gain, and 0.9% worst case for `q` at its smallest values.
+- **The state translation is fixed point too.** `A = cos² − sin² − x` needs Q30, because it reaches about −1.4.
+- **Caching:**
+  - coefficients are recomputed only when a control value changes;
+  - the partial geometry (pf, sin, cos, sec, tan) is reused when only brightness or damping change.
+- **Cost of one coefficient update for 60 modes:**
+  - about 34k cycles when only brightness or damping change;
+  - about 58k cycles when pitch or structure change.
+
+## OP-1 voice (done for the modal model)
+
+`src/op1_voice.{h,cc}` (`RingsVoice`) is one Rings voice with no floating point at run time:
+- note on → impulse → excitation low-pass → modal resonator → ×1.4 → limiter.
+
+It replaces `rings::Part`, because the OP-1 core does voice allocation:
+- **Pitch** is `phase_increment >> 1`, giving Q31 `f/fs`.
+- **Strum impulse.** Upstream's impulse (up to ~6000) is fed to the filter as its exact linear effect: the first-sample output plus the state increment, all below ~1.
+- **Limiter.** `1/peak` is computed by one Newton step per sample, and the soft-limit curve comes from a table.
+- **Control rate.** Pitch and parameters are latched every `OP1RINGS_CONTROL_BLOCK_SIZE` (64) samples; audio runs in sub-blocks of 32.
+- **Pickup-position jumps** larger than 0.02 use a 4-segment linear weight ramp.
+
+**Against upstream Rings** (`harness/render_voice.cc`, 48 kHz, 24-sample blocks, polyphony 1, internal exciter): all 7 modal scenarios match at 44–66 dB SNR, with at most 0.05 dB mean spectral difference.
+
+**Blackfin cost of one voice with 60 modes, at 44.1 kHz** (`bench_voice.elf`, simulator cycles):
+
+| Case | Cycles per 64 samples | CPU |
+|---|---|---|
+| Steady notes | ~121k | ~84 MHz |
+| Knobs moving every block | ~155–165k | ~107–113 MHz |
+| Peak (strum, large position jump) | ~180k | ~125 MHz |
+
+The mode bank is ~91k of the steady figure. The rest (weights, exciter, limiter, control maths) is per-voice overhead to trim before running 6 voices: skip idle voices, and only redo exciter and control maths on change.
+
+**Compiler bug found:** with a constant shift, GCC 14's `__builtin_bfin_shl_fr1x32` emits a 16-bit shift. `ShlSat` uses `SIGNBITS` instead, and `tests/test_fixed.cc` checks constant shifts.
+
 ## Remaining work
 
-- **Per-block maths.** Software float is too slow even once per block (60 modes × ~40 float ops ≈ 800k cycles). Plan:
-  - a small custom float type (32-bit mantissa plus exponent, using the 5-cycle multiply and the `SIGNBITS` instruction; roughly 30× faster than libgcc's) for control-rate code;
-  - quarter-wave sine and cosine tables that include upstream's `tan` approximation, giving `f`, `q` and gain without `tan` or `sqrt`;
-  - recompute coefficients only when a parameter changes, spreading the work over a few blocks while knobs move.
-- **The rest of the voice, in fixed point:**
-  - excitation filter;
+- **Trim per-voice overhead:**
+  - idle-voice skipping;
+  - recompute the exciter only on change;
+  - optionally fewer modes per voice (Rings itself uses `64/poly − 4`).
+- **String model**, in fixed point:
+  - delay lines with Hermite interpolation;
+  - FIR and IIR damping;
+  - dispersion allpass;
   - plucker (noise burst plus comb);
-  - DC blocker;
-  - limiter;
-  - note filter;
-  - string model: delay lines with Hermite interpolation, FIR and IIR damping, dispersion allpass. Budget estimate ~40–60 cycles per string per sample in assembly.
-  - sympathetic strings (8 strings) and the reverb (16-bit buffer, as upstream).
+  - DC blocker.
+  - Then sympathetic strings (8 strings) and the reverb (16-bit buffer, as upstream).
 - **OP-1 integration** (see `docs/engine-interface.md`):
-  - redirect the phase engine's vtable entries for render (`0x1911150`) and note-on (`0x1911158`) to our functions;
-  - add our code as a new LDR block, using the memory region from `docs/memory-map.md`;
-  - map 128-sample blocks, the per-sample phase-increment pitch at `0xff801950`, and four `int16` params.
-- **On-device measurements before committing to a voice count:**
-  - CPU headroom: a CPU-burner hook on the phase engine, increased until audio glitches;
-  - whether idle voices are rendered;
-  - the clock speed.
+  - a freestanding build linked at the free region (`docs/memory-map.md`);
+  - a tool that adds our code to `OP1_vdk.ldr` as new blocks inserted just before FINAL, so all existing blocks keep their offsets;
+  - redirect the phase engine's vtable entries for render (`0x1911150`) and note-on (`0x1911158`).
+- **First device step: a probe build** (asks the user before flashing):
+  - the phase engine's render calls the stock render and then busy-waits for a fraction of the measured block period set by an encoder, so the glitch point gives the free CPU fraction;
+  - it checks a fill pattern over the free region to catch anything else using it.
 - **Sample rate.** Upstream assumes 48 kHz. The port takes `OP1RINGS_SAMPLE_RATE` (default 44100). The lookup tables don't depend on sample rate.

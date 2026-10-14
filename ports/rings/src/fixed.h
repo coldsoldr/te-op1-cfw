@@ -66,7 +66,7 @@ inline int32_t MulQ31(int32_t a, int32_t b) {
 // is the 4-instruction sequence used in the assembly kernels:
 //   A0 = a.H * b.H, A1 = a.H * b.L (M);  A1 += b.H * a.L (M);
 //   A1 = A1 >>> 15;  r = (A0 += A1);
-inline int32_t MulQ31Fast(int32_t a, int32_t b) {
+inline int32_t MulQ31FastReference(int32_t a, int32_t b) {
   int64_t a_hi = a >> 16, b_hi = b >> 16;
   int64_t a_lo = static_cast<uint32_t>(a) & 0xffff;
   int64_t b_lo = static_cast<uint32_t>(b) & 0xffff;
@@ -75,6 +75,20 @@ inline int32_t MulQ31Fast(int32_t a, int32_t b) {
   if (r > INT32_MAX) r = INT32_MAX;
   if (r < INT32_MIN) r = INT32_MIN;
   return static_cast<int32_t>(r);
+}
+
+inline int32_t MulQ31Fast(int32_t a, int32_t b) {
+#ifdef __bfin__
+  int32_t r;
+  __asm__("A0 = %1.H * %2.H, A1 = %1.H * %2.L (M);\n\t"
+          "A1 += %2.H * %1.L (M);\n\t"
+          "A1 = A1 >>> 15;\n\t"
+          "%0 = (A0 += A1);"
+          : "=d"(r) : "d"(a), "d"(b) : "A0", "A1");
+  return r;
+#else
+  return MulQ31FastReference(a, b);
+#endif
 }
 
 // (a * w) >> 15 for a 16-bit w (the top half of a Q31 weight):
@@ -89,17 +103,22 @@ inline int32_t MulQ31ByQ15(int32_t a, int16_t w) {
 }
 
 inline int32_t AddSat(int32_t a, int32_t b) {
+#ifdef __bfin__
+  return __builtin_bfin_add_fr1x32(a, b);
+#endif
   int64_t r = static_cast<int64_t>(a) + b;
   if (r > INT32_MAX) r = INT32_MAX;
   if (r < INT32_MIN) r = INT32_MIN;
   return static_cast<int32_t>(r);
 }
 
+// Saturating a << shift. Don't use __builtin_bfin_shl_fr1x32 here: with a
+// constant shift, GCC 14 emits a 16-bit shift (0x0100c3d6 << 1 gives
+// 0xffff87ac; found by tests/dump_modal.cc).
 inline int32_t ShlSat(int32_t a, int shift) {
-  int64_t r = static_cast<int64_t>(a) << shift;
-  if (r > INT32_MAX) r = INT32_MAX;
-  if (r < INT32_MIN) r = INT32_MIN;
-  return static_cast<int32_t>(r);
+  // No overflow iff a has at least `shift` redundant sign bits (SIGNBITS).
+  if (__builtin_clrsb(a) >= shift) return a << shift;
+  return a < 0 ? INT32_MIN : INT32_MAX;
 }
 
 }  // namespace op1rings
