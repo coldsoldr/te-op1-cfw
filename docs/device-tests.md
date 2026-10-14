@@ -185,7 +185,19 @@ The phase engine's render and note-on become Rings' modal model (`ports/rings/op
 - **`op1_246_rings_engine10b.op1`:** 10 modes, limiter fixed, as a fallback.
 - The unfixed `op1_246_rings_engine16.op1` and `op1_246_rings_engine.op1` were deleted to avoid mix-ups.
 
-**To check on the next flash:**
-- No pops when turning encoders on a ringing note.
-- The level: 1.9 dB louder than the first flash for quieter notes.
-- Which encoder does what. The code assumes params 0–3 = structure, brightness, damping, position; the screen still shows the phase engine graphics.
+**Second flash (`engine16b`):**
+- The user reports it "sounding amazing".
+- Encoders confirmed: blue = structure, green = brightness, white = damping, orange = position.
+- The ranges and release behaviour feel right.
+
+**Knob smoothing (`op1_246_rings_engine16c.op1`, not yet flashed).** This is `op1/param_smoother.h`:
+- **The filter:** a one-pole per voice and parameter, ~50 ms like upstream's `cv_scaler`, updated once per call.
+- **Snapping:** each value snaps to the target within 2^-12, so recomputing stops soon after a knob stops. Note-on snaps the voice to the current values.
+- **Effect** (`make step-params`, smoothed vs raw):
+  - a sudden +0.5 structure step goes from −31 dB to −70 dB re note;
+  - a +0.5 position step goes from −42 to −62 dB;
+  - all smoothed steps stay below −60 dB, and the test checks this.
+- **Sound with still knobs** is bit-identical to `engine16b` (same simulator checksum).
+- **Cost:** with all six ringing and three knobs turning continuously, the simulator measures ~226 MHz, about 70% of the measured free CPU. With knobs still it's 164 MHz. If that ever stutters, the coefficients could be recomputed every other call while smoothing.
+
+**To check on the next flash:** encoder turns, fast and slow, on six ringing notes. Listen for clicks and stutters.

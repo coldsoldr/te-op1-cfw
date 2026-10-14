@@ -6,12 +6,15 @@
 // half that (44.1 kHz, 64 samples per call; upstream runs at 48 kHz) and is
 // upsampled 2x, which halves its CPU cost.
 //
-// Encoders (params[0..3], assumed 0..32767): structure, brightness, damping,
-// position. The order is a guess to check on the device; see kParamOrder.
+// Encoders (params[0..3], 0..32767): blue = structure, green = brightness,
+// white = damping, orange = position (confirmed on the device). They're
+// smoothed per voice over ~50 ms, as upstream smooths its pots
+// (op1/param_smoother.h).
 
 #include <cstdint>
 
 #include "op1/op1.h"
+#include "op1/param_smoother.h"
 #include "src/fixed.h"
 #include "src/op1_voice.h"
 
@@ -67,6 +70,7 @@ int32_t Upsampler::extended_[kRingsBlockSize + 3];
 
 RingsVoice voices[op1::kNumVoices];
 Upsampler upsamplers[op1::kNumVoices];
+op1::ParamSmoother smoothers[op1::kNumVoices];
 bool initialized;
 int32_t out_buffer[kRingsBlockSize];
 
@@ -74,6 +78,7 @@ void InitAll() {
   for (int32_t v = 0; v < op1::kNumVoices; ++v) {
     voices[v].Init(OP1RINGS_MODES_PER_VOICE);
     upsamplers[v].Init();
+    smoothers[v].Init();
   }
   initialized = true;
 }
@@ -87,11 +92,16 @@ inline int32_t ParamToQ31(int16_t p) {
 extern "C" void RingsRender(void* self, int16_t* out, const int16_t* params) {
   if (!initialized) InitAll();
   const int32_t v = op1::VoiceIndex(self);
+  int32_t target[op1::ParamSmoother::kNumParams];
+  for (int32_t i = 0; i < op1::ParamSmoother::kNumParams; ++i) {
+    target[i] = ParamToQ31(params[kParamOrder[i]]);
+  }
+  const int32_t* smoothed = smoothers[v].Process(target);
   VoicePatch patch;
-  patch.structure = ParamToQ31(params[kParamOrder[0]]);
-  patch.brightness = ParamToQ31(params[kParamOrder[1]]);
-  patch.damping = ParamToQ31(params[kParamOrder[2]]);
-  patch.position = ParamToQ31(params[kParamOrder[3]]);
+  patch.structure = smoothed[0];
+  patch.brightness = smoothed[1];
+  patch.damping = smoothed[2];
+  patch.position = smoothed[3];
   // The OP-1's increment is f / 88200 * 2^32; at half the rate it doubles.
   // Pitch is latched at the start of the block (as the stock string engine
   // does).
@@ -103,7 +113,9 @@ extern "C" void RingsRender(void* self, int16_t* out, const int16_t* params) {
 
 extern "C" void RingsNoteOn(void* self) {
   if (!initialized) InitAll();
-  voices[op1::VoiceIndex(self)].NoteOn();
+  const int32_t v = op1::VoiceIndex(self);
+  voices[v].NoteOn();
+  smoothers[v].Snap();
 }
 
 extern "C" __attribute__((section(".op1header"), used))

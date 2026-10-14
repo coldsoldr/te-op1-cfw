@@ -93,7 +93,7 @@ $(BUILD)/op1_probe.elf: op1/probe.cc op1/support.cc op1/op1.h op1/link.ld | $(BU
 	$(BFIN_CXX) $(OP1_CXXFLAGS) op1/probe.cc op1/support.cc $(OP1_LDFLAGS) -o $@ -lgcc
 	$(BFIN_BIN)/bfin-elf-size -A $@
 
-$(BUILD)/op1_engine.elf: $(OP1_ENGINE_SRC) op1/op1.h op1/link.ld $(PORT_HDR) | $(BUILD)
+$(BUILD)/op1_engine.elf: $(OP1_ENGINE_SRC) op1/op1.h op1/param_smoother.h op1/link.ld $(PORT_HDR) | $(BUILD)
 	$(BFIN_CXX) $(OP1_CXXFLAGS) $(OP1_ENGINE_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
 	$(BFIN_BIN)/bfin-elf-size -A $@
 
@@ -110,7 +110,7 @@ SIM_CXXFLAGS := -O2 -std=c++17 -mcpu=bf524 -msim -fno-exceptions -fno-rtti \
 SIM_ENGINE_SRC := tests/sim_engine.cc op1/engine.cc src/op1_voice.cc \
                   src/modal_resonator.cc src/fixed_tables.cc src/mode_bank_bfin.S
 
-$(BUILD)/sim_engine.elf: $(SIM_ENGINE_SRC) op1/op1.h $(PORT_HDR) | $(BUILD)
+$(BUILD)/sim_engine.elf: $(SIM_ENGINE_SRC) op1/op1.h op1/param_smoother.h $(PORT_HDR) | $(BUILD)
 	$(BFIN_CXX) $(SIM_CXXFLAGS) $(SIM_ENGINE_SRC) -o $@
 
 sim-engine: $(BUILD)/sim_engine.elf
@@ -125,7 +125,7 @@ STEP_PARAMS_SRC := tests/step_params.cc src/modal_resonator.cc src/op1_voice.cc 
                    src/fixed_tables.cc $(MI)/rings/dsp/resonator.cc \
                    $(MI)/rings/resources.cc $(MI)/stmlib/dsp/units.cc
 
-$(BUILD)/step_params: $(STEP_PARAMS_SRC) $(PORT_HDR) | $(BUILD)
+$(BUILD)/step_params: $(STEP_PARAMS_SRC) op1/param_smoother.h $(PORT_HDR) | $(BUILD)
 	$(HOST_CXX) $(HOST_CXXFLAGS) $(STEP_PARAMS_SRC) -o $@ -lm
 
 step-params: $(BUILD)/step_params

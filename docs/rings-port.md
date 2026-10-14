@@ -132,6 +132,11 @@ The mode bank is ~91k of the steady figure. The rest (weights, exciter, limiter,
   - Rings runs at 44.1 kHz on 64 samples per call, so its Q31 frequency `f / 44100` is the OP-1 increment `f / 88200 × 2^32` unchanged.
   - A 4-point Lagrange 2× upsampler (`Upsampler` in `op1/engine.cc`) produces the 128 output samples: −0.4 dB at 10 kHz, −1.6 dB at 15 kHz, images at about −83 dB, and 2 samples of latency.
   - Running at half rate keeps the CPU near the 44.1 kHz figures instead of doubling it.
+- **Knob smoothing** (`op1/param_smoother.h`): this stands in for upstream's `cv_scaler` pot filter, a one-pole of ~50 ms per voice and parameter.
+  - Values snap to the target within 2^-12, and note-on snaps.
+  - Raw encoder steps would otherwise reach the resonator as coefficient steps, which click on large jumps: −31 dB re note for a +0.5 structure step, −70 dB smoothed.
+  - Worst case, with six voices ringing and three knobs turning, it costs ~226 MHz in the simulator.
+- **Mono limiter fix:** its gain below threshold was 0.896 instead of 1.12, so it jumped 25% whenever the peak crossed 1.0. That caused the first flash's pops. `make step-params` checks a sustained note for discontinuities.
 - **Idle cost:**
   - idle voices sleep after 8 silent blocks;
   - the exciter sleeps a few ms after each strum.

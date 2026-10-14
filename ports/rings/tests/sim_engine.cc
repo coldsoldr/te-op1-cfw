@@ -65,5 +65,20 @@ int main(int argc, char** argv) {
     if (b > 0) six.Add(harness::ReadCycles() - t0);
   }
   six.Print("6 renders/block, 6 active", op1::kBlockSize / 2);
+
+  // All six playing while structure, brightness and damping are turned
+  // continuously (a step every block, so the coefficients are recomputed in
+  // every call): the worst case for knob movement.
+  harness::CycleStats turning;
+  int16_t moving[4] = { params[0], params[1], params[2], params[3] };
+  for (int b = 0; b < 50; ++b) {
+    moving[0] = static_cast<int16_t>(8192 + b * 300);
+    moving[1] = static_cast<int16_t>(19660 - b * 200);
+    moving[2] = static_cast<int16_t>(22937 - b * 200);
+    uint64_t t0 = harness::ReadCycles();
+    for (int v = 0; v < op1::kNumVoices; ++v) RingsRender(Voice(v), out, moving);
+    if (b > 0) turning.Add(harness::ReadCycles() - t0);
+  }
+  turning.Print("6 active, knobs turning", op1::kBlockSize / 2);
   return 0;
 }

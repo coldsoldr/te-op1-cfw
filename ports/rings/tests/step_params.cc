@@ -12,19 +12,20 @@
 // Part 1: upstream float Resonator vs the port's ModalResonator, same input
 //         and steps, 32-sample blocks (is the port worse than upstream?).
 // Part 2: the OP-1 voice (RingsVoice::RenderMono, 64 samples per call as in
-//         op1/engine.cc), stepped raw vs through a one-pole smoother.
+//         op1/engine.cc), stepped raw vs through the engine's ParamSmoother.
 //
-// Check: a sustained note with fixed parameters must have no burst above
+// Checks: a sustained note with fixed parameters must have no burst above
 // -60 dB (the mono limiter once switched gain by 25% when its peak crossed
-// 1.0, which popped).
+// 1.0, which popped), and smoothed steps of any size must stay below -60 dB.
 //
-//   make step-params   (exits 1 if the check fails)
+//   make step-params   (exits 1 if a check fails)
 
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <vector>
 
+#include "op1/param_smoother.h"
 #include "rings/dsp/resonator.h"
 #include "src/ffloat.h"
 #include "src/fixed.h"
@@ -86,15 +87,6 @@ double HfDb(const std::vector<double>& x, int from, int to) {
 double Click(const std::vector<double>& x) { return HfDb(x, kStepAt - 32, kStepAt + 3968); }
 double Floor(const std::vector<double>& x) { return HfDb(x, kStepAt - 4000, kStepAt - 64); }
 
-// Parameter values per block: base, then base + delta from the step on,
-// either at once or through a one-pole smoother (coefficient per block).
-double Value(int p, double delta, int block_start, double* smoothed, double coefficient) {
-  double target = kBase[p] + (block_start >= kStepAt ? delta : 0.0);
-  if (coefficient <= 0.0) return target;
-  *smoothed += coefficient * (target - *smoothed);
-  return *smoothed;
-}
-
 std::vector<double> RenderUpstream(int p, double delta) {
   static rings::Resonator r;
   r.Init();
@@ -139,22 +131,29 @@ std::vector<double> RenderPort(int p, double delta) {
   return y;
 }
 
-std::vector<double> RenderVoice(int p, double delta, double coefficient) {
+// The OP-1 voice as op1/engine.cc drives it: raw parameters, or through the
+// engine's ParamSmoother (snapped at note-on).
+std::vector<double> RenderVoice(int p, double delta, bool smooth) {
   static op1rings::RingsVoice voice;
+  static op1::ParamSmoother smoother;
   voice.Init(kModes);
   voice.NoteOn();
+  smoother.Init();
+  smoother.Snap();
   const uint32_t inc = static_cast<uint32_t>(220.0 / kRate * 4294967296.0);
-  double smoothed = kBase[p];
   std::vector<double> y;
   int32_t out[64];
   for (int b = 0; b < kLength; b += 64) {
-    double v[4] = { kBase[0], kBase[1], kBase[2], kBase[3] };
-    v[p] = Value(p, delta, b, &smoothed, coefficient);
+    int32_t target[4];
+    for (int i = 0; i < 4; ++i) {
+      target[i] = Q31(kBase[i] + (i == p && b >= kStepAt ? delta : 0.0));
+    }
+    const int32_t* v = smooth ? smoother.Process(target) : target;
     op1rings::VoicePatch patch;
-    patch.structure = Q31(v[0]);
-    patch.brightness = Q31(v[1]);
-    patch.damping = Q31(v[2]);
-    patch.position = Q31(v[3]);
+    patch.structure = v[0];
+    patch.brightness = v[1];
+    patch.damping = v[2];
+    patch.position = v[3];
     voice.RenderMono(&inc, patch, out, 64);
     for (int i = 0; i < 64; ++i) y.push_back(out[i] / 134217728.0);
   }
@@ -167,7 +166,7 @@ std::vector<double> RenderVoice(int p, double delta, double coefficient) {
 // Worst 32-sample burst above 9 kHz from 100 ms on, in dB relative to the
 // RMS of the surrounding 2048 samples. Returns the worst value.
 double SustainWorst(int* where) {
-  std::vector<double> x = RenderVoice(0, 0.0, 0.0);
+  std::vector<double> x = RenderVoice(0, 0.0, false);
   std::vector<double> hf = HighPass(x);
   double worst = -200.0;
   for (int n = 4410; n + 32 + 1024 <= static_cast<int>(x.size()); n += 8) {
@@ -186,10 +185,10 @@ double SustainWorst(int* where) {
 int main() {
   int where = 0;
   const double sustain = SustainWorst(&where);
-  const bool pass = sustain < -60.0;
+  bool pass = sustain < -60.0;
   printf("Sustained note, fixed parameters: worst HF burst %.1f dB at sample %d (call %d +%d): %s\n\n",
          sustain, where, where / 64, where % 64, pass ? "PASS (< -60 dB)" : "FAIL (>= -60 dB)");
-  const double kDeltas[] = { 0.01, 0.05, 0.2 };
+  const double kDeltas[] = { 0.01, 0.05, 0.2, 0.5 };
   printf("Part 1: resonator only, instant step: HF burst, dB re note (floor / after step)\n");
   printf("%-11s %6s %18s %18s\n", "param", "delta", "upstream", "port");
   for (int p = 0; p < 4; ++p) {
@@ -200,13 +199,18 @@ int main() {
     }
   }
   printf("\nPart 2: OP-1 voice, 64-sample calls: HF burst after the step, dB re note\n");
-  printf("%-11s %6s %8s %8s %12s %12s\n", "param", "delta", "floor", "raw", "smooth 0.1", "smooth 0.03");
+  printf("%-11s %6s %8s %8s %10s\n", "param", "delta", "floor", "raw", "smoothed");
+  bool smooth_pass = true;
   for (int p = 0; p < 4; ++p) {
     for (double delta : kDeltas) {
-      std::vector<double> raw = RenderVoice(p, delta, 0.0);
-      printf("%-11s %6.2f %8.1f %8.1f %12.1f %12.1f\n", kNames[p], delta, Floor(raw),
-             Click(raw), Click(RenderVoice(p, delta, 0.1)), Click(RenderVoice(p, delta, 0.03)));
+      if (kBase[p] + delta > 1.0) continue;
+      std::vector<double> raw = RenderVoice(p, delta, false);
+      const double smoothed = Click(RenderVoice(p, delta, true));
+      if (smoothed >= -60.0) smooth_pass = false;
+      printf("%-11s %6.2f %8.1f %8.1f %10.1f\n", kNames[p], delta, Floor(raw), Click(raw), smoothed);
     }
   }
-  return pass ? 0 : 1;
+  printf("Smoothed steps (engine's ParamSmoother): %s\n",
+         smooth_pass ? "PASS (all < -60 dB)" : "FAIL (some >= -60 dB)");
+  return pass && smooth_pass ? 0 : 1;
 }

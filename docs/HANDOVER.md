@@ -48,7 +48,8 @@ Non-negotiable rules (detail in `docs/brick-safety.md`):
   - **Fixed and tested** (`make step-params`); details in `docs/device-tests.md`, Test 2.
 
 **Built and verified, not flashed** (each passes `verify_bootloader.py` and decodes to stock with only `OP1_vdk.ldr` changed):
-- **`op1 firmware/op1_246_rings_engine16b.op1`:** 16 modes, limiter fixed. **Flash this next.**
+- **`op1 firmware/op1_246_rings_engine16c.op1`:** 16 modes, limiter fixed, plus ~50 ms knob smoothing. **Flash this next.**
+- **`op1 firmware/op1_246_rings_engine16b.op1`:** the same without smoothing. Flashed; the user says it's "sounding amazing".
 - **`op1 firmware/op1_246_rings_engine10b.op1`:** 10 modes, limiter fixed, as a fallback.
 
 **Git:** branch `firmware-analysis-tooling` (the user wants to stay on it), pushed to `origin` (`<public repo URL>`). Latest commits:
@@ -158,16 +159,31 @@ The full detail is in `docs/rings-port.md`.
 1. ~~Adapt the engine to 88.2 kHz.~~ Done (2026-10-14): Rings at 44.1 kHz plus a 2× upsampler, with the packages rebuilt.
 2. ~~Probe v3.~~ Done (2026-10-14): ~324 MHz free, the lowest F reads F3, and 88.2 kHz is confirmed. Modes per voice raised from 10 to 16.
 3. ~~First Rings flash.~~ Done (2026-10-14): it sounds right, with no stutters, but encoder turns popped. The limiter bug is fixed.
-4. **Flash `op1_246_rings_engine16b.op1`** and check:
-   - no pops when turning encoders;
-   - the level (quieter notes are now 1.9 dB louder);
-   - the encoder mapping (`kParamOrder` in `op1/engine.cc`).
+4. ~~Second flash (`engine16b`).~~ Done: it sounds right, and the encoders are confirmed.
+   - Blue = structure, green = brightness, white = damping, orange = position.
+   - The ranges and release behaviour stay as they are.
+5. **Knob smoothing:** built as `engine16c` (`op1/param_smoother.h`); flash it.
 
-   If small clicks or zipper noise remain on fast turns, add upstream-style parameter smoothing (a one-pole, ~50 ms, as `cv_scaler.cc`) in `op1/engine.cc`. `tests/step_params.cc` already compares smoothed and raw steps.
-5. **Then:**
-   - the string model, then sympathetic strings and the other Rings models;
-   - the Rings screen (reverse-engineer the Pd screen class; the user's SVG and its handover are in `incoming/`);
-   - possibly a separate 16th engine (needs the engine-list limit, the menu, the screen and preset handling; see the notes in `docs/engine-interface.md`).
+**Agreed plan from here (user decisions, 2026-10-14):**
+- **Controls:**
+  - **Model select = shift + blue, polyphony = shift + green.** No encoder push-clicks for now.
+  - **Polyphony has 4 states: 1, 2, 4 and "all".** States 1/2/4 trade voices for resonances as Rings does (64/poly − 4 = 60/28/12 modes), using least-recently-used resonator assignment; a stolen OP-1 voice fades out. "All" is 6 voices × 16 modes and lights all three poly squares.
+  - Store the model and polyphony in presets if there's a spare slot.
+- **Steps:**
+  1. **FM voice:**
+     - convert the float copy in `src/fm_voice.*` to fixed point;
+     - compare against upstream in the harness and measure the cost;
+     - make a test package where FM replaces modal (no model switching yet).
+     - Upstream mapping: structure = ratio, brightness = FM amount, damping = decay, position = feedback.
+  2. **In parallel, read-only investigation of the screen and input code,** written up in `docs/screen-interface.md`:
+     - the phase engine's screen class: how it loads `content/display/pd.svg`, looks up ids (`static`, `blue`, `green`, `white`, `red1`, `red2`, `new`) and updates them;
+     - the SVG API it calls;
+     - how encoder turns and shift reach the synth screen (`KeyHandler.cpp`, `CtlKnob`, `shiftkey`);
+     - where engine parameters live in presets (`Ranges.cpp`: 8 knob slots per synth).
+  3. **Rings screen, first version:** add `content/display/rings.svg` to the package, hook the Pd screen class to load it, and animate the four controls (spec in `incoming/rings-handover.md`).
+  4. **Model and polyphony switching** on shift + blue / shift + green, with the screen buttons.
+  5. **The string model,** which enables models 1, 2, 4 and 5, then the reverb.
+  6. Possibly a separate 16th engine (needs the engine list, menu, screen and presets; see `docs/engine-interface.md`).
 
 **Other user wishes, still open:**
 - **Revert COW → POLY.** Any build from stock already shows POLY.
