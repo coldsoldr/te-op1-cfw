@@ -1,0 +1,4 @@
+op1 firmware/
+.venv/
+__pycache__/
+*.egg-info/
