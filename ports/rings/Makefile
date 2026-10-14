@@ -75,5 +75,30 @@ bench-ref: $(BUILD)/bench_ref.elf
 bench-port: $(BUILD)/bench_port.elf
 	$(BFIN_RUN) $< $(BENCH_SECONDS)
 
+# --- Images injected into the OP-1 app (tools/inject_app.py) -------------
+#   make op1-probe    CPU/memory probe (op1/probe.cc)  -> build/op1_probe.elf
+#   make op1-engine   Rings engine (op1/engine.cc)     -> build/op1_engine.elf
+
+OP1_CXXFLAGS := -O2 -std=c++17 -mcpu=bf524 -ffreestanding -fno-exceptions \
+                -fno-rtti -fno-threadsafe-statics -fno-use-cxa-atexit \
+                -ffunction-sections -fdata-sections -I. $(WARN)
+OP1_LDFLAGS  := -nostdlib -nostartfiles -T op1/link.ld -Wl,--gc-sections \
+                -Wl,--no-undefined
+OP1_ENGINE_SRC := op1/engine.cc op1/support.cc src/op1_voice.cc \
+                  src/modal_resonator.cc src/fixed_tables.cc src/mode_bank_bfin.S
+
+.PHONY: op1-probe op1-engine
+
+$(BUILD)/op1_probe.elf: op1/probe.cc op1/support.cc op1/op1.h op1/link.ld | $(BUILD)
+	$(BFIN_CXX) $(OP1_CXXFLAGS) op1/probe.cc op1/support.cc $(OP1_LDFLAGS) -o $@ -lgcc
+	$(BFIN_BIN)/bfin-elf-size -A $@
+
+$(BUILD)/op1_engine.elf: $(OP1_ENGINE_SRC) op1/op1.h op1/link.ld $(PORT_HDR) | $(BUILD)
+	$(BFIN_CXX) $(OP1_CXXFLAGS) $(OP1_ENGINE_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
+	$(BFIN_BIN)/bfin-elf-size -A $@
+
+op1-probe: $(BUILD)/op1_probe.elf
+op1-engine: $(BUILD)/op1_engine.elf
+
 clean:
 	rm -rf $(BUILD) $(OUT)

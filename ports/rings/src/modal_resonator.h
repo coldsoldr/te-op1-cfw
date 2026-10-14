@@ -86,6 +86,12 @@ class ModalResonator {
   Mode modes_[kMaxModalModes];
   Geometry geometry_[kMaxModalModes];
   int32_t log2_pf_[kMaxModalModes];  // log2(partial frequency), Q24
+
+  // Scratch buffers, kept off the stack: on the OP-1 the render call may run
+  // on a small interrupt stack.
+  int32_t scratch_in_[kMaxModalBlockSize];
+  int32_t scratch_start_[kMaxModalModes];
+  int32_t scratch_end_[kMaxModalModes];
 };
 
 }  // namespace op1rings

@@ -115,6 +115,32 @@ The mode bank is ~91k of the steady figure. The rest (weights, exciter, limiter,
 
 **Compiler bug found:** with a constant shift, GCC 14's `__builtin_bfin_shl_fr1x32` emits a 16-bit shift. `ShlSat` uses `SIGNBITS` instead, and `tests/test_fixed.cc` checks constant shifts.
 
+## OP-1 build and injection (done; not yet run on the device)
+
+- `ports/rings/op1/` holds the freestanding images, built with `make op1-probe` and `make op1-engine`:
+  - linked at `0x02c00000` (`link.ld`);
+  - no C library and no startup code;
+  - an `OP1X` header with the entry points;
+  - no run-time initialisers;
+  - large temporaries kept off the stack, because render may run on a small interrupt stack.
+- `op1/engine.cc`:
+  - six `RingsVoice`s, voice index = `(this - 0xffb00000) / 28`;
+  - pitch from the phase-increment buffer at `0xff801950`;
+  - parameters from the four `int16` values;
+  - mono output (odd + even modes) through a mono limiter.
+- **Idle cost:**
+  - idle voices sleep after 8 silent blocks;
+  - the exciter sleeps a few ms after each strum.
+- `tests/sim_engine.cc` calls the real entry points in the simulator. With 10 modes per voice:
+
+| Case | CPU |
+|---|---|
+| 1 voice ringing, 5 idle | ~31 MHz |
+| All 6 ringing | ~116 MHz |
+
+- `tools/inject_app.py` adds the image to `OP1_vdk.ldr` just before FINAL and patches the vtable.
+- Device tests and packages: `docs/device-tests.md`.
+
 ## Remaining work
 
 - **Trim per-voice overhead:**
@@ -128,11 +154,6 @@ The mode bank is ~91k of the steady figure. The rest (weights, exciter, limiter,
   - plucker (noise burst plus comb);
   - DC blocker.
   - Then sympathetic strings (8 strings) and the reverb (16-bit buffer, as upstream).
-- **OP-1 integration** (see `docs/engine-interface.md`):
-  - a freestanding build linked at the free region (`docs/memory-map.md`);
-  - a tool that adds our code to `OP1_vdk.ldr` as new blocks inserted just before FINAL, so all existing blocks keep their offsets;
-  - redirect the phase engine's vtable entries for render (`0x1911150`) and note-on (`0x1911158`).
-- **First device step: a probe build** (asks the user before flashing):
-  - the phase engine's render calls the stock render and then busy-waits for a fraction of the measured block period set by an encoder, so the glitch point gives the free CPU fraction;
-  - it checks a fill pattern over the free region to catch anything else using it.
+- **Run the device tests** (`docs/device-tests.md`), then size modes per voice from the measured free CPU.
+- **Screen.** Your `incoming/rings.svg` (with `rings-handover.md`) defines a Rings screen. Using it means reverse-engineering the phase engine's screen class: it looks up its own SVG element IDs (e.g. "blue"), so swapping `pd.svg` alone could break it.
 - **Sample rate.** Upstream assumes 48 kHz. The port takes `OP1RINGS_SAMPLE_RATE` (default 44100). The lookup tables don't depend on sample rate.

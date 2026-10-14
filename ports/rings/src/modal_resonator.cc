@@ -276,7 +276,7 @@ void ModalResonator::Process(const int32_t* in, int32_t* out, int32_t* aux,
   int32_t n = (num_modes + 1) & ~1;
   if (n > resolution_) n = resolution_;
 
-  int32_t in_scaled[kMaxModalBlockSize];
+  int32_t* in_scaled = scratch_in_;
   for (size_t s = 0; s < size; ++s) {
     in_scaled[s] = in[s] >> 3;   // upstream: input * 0.125
   }
@@ -290,8 +290,8 @@ void ModalResonator::Process(const int32_t* in, int32_t* out, int32_t* aux,
   const int32_t segments = large_jump ? 4 : 1;
   const size_t segment_size = size / segments;
   const int32_t recip_segment_size = kOne / static_cast<int32_t>(segment_size);
-  int32_t start[kMaxModalModes];
-  int32_t end[kMaxModalModes];
+  int32_t* start = scratch_start_;
+  int32_t* end = scratch_end_;
   ComputeWeights(previous_position_, start, n);
   for (int32_t k = 0; k < segments; ++k) {
     int32_t position = k + 1 == segments

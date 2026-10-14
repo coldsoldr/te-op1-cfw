@@ -77,10 +77,23 @@ class Limiter {
   int32_t gain_;   // 1 / max(peak, 1), Q31
 };
 
+// Mono limiter for the OP-1 build (the voice's two outputs are summed): same
+// peak follower as Rings' limiter, with the gain (1 / peak) updated once per
+// sub-block and the fixed gains folded into one multiply.
+class MonoLimiter {
+ public:
+  void Init();
+  void Process(int32_t* x, size_t size);
+
+ private:
+  int32_t peak_;   // Q27
+  int32_t gain_;   // 1.4 * 0.8 / max(peak, 1), Q30
+};
+
 class RingsVoice {
  public:
   void Init(int32_t resolution);
-  void NoteOn() { strum_ = true; }
+  void NoteOn() { strum_ = true; silent_blocks_ = 0; }
 
   // phase_increment: size values (f / fs * 2^32); out, aux: size Q27 samples
   // (after the limiter, ~[-1, 1]). size must be a multiple of
@@ -88,14 +101,22 @@ class RingsVoice {
   void Render(const uint32_t* phase_increment, const VoicePatch& patch,
               int32_t* out, int32_t* aux, size_t size);
 
+  // OP-1 build: odd + even modes, mono limiter. out: size Q27 samples.
+  void RenderMono(const uint32_t* phase_increment, const VoicePatch& patch,
+                  int32_t* out, size_t size);
+
  private:
   void RenderSubblock(uint32_t phase_increment, const VoicePatch& patch,
                       int32_t* out, int32_t* aux);
 
   bool strum_;
+  int32_t silent_blocks_;               // consecutive renders below -96 dBFS
+  int32_t excitation_[kSubblockSize];   // scratch, kept off the stack
+  int32_t aux_[kSubblockSize];          // scratch for RenderMono
   ModalResonator resonator_;
   ExcitationFilter excitation_filter_;
   Limiter limiter_;
+  MonoLimiter mono_limiter_;
 };
 
 }  // namespace op1rings

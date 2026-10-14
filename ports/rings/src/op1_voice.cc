@@ -89,14 +89,23 @@ void ExcitationFilter::AddImpulse(int32_t first_output, int32_t s1, int32_t s2) 
 
 void ExcitationFilter::Process(int32_t* out, size_t size) {
   int32_t s1 = s1_, s2 = s2_;
+  // The exciter only rings for a few ms after a strum: once its state has
+  // decayed below ~2e-6, it outputs silence until the next impulse.
+  const int32_t kQuiet = 1 << 8;
+  if (!pending_ && (s1 < 0 ? -s1 : s1) < kQuiet && (s2 < 0 ? -s2 : s2) < kQuiet) {
+    for (size_t i = 0; i < size; ++i) out[i] = 0;
+    s1_ = s2_ = 0;
+    return;
+  }
   for (size_t i = 0; i < size; ++i) {
     // hp = (0 - k s1 - s2) h; bp = g hp + s1; s1 = g hp + bp;
-    // lp = g bp + s2; s2 = g bp + lp.
-    int32_t hp = MulQ31Fast(-ShlSat(MulQ31Fast(s1, k_), 2) - s2, h_);
-    int32_t g_hp = ShlSat(MulQ31Fast(hp, g_), 2);
+    // lp = g bp + s2; s2 = g bp + lp. The states stay within about +-2 and
+    // g, k within 4 (Q29), so the Q25 -> Q27 shifts can't overflow.
+    int32_t hp = MulQ31Fast(-(MulQ31Fast(s1, k_) << 2) - s2, h_);
+    int32_t g_hp = MulQ31Fast(hp, g_) << 2;
     int32_t bp = g_hp + s1;
     s1 = g_hp + bp;
-    int32_t g_bp = ShlSat(MulQ31Fast(bp, g_), 2);
+    int32_t g_bp = MulQ31Fast(bp, g_) << 2;
     int32_t lp = g_bp + s2;
     s2 = g_bp + lp;
     if (pending_) {
@@ -145,14 +154,50 @@ void Limiter::Process(int32_t* l, int32_t* r, size_t size, int32_t pre_gain_q28)
   }
 }
 
+// --- MonoLimiter ----------------------------------------------------------
+
+void MonoLimiter::Init() {
+  peak_ = 1 << 26;          // 0.5
+  gain_ = 962072674;        // 1.4 * 0.8 in Q30
+}
+
+void MonoLimiter::Process(int32_t* x, size_t size) {
+  const int32_t kAttack = 107374182;     // 0.05, Q31
+  const int32_t kRelease = 42950;        // 0.00002, Q31
+  const int32_t k1_4 = 375809638;        // 1.4, Q28
+  const int32_t k1_12 = 962072674;       // 1.4 * 0.8, Q30
+  int32_t peak = peak_;
+  const int32_t gain = gain_;
+  for (size_t i = 0; i < size; ++i) {
+    // Peak follower on the pre-gain signal (x * 1.4).
+    int32_t pre = MulQ31Fast(x[i], k1_4) << 3;   // Q27 (no overflow: |x| < 2)
+    int32_t a = pre < 0 ? -pre : pre;
+    int32_t error = a - peak;
+    peak += MulQ31Fast(error, error > 0 ? kAttack : kRelease);
+    // y = SoftLimit(x * 1.4 * 0.8 / max(peak, 1)).
+    x[i] = SoftLimitQ27(ShlSat(MulQ31Fast(x[i], gain), 1));
+  }
+  peak_ = peak;
+  // Gain for the next sub-block: 1.4 * 0.8 / max(peak, 1). Once per
+  // sub-block, so FFloat's self-seeding reciprocal is affordable.
+  if (peak <= (1 << 27)) {
+    gain_ = k1_12;
+  } else {
+    static constexpr FFloat k1_12f = FFloat(1.12);
+    gain_ = (k1_12f * FFloat::Reciprocal(FFloat::FromQ(peak, 27))).ToQ(30);
+  }
+}
+
 // --- RingsVoice -----------------------------------------------------------
 
 void RingsVoice::Init(int32_t resolution) {
   strum_ = false;
+  silent_blocks_ = 0;
   resonator_.Init();
   resonator_.set_resolution(resolution);
   excitation_filter_.Init();
   limiter_.Init();
+  mono_limiter_.Init();
 }
 
 void RingsVoice::RenderSubblock(uint32_t phase_increment, const VoicePatch& patch,
@@ -181,7 +226,7 @@ void RingsVoice::RenderSubblock(uint32_t phase_increment, const VoicePatch& patc
                                   (g * ghx).Scaled(1).ToQ27());
     strum_ = false;
   }
-  int32_t excitation[kSubblockSize];
+  int32_t* excitation = excitation_;
   excitation_filter_.Process(excitation, kSubblockSize);
 
   resonator_.set_frequency(f0);
@@ -191,16 +236,56 @@ void RingsVoice::RenderSubblock(uint32_t phase_increment, const VoicePatch& patc
   resonator_.set_position(patch.position);
   resonator_.Process(excitation, out, aux, kSubblockSize);
 
-  limiter_.Process(out, aux, kSubblockSize, 375809638);   // 1.4 in Q28
 }
 
 void RingsVoice::Render(const uint32_t* phase_increment, const VoicePatch& patch,
                         int32_t* out, int32_t* aux, size_t size) {
+  // A voice that has been silent for a while costs nothing until its next
+  // note: the OP-1 may render all 6 voices every block.
+  const int32_t kSilence = 1 << 11;          // ~ -96 dBFS in Q27
+  const int32_t kSilentBlocksToSleep = 8;
+  if (!strum_ && silent_blocks_ >= kSilentBlocksToSleep) {
+    for (size_t i = 0; i < size; ++i) out[i] = aux[i] = 0;
+    return;
+  }
   for (size_t i = 0; i < size; i += kControlBlockSize) {
     for (size_t j = 0; j < kControlBlockSize; j += kSubblockSize) {
       RenderSubblock(phase_increment[i], patch, out + i + j, aux + i + j);
+      limiter_.Process(out + i + j, aux + i + j, kSubblockSize, 375809638);  // 1.4, Q28
     }
   }
+  int32_t peak = 0;
+  for (size_t i = 0; i < size; ++i) {
+    int32_t a = out[i] < 0 ? -out[i] : out[i];
+    int32_t b = aux[i] < 0 ? -aux[i] : aux[i];
+    if (a > peak) peak = a;
+    if (b > peak) peak = b;
+  }
+  silent_blocks_ = peak < kSilence ? silent_blocks_ + 1 : 0;
+}
+
+void RingsVoice::RenderMono(const uint32_t* phase_increment,
+                            const VoicePatch& patch, int32_t* out, size_t size) {
+  const int32_t kSilence = 1 << 11;          // ~ -96 dBFS in Q27
+  const int32_t kSilentBlocksToSleep = 8;
+  if (!strum_ && silent_blocks_ >= kSilentBlocksToSleep) {
+    for (size_t i = 0; i < size; ++i) out[i] = 0;
+    return;
+  }
+  int32_t peak = 0;
+  for (size_t i = 0; i < size; i += kControlBlockSize) {
+    for (size_t j = 0; j < kControlBlockSize; j += kSubblockSize) {
+      int32_t* o = out + i + j;
+      RenderSubblock(phase_increment[i], patch, o, aux_);
+      for (size_t k = 0; k < kSubblockSize; ++k) {
+        o[k] += aux_[k];
+        int32_t a = o[k] < 0 ? -o[k] : o[k];
+        if (a > peak) peak = a;
+      }
+      mono_limiter_.Process(o, kSubblockSize);
+    }
+  }
+  silent_blocks_ = peak < kSilence ? silent_blocks_ + 1 : 0;
 }
 
 }  // namespace op1rings
