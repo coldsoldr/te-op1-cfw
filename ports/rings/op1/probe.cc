@@ -226,5 +226,5 @@ extern "C" void ProbeRender(void* self, int16_t* out, const int16_t* params) {
 
 extern "C" __attribute__((section(".op1header"), used))
 const op1::Header op1_header = {
-  op1::kHeaderMagic, kVersion, &ProbeRender, nullptr, nullptr, { 0, 0, 0 },
+  op1::kHeaderMagic, kVersion, &ProbeRender, nullptr, nullptr, nullptr, 0, 0,
 };

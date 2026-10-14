@@ -66,6 +66,21 @@ inline int16_t Saturate16(int32_t x) {
   return static_cast<int16_t>(x > 32767 ? 32767 : (x < -32768 ? -32768 : x));
 }
 
+// A patch tools/inject_app.py applies to the app, after checking the stock
+// value. kWord32 replaces a 32-bit word; kImm16Lo/kImm16Hi replace an
+// instruction's 16-bit immediate (at `address`) with the low/high half of
+// `value`, so an R.L/R.H pair can be pointed at our data.
+struct Patch {
+  uint32_t address;
+  uint32_t kind;
+  uint32_t stock;
+  const void* value;      // an address in the image (a link-time constant)
+};
+
+const uint32_t kWord32 = 0;
+const uint32_t kImm16Lo = 1;
+const uint32_t kImm16Hi = 2;
+
 // Image header at the start of the injected region, read by
 // tools/inject_app.py to find the entry points.
 struct Header {
@@ -74,7 +89,9 @@ struct Header {
   RenderFn render;        // render entry
   VoidFn note_on;         // note-on entry (null = keep stock)
   VoidFn note_off;        // note-off entry (null = keep stock)
-  uint32_t reserved[3];
+  const Patch* patches;   // further patches (null = none)
+  uint32_t num_patches;
+  uint32_t reserved;
 };
 
 const uint32_t kHeaderMagic = 0x5831504f;  // "OP1X"

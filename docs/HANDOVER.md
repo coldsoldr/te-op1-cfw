@@ -47,11 +47,16 @@ Non-negotiable rules (detail in `docs/brick-safety.md`):
   - **Cause:** a wrong mono-limiter constant (0.896 instead of 1.12) made the gain jump 25% whenever the limiter's peak crossed 1.0.
   - **Fixed and tested** (`make step-params`); details in `docs/device-tests.md`, Test 2.
 
-**Built and verified, not flashed** (each passes `verify_bootloader.py` and decodes to stock with only `OP1_vdk.ldr` changed):
-- **`op1 firmware/op1_246_rings_engine16c.op1`:** 16 modes, limiter fixed, plus ~50 ms knob smoothing. **Flash this next.**
-- **`op1 firmware/op1_246_rings_engine16b.op1`:** the same without smoothing. Flashed; the user says it's "sounding amazing".
-- **`op1 firmware/op1_246_rings_engine10b.op1`:** 10 modes, limiter fixed, as a fallback.
-- **`op1 firmware/op1_246_rings_fm.op1`:** the FM voice in place of modal (with smoothing). A temporary test build; see `docs/device-tests.md`, Test 3.
+**Flashed and confirmed by the user (2026-10-14):**
+- **`op1_246_rings_engine16c.op1`:** modal, 16 modes, limiter fixed, ~50 ms knob smoothing.
+- **`op1_246_rings_fm.op1`:** the FM voice in place of modal.
+- Both "sound great"; all encoders work. (`engine16b` and `engine10b` are older builds.)
+
+**Built and verified, not flashed:**
+- **`op1_246_rings_screen1.op1`:** `engine16c` plus the first Rings screen, on the device since 2026-10-14. **Everything worked;** see `docs/device-tests.md`, Test 4.
+  - The screen shows and follows the encoders, and the sound is unchanged.
+  - Rounded corners draw square.
+  - Shift + encoder keeps its stock fine adjustment.
 
 **Git:** branch `firmware-analysis-tooling` (the user wants to stay on it), pushed to `origin` (`<public repo URL>`). Latest commits:
 - `3b96e5e` 88.2 kHz engine and probe v3
@@ -167,7 +172,9 @@ The full detail is in `docs/rings-port.md`.
 
 **Agreed plan from here (user decisions, 2026-10-14):**
 - **Controls:**
-  - **Model select = shift + blue, polyphony = shift + green.** No encoder push-clicks for now.
+  - **Model and polyphony select = encoder push-clicks** (user decision on 2026-10-14, replacing shift + blue / shift + green).
+    - The user wants to keep shift + encoder's stock fine adjustment of each parameter.
+    - Which encoder clicks do what is to be decided with the user.
   - **Polyphony has 4 states: 1, 2, 4 and "all".** States 1/2/4 trade voices for resonances as Rings does (64/poly − 4 = 60/28/12 modes), using least-recently-used resonator assignment; a stolen OP-1 voice fades out. "All" is 6 voices × 16 modes and lights all three poly squares.
   - Store the model and polyphony in presets if there's a spare slot.
 - **Steps:**
@@ -179,8 +186,16 @@ The full detail is in `docs/rings-port.md`.
      - the SVG API it calls;
      - how encoder turns and shift reach the synth screen (`KeyHandler.cpp`, `CtlKnob`, `shiftkey`);
      - where engine parameters live in presets (`Ranges.cpp`: 8 knob slots per synth).
-  3. **Rings screen, first version:** add `content/display/rings.svg` to the package, hook the Pd screen class to load it, and animate the four controls (spec in `incoming/rings-handover.md`).
-  4. **Model and polyphony switching** on shift + blue / shift + green, with the screen buttons.
+  3. ~~Rings screen, first version.~~ Done; works on the device (`op1_246_rings_screen1.op1`).
+     - **Code:** `op1/screen.cc`, with its geometry in `op1/screen_math.h` (`make test-screen`).
+     - **SVG:** `op1/rings.svg`, made by `op1/gen_rings_svg.py` from the user's `incoming/rings.svg`.
+     - **Hooks:** applied through the image header's new patch table (`tools/inject_app.py`).
+     - The user approved the SVG changes: pluck variants, box/glyph ids, rounded corners left as is.
+     - **Separate engine slot:** the user asked where a separate (16th) engine fits instead of replacing phase. The answer: after Rings is complete on the phase slot, as its own read-only investigation. Its first question is safety: a preset with an unknown engine type must not crash stock firmware if the user ever goes back to it. A cheaper option is "stock phase" as an extra model.
+  4. **Model and polyphony switching on encoder push-clicks,** with the screen buttons. **Resume here.**
+     - First, a read-only investigation: what key codes encoder presses produce, and how they reach the synth controller. The key path is `KeyDispatch` → controller slot +0x14 key down / +0x24 key up; synth controller vtable `0x1911994`, `docs/screen-interface.md` §4.
+     - Check what stock code does with encoder presses on the synth engine page, and hook only the phase engine's page.
+     - Store the model and polyphony in phase `knobs[4..5]`. The shift + encoder hook at `0x19119c0` is no longer needed.
   5. **The string model,** which enables models 1, 2, 4 and 5, then the reverb.
   6. Possibly a separate 16th engine (needs the engine list, menu, screen and presets; see `docs/engine-interface.md`).
 
@@ -203,10 +218,15 @@ cp -r "op1 firmware/op1_246" "op1 firmware/<work>"
 (WSL, ports/rings) make op1-engine
 .venv/Scripts/python tools/inject_app.py "op1 firmware/op1_246/OP1_vdk.ldr" OUT.ldr ports/rings/build/op1_engine.elf
 cp -r "op1 firmware/op1_246" "op1 firmware/work_x"; cp OUT.ldr "op1 firmware/work_x/OP1_vdk.ldr"
+cp ports/rings/op1/rings.svg "op1 firmware/work_x/content/display/rings.svg"   # engines with the screen
 .venv/Scripts/python tools/build_package.py "op1 firmware/work_x" "op1 firmware/op1_246_<name>.op1"
 ```
 
-Then byte-diff the LDR against stock (only the FIRST header, the vtable words and the appended blocks may differ) and decode-diff the package (only `OP1_vdk.ldr` may differ). Show the user, and let them flash through te-boot.
+Then byte-diff the LDR against stock and decode-diff the package. Only these may differ:
+- in the LDR: the FIRST header, the vtable words and patch-table targets `inject_app.py` lists, and the appended blocks;
+- in the package: `OP1_vdk.ldr`, plus the added `content/display/rings.svg`.
+
+Show the user, and let them flash through te-boot.
 
 ## 9. Memory
 

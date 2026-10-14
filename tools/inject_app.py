@@ -8,8 +8,14 @@ Takes an image linked for the free SDRAM region (ports/rings/op1/link.ld) and:
   2. optionally fills the rest of the region with a pattern (--fill-pattern),
      which the probe build checks to catch other users of the region;
   3. redirects the phase engine's vtable entries (render, note on, note off)
-     to the image's entry points, read from its header at the region start.
-     Each patch checks the stock value first, like tools/patch_app.py.
+     to the image's entry points, read from its header at the region start;
+  4. applies the image's patch table, if its header points to one (header
+     words 5 and 6: table address and entry count). Each entry is
+     {address, kind, stock, value}: kind 0 replaces a 32-bit word, kinds 1
+     and 2 replace the 16-bit immediate of an instruction with the low or high
+     half of `value` (an address in the image; the linker can't emit masked
+     halves in data). Patches must land in the app's own blocks.
+Every patch checks the stock value first, like tools/patch_app.py.
 
 The image must stay inside 0x02c00000-0x02ffffff (docs/memory-map.md) and
 must not overlap anything the app loads.
@@ -39,6 +45,10 @@ PHASE_NOTE_OFF = (0x01911168, 0x01a1b5ec)
 
 PT_LOAD = 1
 
+PATCH_WORD32, PATCH_IMM16_LO, PATCH_IMM16_HI = 0, 1, 2
+PATCH_KIND_NAMES = {PATCH_WORD32: 'word', PATCH_IMM16_LO: 'imm16 lo', PATCH_IMM16_HI: 'imm16 hi'}
+MAX_PATCHES = 64
+
 
 def read_elf_segments(path):
     """Return [(vaddr, file_bytes, memsz)] for the PT_LOAD segments of an ELF32 LE file."""
@@ -55,6 +65,39 @@ def read_elf_segments(path):
             continue
         segments.append((p_vaddr, data[p_offset:p_offset + p_filesz], p_memsz))
     return sorted(segments)
+
+
+def read_image(segments, addr, size):
+    """Bytes of the image's initialised data at addr (must be in one segment)."""
+    for vaddr, payload, _ in segments:
+        if vaddr <= addr and addr + size <= vaddr + len(payload):
+            return payload[addr - vaddr:addr - vaddr + size]
+    raise LdrError('{:#x}: not in the initialised data of the image'.format(addr))
+
+
+def read_patch_table(segments, table, count):
+    """[(address, kind, stock, value)] from the image's patch table."""
+    if count > MAX_PATCHES:
+        raise LdrError('patch table has {} entries (max {})'.format(count, MAX_PATCHES))
+    raw = read_image(segments, table, 16 * count)
+    entries = [struct.unpack_from('<4I', raw, 16 * i) for i in range(count)]
+    addresses = [e[0] for e in entries]
+    if len(set(addresses)) != len(addresses):
+        raise LdrError('patch table patches an address twice')
+    return entries
+
+
+def patch_bytes(entry):
+    """(old, new) bytes for a patch table entry."""
+    address, kind, stock, value = entry
+    if kind == PATCH_WORD32:
+        return struct.pack('<I', stock), struct.pack('<I', value)
+    if kind in (PATCH_IMM16_LO, PATCH_IMM16_HI):
+        if address & 1 or stock > 0xffff:
+            raise LdrError('{:#x}: bad imm16 patch'.format(address))
+        half = value & 0xffff if kind == PATCH_IMM16_LO else value >> 16
+        return struct.pack('<H', stock), struct.pack('<H', half)
+    raise LdrError('{:#x}: unknown patch kind {}'.format(address, kind))
 
 
 def plain_block(target, payload):
@@ -110,7 +153,8 @@ def main():
 
     if header is None or header[0] != HEADER_MAGIC:
         raise LdrError('no OP1X header at {:#x}'.format(REGION_START))
-    _, version, render, note_on, note_off = header[:5]
+    _, version, render, note_on, note_off, patch_table, patch_count = header[:7]
+    patches = read_patch_table(segments, patch_table, patch_count) if patch_table else []
 
     if args.fill_pattern is not None:
         fill_start = (image_end + 4095) & ~4095
@@ -129,6 +173,12 @@ def main():
         if not REGION_START <= target < image_end:
             raise LdrError('{} entry {:#x} is outside the image'.format(name, target))
         apply_patch(dxes, slot, struct.pack('<I', stock), struct.pack('<I', target))
+    for entry in patches:
+        address = entry[0]
+        if REGION_START <= address < REGION_END:
+            raise LdrError('patch at {:#x} is inside our own region'.format(address))
+        old, new = patch_bytes(entry)
+        apply_patch(dxes, address, old, new)
 
     out = serialize(dxes)
     parse(out)  # re-check headers, checksums and the FIRST block's length
@@ -144,6 +194,10 @@ def main():
     for (slot, stock), target, name in hooks:
         if target:
             print('  vtable {:#010x} ({}): {:#010x} -> {:#010x}'.format(slot, name, stock, target))
+    for entry in patches:
+        old, new = patch_bytes(entry)
+        print('  patch  {:#010x} ({}): {} -> {}'.format(
+            entry[0], PATCH_KIND_NAMES[entry[1]], old[::-1].hex(), new[::-1].hex()))
     print('{}: {} -> {} bytes'.format(args.ldr_out, os.path.getsize(args.ldr_in), len(out)))
 
 

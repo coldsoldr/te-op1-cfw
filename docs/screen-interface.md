@@ -272,6 +272,13 @@ Screens get no input calls. They redraw from the stored knob values each frame (
 
 ## 6. Hook plan
 
+**Status (2026-10-14):** plan (a) is implemented in `ports/rings/op1/screen.cc` and not yet run on the device (`docs/device-tests.md`, Test 4).
+- The four patches go through the image header's patch table (`op1::Patch`, applied by `tools/inject_app.py` after checking the stock values).
+- Colours are copied from the SVG's default-state elements, so the byte order doesn't matter.
+- `pluck` uses 24 pre-drawn variants.
+- **On the device it works** (2026-10-14). `<rect rx>` is ignored, so rounded corners draw square.
+- **Plan (b) is dropped:** the user keeps shift + encoder as stock fine adjustment. Model and polyphony select will use encoder push-clicks, whose key path is still to be mapped (§4 key dispatch).
+
 Everything here is plain SDRAM: either 4-byte vtable-word patches or 16-bit immediate patches, plus code in our image at `0x02c00000`. Nothing needs encrypted L1.
 
 ### (a) Rings screen in place of the phase screen

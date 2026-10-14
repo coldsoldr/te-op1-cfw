@@ -227,3 +227,45 @@ This is the engine of `engine16c` (knob smoothing included) with Rings' FM voice
 - the sound across the four encoders;
 - the level against the modal build: upstream's FM limiter pre-gain is 0.7, half the modal model's;
 - clicks and stutters.
+
+## Test 4: Rings screen (`op1_246_rings_screen1.op1`)
+
+**Result (2026-10-14): it works.**
+- The OP-1 boots, the Rings screen shows, and the colours and movement follow the encoders.
+- The sound is unchanged.
+- **Rounded corners (`rx`) are ignored:** the model and polyphony boxes draw square. Use paths if rounded corners are wanted.
+- **Shift + encoder** still gives the stock 1/16 fine adjustment of each parameter. The user wants to keep that, so model and polyphony select will use the encoder push-clicks instead (see `docs/HANDOVER.md` §7).
+- The rest of this section is the build description from before the flash.
+
+
+This is the modal engine of `engine16c` (smoothing included) plus the first Rings screen, in place of the phase engine's screen (`ports/rings/op1/screen.cc`; hook plan in `docs/screen-interface.md` §6a).
+
+**What changes in the package:**
+- **`OP1_vdk.ldr`:**
+  - the engine image and voice hooks, as before;
+  - four more patches from the image's new patch table, applied by `tools/inject_app.py` after checking the stock values:
+    - the `PdScreen` getter's filename immediates at `0x1a0cd8e` and `0x1a0cd92`, from `"pd.svg"` to our `"rings.svg"`;
+    - the `PdScreen` vtable's Init (`0x1911190`) and Update (`0x1911188`).
+- **One new file, `content/display/rings.svg`,** generated from `incoming/rings.svg` by `op1/gen_rings_svg.py`:
+  - the metadata is dropped;
+  - `pluck` becomes 24 pre-drawn variants;
+  - each button gets a `…box` id and a `…num`/`…dots` glyph group.
+
+**What the screen does:**
+- **Init** finds the elements and copies the lit and dim colours from the SVG's defaults, so the style byte order doesn't matter. If any id is missing, it leaves the screen static rather than assert.
+- **Update** runs every frame. It reads the displayed slot's knob values (`0xff8013c4 + slot × 16`) and:
+  - lights 1 + round(5 × structure) rings;
+  - moves the brightness and damping handles;
+  - moves the position dot and shows the matching pluck line;
+  - shows the build's model (modal) and polyphony "all" (all three lit);
+  - then draws.
+- **Geometry:** `make test-screen` checks the maths against the spec's formulas for every knob value (worst error 0.001 px).
+
+**Expected quirk:** green (brightness) tops out at 0.9, because the phase engine's stock range for that encoder is 0..29491. The engine sees the same 0.9, so the handle stops just below the top tick.
+
+**To check on the device:**
+1. **The screen appears.** If the OP-1 fails to boot or the synth screen is blank or frozen, recover with stock `op1_246.op1` through te-boot as usual, and describe what you saw.
+2. **Colours:** rings lit in blue / dim, buttons selected / dim, as in the design.
+3. **Movement:** the handles, dot and pluck follow the four encoders, and the handles move the right way (up = more).
+4. **Rounded corners** on the button boxes (`rx`): do they show rounded or square?
+5. **Sound unchanged,** and the screen stays smooth while playing.

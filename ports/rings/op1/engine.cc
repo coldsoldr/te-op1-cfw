@@ -1,6 +1,8 @@
 // Rings engine for the OP-1: replaces the phase engine's render and note-on
 // (vtable +0x14, +0x1c). Six voices, one RingsVoice each; the OP-1 core
-// allocates voices and applies its envelope after render.
+// allocates voices and applies its envelope after render. The header's patch
+// table also puts the Rings screen in place of the phase screen
+// (op1/screen.cc).
 //
 // The OP-1 renders voices at 88.2 kHz, 128 samples per call. Rings runs at
 // half that (44.1 kHz, 64 samples per call; upstream runs at 48 kHz) and is
@@ -15,6 +17,7 @@
 
 #include "op1/op1.h"
 #include "op1/param_smoother.h"
+#include "op1/screen.h"
 #include "src/fixed.h"
 #include "src/op1_voice.h"
 
@@ -127,5 +130,6 @@ extern "C" void RingsNoteOn(void* self) {
 
 extern "C" __attribute__((section(".op1header"), used))
 const op1::Header op1_header = {
-  op1::kHeaderMagic, 2, &RingsRender, &RingsNoteOn, nullptr, { 0, 0, 0 },
+  op1::kHeaderMagic, 3, &RingsRender, &RingsNoteOn, nullptr,
+  op1::kScreenPatches, op1::kNumScreenPatches, 0,
 };
