@@ -24,6 +24,8 @@ extern const int32_t kSoftLimitQ30[257];  // SoftLimit(4 i / 256)
 extern const int32_t kStiffnessQ28[257];  // Rings' lut_stiffness
 extern const int32_t kSineQ31[4097];  // sin(2 pi i / 4096)
 extern const int32_t kFmRatioSemitonesQ24[129];  // Rings' lut_fm_frequency_quantizer (semitones)
+extern const int32_t kStringLowpassQ31[1025];  // g / (1 + g), g = tan_accurate(0.5 i / 1024)
+extern const int32_t kSvfShiftQ31[257];  // Rings' lut_svf_shift
 
 }  // namespace op1rings
 

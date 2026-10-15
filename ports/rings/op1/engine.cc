@@ -23,9 +23,11 @@
 
 #include <cstdint>
 
+#include "op1/cpu_meter.h"
 #include "op1/op1.h"
 #include "op1/param_smoother.h"
 #include "op1/patches.h"
+#include "op1/reverb_bus.h"
 #include "op1/settings.h"
 #include "op1/voice_allocator.h"
 #include "src/fixed.h"
@@ -73,20 +75,30 @@ class Upsampler {
 
 int32_t Upsampler::extended_[kRingsBlockSize + 3];
 
-RingsVoice voices[op1::kNumVoices];
+// Rings voice states, and which one each OP-1 voice plays. A steal swaps
+// them: the new OP-1 voice takes over the ringing state at no cost, and the
+// stolen one fades out with a copy of only what it still needs
+// (RingsVoice::CopyFrom).
+RingsVoice states[op1::kNumVoices];
+RingsVoice* voices[op1::kNumVoices];
 Upsampler upsamplers[op1::kNumVoices];
 op1::ParamSmoother smoothers[op1::kNumVoices];
 op1::VoiceAllocator allocator;
+op1::ReverbBus reverb_bus;   // string + reverb's reverb, shared by the voices
+static_assert(op1::ReverbBus::kBlock == kRingsBlockSize, "reverb bus: one block per call");
 bool initialized;
 int32_t out_buffer[kRingsBlockSize];
+int32_t wet_share[kRingsBlockSize];   // a voice's share of the shared reverb
 
 void InitAll() {
   for (int32_t v = 0; v < op1::kNumVoices; ++v) {
-    voices[v].Init(op1::kPolyModes[op1::POLY_ALL]);
+    voices[v] = &states[v];
+    voices[v]->Init(op1::kPolyModes[op1::POLY_ALL]);
     upsamplers[v].Init();
     smoothers[v].Init();
   }
   allocator.Init();
+  reverb_bus.Init();
   initialized = true;
 }
 
@@ -112,14 +124,21 @@ const int16_t* SettingsKnobs(const int16_t* knobs) {
 #endif
 }
 
-// The models the voice implements; the others play modal for now.
+// Every model is implemented.
 op1rings::ResonatorModel VoiceModel(int32_t setting) {
-  return setting == op1rings::MODEL_FM_VOICE ? op1rings::MODEL_FM_VOICE : op1rings::MODEL_MODAL;
+  return static_cast<op1rings::ResonatorModel>(setting);
 }
 
 }  // namespace
 
-extern "C" void RingsRender(void* self, int16_t* out, const int16_t* params) {
+namespace op1 {
+CpuMeter cpu_meter;
+bool cpu_meter_shown;
+}  // namespace op1
+
+namespace {
+
+void Render(void* self, int16_t* out, const int16_t* params) {
   if (!initialized) InitAll();
   const int32_t v = op1::VoiceIndex(self);
   if (allocator.silent(v)) {
@@ -142,7 +161,13 @@ extern "C" void RingsRender(void* self, int16_t* out, const int16_t* params) {
   // does).
   const uint32_t inc = op1::PitchBuffer()[0];
   const uint32_t rings_inc = inc < 0x80000000u ? inc << 1 : 0xffffffffu;
-  voices[v].RenderMono(&rings_inc, patch, out_buffer, kRingsBlockSize);
+  // String + reverb sends to the shared reverb and plays a share of it
+  // (op1/reverb_bus.h); a voice fading out after a steal does neither (the
+  // voice that took over carries the ring on).
+  const bool carrier = voices[v]->model() == op1rings::MODEL_STRING_AND_REVERB && !allocator.fading(v);
+  const bool shared = reverb_bus.Render(v, op1::Cycles(), patch, carrier, wet_share);
+  voices[v]->RenderMono(&rings_inc, patch, out_buffer, kRingsBlockSize,
+                        carrier ? reverb_bus.send() : nullptr, shared ? wet_share : nullptr);
   upsamplers[v].Process(out_buffer, out);
   allocator.Rendered(v);
   if (allocator.fading(v)) {
@@ -157,26 +182,54 @@ extern "C" void RingsRender(void* self, int16_t* out, const int16_t* params) {
   }
 }
 
-extern "C" void RingsNoteOn(void* self, const int16_t* knobs) {
+void NoteOn(void* self, const int16_t* knobs) {
   if (!initialized) InitAll();
   const int32_t v = op1::VoiceIndex(self);
   const int16_t* settings = SettingsKnobs(knobs);
   const int32_t model = settings ? op1::ModelSetting(settings) : 0;
-  const op1::PolyState poly = settings ? op1::PolySetting(settings) : op1::POLY_ALL;
+  op1::PolyState poly = settings ? op1::PolySetting(settings) : op1::POLY_ALL;
+  // String + reverb: "all" plays as Rings' polyphony 4, its maximum (the
+  // choice made when each voice ran its own reverb; the reverb is shared
+  // now, op1/reverb_bus.h).
+  if (model == op1rings::MODEL_STRING_AND_REVERB && poly == op1::POLY_ALL) poly = op1::POLY_4;
 
   const op1::VoiceAllocator::NoteOnAction action = allocator.NoteOn(v, poly);
   if (action.copy_from >= 0) {
     // Take over the stolen voice's ringing state; it fades out on its own.
-    voices[v] = voices[action.copy_from];
+    const int32_t u = action.copy_from;
+    RingsVoice* ringing = voices[u];
+    voices[u] = voices[v];
+    voices[v] = ringing;
+    // A stolen voice that never sounded goes silent at once (no fade), and
+    // is reset when struck again: it needs no copy.
+    if (!allocator.silent(u)) voices[u]->CopyFrom(*ringing);
     upsamplers[v] = upsamplers[action.copy_from];
+    // The shared reverb's share goes with the ring.
+    if (model == op1rings::MODEL_STRING_AND_REVERB) reverb_bus.Transfer(u, v);
   } else if (action.reset) {
-    voices[v].Init(op1::kPolyModes[poly]);
+    voices[v]->Init(op1::kPolyModes[poly]);
     upsamplers[v].Init();
   }
-  voices[v].set_resolution(op1::kPolyModes[poly]);
-  voices[v].set_model(VoiceModel(model));
-  voices[v].NoteOn();
+  voices[v]->set_resolution(op1::kPolyModes[poly]);
+  voices[v]->set_polyphony(op1::kRingsPolyphony[poly]);
+  voices[v]->set_model(VoiceModel(model));
+  voices[v]->NoteOn();
   smoothers[v].Snap();
+}
+
+}  // namespace
+
+// The entry points, timed for the CPU meter (op1/cpu_meter.h).
+extern "C" void RingsRender(void* self, int16_t* out, const int16_t* params) {
+  op1::cpu_meter.Begin();
+  Render(self, out, params);
+  op1::cpu_meter.End();
+}
+
+extern "C" void RingsNoteOn(void* self, const int16_t* knobs) {
+  op1::cpu_meter.Begin();
+  NoteOn(self, knobs);
+  op1::cpu_meter.End();
 }
 
 extern "C" __attribute__((section(".op1header"), used))

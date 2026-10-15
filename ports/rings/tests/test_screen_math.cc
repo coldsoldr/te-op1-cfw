@@ -20,7 +20,9 @@ int main() {
     // Spec: k = 1 + round(structure * 5); handleY = 114 - v * 100 (drawn at
     // 44 / 64); x = 16 + v * 92 (drawn at 44).
     const int lit = 1 + static_cast<int>(std::floor(v * 5 + 0.5));
-    const double brightness_ty = 114 - v * 100 - 44;
+    // Green's handle spans the encoder's range, 0..29491 (op1/screen_math.h).
+    const double vb = std::fmin(k, op1::kBrightnessMax) / static_cast<double>(op1::kBrightnessMax);
+    const double brightness_ty = 114 - vb * 100 - 44;
     const double damping_ty = 114 - v * 100 - 64;
     const double posdot_tx = 16 + v * 92 - 44;
     const int pluck = static_cast<int>(std::floor(v * 23 + 0.5));
@@ -43,6 +45,13 @@ int main() {
          a.lit_rings, a.brightness_ty / 1024.0, a.damping_ty / 1024.0, a.posdot_tx / 1024.0, a.pluck);
   printf("knobs 32767: rings %d, brightness y %+.2f, damping y %+.2f, posdot x %+.2f, pluck %d\n",
          b.lit_rings, b.brightness_ty / 1024.0, b.damping_ty / 1024.0, b.posdot_tx / 1024.0, b.pluck);
+  // Green at the encoder's maximum: the handle at the top (y = 14).
+  const int16_t green_max[4] = { 0, static_cast<int16_t>(op1::kBrightnessMax), 0, 0 };
+  const op1::ScreenState g = op1::ComputeScreenState(green_max);
+  const bool green_top = std::fabs(g.brightness_ty / 1024.0 + 30.0) < 0.01;
+  if (!green_top) ++errors;
+  printf("green %d: brightness y %+.2f (top -30.00) %s\n", static_cast<int>(op1::kBrightnessMax),
+         g.brightness_ty / 1024.0, green_top ? "ok" : "WRONG");
   printf("worst position error %.4f px; %s\n", worst_px, errors ? "FAIL" : "PASS");
   return errors ? 1 : 0;
 }

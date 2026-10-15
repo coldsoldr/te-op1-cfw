@@ -5,6 +5,9 @@
 // Signal path (modal model, internal exciter, as upstream with polyphony 1):
 //   note on -> impulse -> excitation low-pass -> ModalResonator -> x1.4 ->
 //   limiter -> out (odd modes) / aux (even modes)
+// The FM voice (FmVoiceFixed) and the string models (StringVoice) replace
+// the impulse, filter and resonator; string + reverb sends to a reverb
+// shared by every voice (SharedReverb).
 //
 // Pitch comes from the OP-1's per-sample phase increments (f / fs * 2^32);
 // parameters from its four encoders.
@@ -18,6 +21,9 @@
 #include "src/ffloat.h"
 #include "src/fm_voice_fixed.h"
 #include "src/modal_resonator.h"
+#include "src/reverb_fixed.h"
+#include "src/string_voice.h"
+#include "src/voice_patch.h"
 
 namespace op1rings {
 
@@ -34,14 +40,6 @@ namespace op1rings {
 
 const size_t kSubblockSize = OP1RINGS_SUBBLOCK_SIZE;
 const size_t kControlBlockSize = OP1RINGS_CONTROL_BLOCK_SIZE;
-
-// Rings' parameters, in Q31 ([0, 1]).
-struct VoicePatch {
-  int32_t structure;
-  int32_t brightness;
-  int32_t damping;
-  int32_t position;
-};
 
 // Low-pass TPT SVF (stmlib::Svf, FREQUENCY_DIRTY) for the exciter, Q27 state.
 class ExcitationFilter {
@@ -79,17 +77,6 @@ class Limiter {
   int32_t gain_;   // 1 / max(peak, 1), Q31
 };
 
-// Rings' resonator models (upstream order, as rings::ResonatorModel). The
-// OP-1 voice implements the modal model and the FM voice so far.
-enum ResonatorModel {
-  MODEL_MODAL = 0,
-  MODEL_SYMPATHETIC_STRING = 1,
-  MODEL_STRING = 2,
-  MODEL_FM_VOICE = 3,
-  MODEL_SYMPATHETIC_STRING_QUANTIZED = 4,
-  MODEL_STRING_AND_REVERB = 5,
-};
-
 // The limiter's fixed gains for a model: upstream's pre-gain
 // (Part::model_gains_) and pre-gain * 0.8 (the gain below the threshold).
 struct LimiterGains {
@@ -97,6 +84,13 @@ struct LimiterGains {
   int32_t out_q30;
   FFloat out;
 };
+
+// MonoLimiter's sample loop, in C and in Blackfin assembly
+// (src/limiter_bfin.S), bit-exact with each other: peak follower on
+// |x pre_gain|, x = SoftLimit(2 x gain).
+void MonoLimiterLoopC(int32_t* x, int32_t size, int32_t* peak, int32_t gain, int32_t pre_gain);
+extern "C" void MonoLimiterAsm(int32_t* x, int32_t size, int32_t* peak, int32_t gain,
+                               int32_t pre_gain);
 
 // Mono limiter for the OP-1 build (the voice's two outputs are summed): same
 // peak follower as Rings' limiter, with the gain (1 / peak) updated once per
@@ -111,15 +105,45 @@ class MonoLimiter {
   int32_t gain_;   // pre-gain * 0.8 / max(peak, 1), Q30
 };
 
+// String + reverb's reverb (upstream Part::Process on rings/dsp/fx/
+// reverb.h), shared by the voices as upstream runs one reverb on the sum of
+// its voices. Upstream mixes dry + amount (wet - dry); the OP-1 renders its
+// voices separately, so each voice plays dry (1 - amount) itself and sends
+// its dry signal (RenderMono's send), and this runs on the sum and gives
+// back amount * wet, which op1/reverb_bus.h shares out among the voices.
+class SharedReverb {
+ public:
+  void Init();
+  void Clear() { reverb_.Clear(); }
+  // in_out: kControlBlockSize Q27 samples, the voices' summed dry signal;
+  // replaced by amount * wet (the voices' limiters come after).
+  void Process(const VoicePatch& patch, int32_t* in_out);
+  // Upstream's amount, 0.1 + 0.5 damping (Q31).
+  static int32_t Amount(int32_t damping);
+
+ private:
+  ReverbFixed reverb_;
+};
+
 class RingsVoice {
  public:
   void Init(int32_t resolution);
   void NoteOn() { strum_ = true; silent_blocks_ = 0; }
 
-  // MODEL_MODAL or MODEL_FM_VOICE (RenderMono only; Render is modal).
+  // Any model (RenderMono only; Render is modal).
   void set_model(ResonatorModel model) { model_ = model; }
+  ResonatorModel model() const { return model_; }
   // Modes per voice (the coefficients are recomputed on the next render).
   void set_resolution(int32_t resolution) { resonator_.set_resolution(resolution); }
+  // Rings' polyphony (1, 2 or 4): the string models' strings per voice and
+  // chord table.
+  void set_polyphony(int32_t polyphony) { polyphony_ = polyphony; }
+
+  // Takes over another voice's state, for a voice that fades out after a
+  // steal. Copies only what the voice's model uses, and of the string delay
+  // lines only what the next few milliseconds read: a plain copy would move
+  // up to ~70 KB.
+  void CopyFrom(const RingsVoice& other);
 
   // phase_increment: size values (f / fs * 2^32); out, aux: size Q27 samples
   // (after the limiter, ~[-1, 1]). size must be a multiple of
@@ -128,9 +152,14 @@ class RingsVoice {
               int32_t* out, int32_t* aux, size_t size);
 
   // OP-1 build: the model's two outputs summed, mono limiter. out: size Q27
-  // samples.
+  // samples. String + reverb plays its dry part, adds its dry signal to
+  // send and mixes wet (its share of the shared reverb) in before the
+  // limiter; either may be null (a voice fading out after a steal has
+  // neither: the voice that took over carries the ring on). size samples
+  // each.
   void RenderMono(const uint32_t* phase_increment, const VoicePatch& patch,
-                  int32_t* out, size_t size);
+                  int32_t* out, size_t size, int32_t* send = nullptr,
+                  const int32_t* wet = nullptr);
 
  private:
   void RenderSubblock(uint32_t phase_increment, const VoicePatch& patch,
@@ -139,7 +168,12 @@ class RingsVoice {
   void RenderFmSubblock(uint32_t phase_increment, const VoicePatch& patch,
                         int32_t* out);
 
+  // A whole control block (string models run at the control rate).
+  void RenderStringBlock(uint32_t phase_increment, const VoicePatch& patch,
+                         int32_t* out, int32_t* send);
+
   ResonatorModel model_;
+  int32_t polyphony_;
   bool strum_;
   int32_t silent_blocks_;               // consecutive renders below -96 dBFS
   int32_t excitation_[kSubblockSize];   // scratch, kept off the stack
@@ -149,6 +183,7 @@ class RingsVoice {
   ExcitationFilter excitation_filter_;
   Limiter limiter_;
   MonoLimiter mono_limiter_;
+  StringVoice string_voice_;
 };
 
 }  // namespace op1rings

@@ -6,6 +6,10 @@
 #include "src/fixed.h"
 #include "src/fixed_tables.h"
 
+// The soft-limit table for src/limiter_bfin.S (C linkage, link-time
+// constant).
+extern "C" const int32_t* const kSoftLimitTable = op1rings::kSoftLimitQ30;
+
 namespace op1rings {
 
 namespace {
@@ -45,14 +49,41 @@ inline int32_t SoftLimitQ27(int32_t x) {
     y = kSoftLimitQ30[i] + MulQ31Fast(kSoftLimitQ30[i + 1] - kSoftLimitQ30[i], frac);
   }
   y >>= 3;                                   // Q30 -> Q27
-  return x < 0 ? -y : y;
+  // x < 0 ? -y : y, without a branch.
+  const int32_t sign = x >> 31;
+  return (y ^ sign) - sign;
 }
 
 inline int32_t Abs(int32_t x) { return x < 0 ? -x : x; }
 
-// Limiter gains per model (upstream Part::model_gains_: modal 1.4, FM 0.7).
+// Limiter gains per model (upstream Part::model_gains_: modal 1.4, FM 0.7,
+// string 1.4, sympathetic strings 1.0).
 constexpr LimiterGains kModalGains = { 375809638, 1202590843, FFloat(1.12) };
 constexpr LimiterGains kFmGains = { 187904819, 601295421, FFloat(0.56) };
+constexpr LimiterGains kStringGains = kModalGains;
+constexpr LimiterGains kSympatheticGains = { 268435456, 858993459, FFloat(0.8) };
+
+const LimiterGains& ModelGains(ResonatorModel model) {
+  switch (model) {
+    case MODEL_FM_VOICE: return kFmGains;
+    case MODEL_STRING: case MODEL_STRING_AND_REVERB: return kStringGains;
+    case MODEL_SYMPATHETIC_STRING: case MODEL_SYMPATHETIC_STRING_QUANTIZED:
+      return kSympatheticGains;
+    default: return kModalGains;
+  }
+}
+
+// The excitation filter's cutoff (upstream Part::Process, internal exciter):
+// cutoff = b (2 - b); fc = f0 * 2^((cutoff - 0.5) * 8), at most 0.499.
+FFloat ExcitationCutoff(int32_t f0, int32_t brightness) {
+  static constexpr FFloat k0_499 = FFloat(0.499);
+  const int32_t b = brightness;
+  int32_t cutoff = ShlSat(b - (MulQ31Fast(b, b) >> 1), 1);         // Q31
+  int32_t exponent = (cutoff - (1 << 30)) >> 4;                    // Q24
+  FFloat fc = FFloat::FromQ(f0, 31) * Exp2(exponent);
+  if (fc > k0_499) fc = k0_499;
+  return fc;
+}
 
 }  // namespace
 
@@ -165,21 +196,33 @@ void MonoLimiter::Init() {
   gain_ = 1202590843;       // 1.4 * 0.8 in Q30 (the modal model's)
 }
 
-void MonoLimiter::Process(int32_t* x, size_t size, const LimiterGains& gains) {
+void MonoLimiterLoopC(int32_t* x, int32_t size, int32_t* peak_state, int32_t gain,
+                      int32_t pre_gain) {
   const int32_t kAttack = 107374182;     // 0.05, Q31
   const int32_t kRelease = 42950;        // 0.00002, Q31
-  int32_t peak = peak_;
-  const int32_t gain = gain_;
-  for (size_t i = 0; i < size; ++i) {
+  int32_t peak = *peak_state;
+  for (int32_t i = 0; i < size; ++i) {
+    const int32_t in = x[i];
     // Peak follower on the pre-gain signal.
-    int32_t pre = MulQ31Fast(x[i], gains.pre_q28) << 3;   // Q27 (no overflow: |x| < 2)
+    int32_t pre = MulQ31Fast(in, pre_gain) << 3;   // Q27 (no overflow: |x| < 2)
     int32_t a = pre < 0 ? -pre : pre;
     int32_t error = a - peak;
-    peak += MulQ31Fast(error, error > 0 ? kAttack : kRelease);
+    // Attack while rising, release while falling, without a branch.
+    const int32_t coefficient = kRelease + ((kAttack - kRelease) & -static_cast<int32_t>(error > 0));
+    peak += MulQ31Fast(error, coefficient);
     // y = SoftLimit(x * pre-gain * 0.8 / max(peak, 1)).
-    x[i] = SoftLimitQ27(ShlSat(MulQ31Fast(x[i], gain), 1));
+    x[i] = SoftLimitQ27(ShlSat(MulQ31Fast(in, gain), 1));
   }
-  peak_ = peak;
+  *peak_state = peak;
+}
+
+void MonoLimiter::Process(int32_t* x, size_t size, const LimiterGains& gains) {
+#if defined(__bfin__) && !defined(OP1RINGS_NO_ASM)
+  MonoLimiterAsm(x, static_cast<int32_t>(size), &peak_, gain_, gains.pre_q28);
+#else
+  MonoLimiterLoopC(x, static_cast<int32_t>(size), &peak_, gain_, gains.pre_q28);
+#endif
+  const int32_t peak = peak_;
   // Gain for the next sub-block: pre-gain * 0.8 / max(peak, 1). Once per
   // sub-block, so FFloat's self-seeding reciprocal is affordable.
   if (peak <= (1 << 27)) {
@@ -189,10 +232,36 @@ void MonoLimiter::Process(int32_t* x, size_t size, const LimiterGains& gains) {
   }
 }
 
+// --- SharedReverb ---------------------------------------------------------
+
+void SharedReverb::Init() {
+  reverb_.Init();
+}
+
+int32_t SharedReverb::Amount(int32_t damping) {
+  return 214748365 + MulQ31(damping, 1073741824);                  // 0.1 + 0.5 d
+}
+
+void SharedReverb::Process(const VoicePatch& patch, int32_t* in_out) {
+  // Upstream Part::Process: amount 0.1 + 0.5 damping, diffusion 0.625,
+  // time 0.35 + 0.63 damping, input gain 0.2, low-pass 0.3 + 0.6
+  // brightness (the patch's damping, not the string's reshaped one).
+  const int32_t d = patch.damping;
+  reverb_.set_amount(kOne);                                         // wet only
+  reverb_.set_diffusion(1342177280);                                // 0.625
+  reverb_.set_time(751619277 + MulQ31(d, 1352914698));              // 0.35 + 0.63 d
+  reverb_.set_input_gain(429496730);                                // 0.2
+  reverb_.set_lp(644245094 + MulQ31(patch.brightness, 1288490189));   // 0.3 + 0.6 b
+  reverb_.Process(in_out, kControlBlockSize);
+  const int32_t amount = Amount(d);
+  for (size_t i = 0; i < kControlBlockSize; ++i) in_out[i] = MulQ31Fast(in_out[i], amount);
+}
+
 // --- RingsVoice -----------------------------------------------------------
 
 void RingsVoice::Init(int32_t resolution) {
   model_ = MODEL_MODAL;
+  polyphony_ = 1;
   strum_ = false;
   silent_blocks_ = 0;
   resonator_.Init();
@@ -201,21 +270,28 @@ void RingsVoice::Init(int32_t resolution) {
   excitation_filter_.Init();
   limiter_.Init();
   mono_limiter_.Init();
+  string_voice_.Init();
+}
+
+void RingsVoice::CopyFrom(const RingsVoice& other) {
+  model_ = other.model_;
+  polyphony_ = other.polyphony_;
+  strum_ = other.strum_;
+  silent_blocks_ = other.silent_blocks_;
+  resonator_ = other.resonator_;
+  fm_voice_ = other.fm_voice_;
+  excitation_filter_ = other.excitation_filter_;
+  limiter_ = other.limiter_;
+  mono_limiter_ = other.mono_limiter_;
+  string_voice_.CopyFrom(other.string_voice_);
 }
 
 void RingsVoice::RenderSubblock(uint32_t phase_increment, const VoicePatch& patch,
                                 int32_t* out, int32_t* aux) {
-  static constexpr FFloat k0_499 = FFloat(0.499);
   static constexpr FFloat k0_25 = FFloat(0.25);
   const int32_t f0 = static_cast<int32_t>(phase_increment >> 1);   // Q31
 
-  // Excitation filter cutoff (upstream Part::Process, internal exciter):
-  // cutoff = b (2 - b); fc = f0 * 2^((cutoff - 0.5) * 8), at most 0.499.
-  const int32_t b = patch.brightness;
-  int32_t cutoff = ShlSat(b - (MulQ31Fast(b, b) >> 1), 1);         // Q31
-  int32_t exponent = (cutoff - (1 << 30)) >> 4;                    // Q24
-  FFloat fc = FFloat::FromQ(f0, 31) * Exp2(exponent);
-  if (fc > k0_499) fc = k0_499;
+  const FFloat fc = ExcitationCutoff(f0, patch.brightness);
   excitation_filter_.SetCutoff(fc.ToQ31());
 
   if (strum_) {
@@ -284,22 +360,58 @@ void RingsVoice::RenderFmSubblock(uint32_t phase_increment,
   fm_voice_.Process(out, kSubblockSize);
 }
 
+// Upstream Part::RenderStringVoice with the internal exciter: a strum
+// triggers the plucker with the excitation filter's cutoff.
+void RingsVoice::RenderStringBlock(uint32_t phase_increment,
+                                   const VoicePatch& patch, int32_t* out, int32_t* send) {
+  const int32_t f0 = static_cast<int32_t>(phase_increment >> 1);   // Q31
+  string_voice_.Configure(model_, polyphony_);
+  if (strum_) {
+    string_voice_.Strum(f0, ExcitationCutoff(f0, patch.brightness).ToQ31(), patch.position);
+    strum_ = false;
+  }
+  string_voice_.Process(f0, patch, out, kControlBlockSize);
+
+  if (model_ == MODEL_STRING_AND_REVERB) {
+    // The dry part of upstream's mix, dry (1 - amount); the shared reverb
+    // plays the rest.
+    if (send) {
+      for (size_t i = 0; i < kControlBlockSize; ++i) send[i] += out[i];
+    }
+    const int32_t amount = SharedReverb::Amount(patch.damping);
+    for (size_t i = 0; i < kControlBlockSize; ++i) out[i] -= MulQ31Fast(out[i], amount);
+  }
+}
+
 void RingsVoice::RenderMono(const uint32_t* phase_increment,
-                            const VoicePatch& patch, int32_t* out, size_t size) {
+                            const VoicePatch& patch, int32_t* out, size_t size, int32_t* send,
+                            const int32_t* wet) {
   const int32_t kSilence = 1 << 11;          // ~ -96 dBFS in Q27
   const int32_t kSilentBlocksToSleep = 8;
-  if (!strum_ && silent_blocks_ >= kSilentBlocksToSleep) {
+  // Asleep, the voice renders nothing of its own; a share of the shared
+  // reverb still plays through it (its limiter).
+  const bool asleep = !strum_ && silent_blocks_ >= kSilentBlocksToSleep;
+  if (asleep && !wet) {
     for (size_t i = 0; i < size; ++i) out[i] = 0;
     return;
   }
-  const bool fm = model_ == MODEL_FM_VOICE;
+  const LimiterGains& gains = ModelGains(model_);
+  const bool strings = model_ == MODEL_SYMPATHETIC_STRING || model_ == MODEL_STRING ||
+                       model_ == MODEL_SYMPATHETIC_STRING_QUANTIZED ||
+                       model_ == MODEL_STRING_AND_REVERB;
   int32_t peak = 0;
   for (size_t i = 0; i < size; i += kControlBlockSize) {
+    if (asleep) {
+      for (size_t k = 0; k < kControlBlockSize; ++k) out[i + k] = 0;
+    } else if (strings) {
+      RenderStringBlock(phase_increment[i], patch, out + i, send ? send + i : nullptr);
+    }
     for (size_t j = 0; j < kControlBlockSize; j += kSubblockSize) {
       int32_t* o = out + i + j;
-      if (fm) {
+      if (asleep) {
+      } else if (model_ == MODEL_FM_VOICE) {
         RenderFmSubblock(phase_increment[i], patch, o);
-      } else {
+      } else if (!strings) {
         RenderSubblock(phase_increment[i], patch, o, aux_);
         for (size_t k = 0; k < kSubblockSize; ++k) o[k] += aux_[k];
       }
@@ -307,7 +419,12 @@ void RingsVoice::RenderMono(const uint32_t* phase_increment,
         int32_t a = o[k] < 0 ? -o[k] : o[k];
         if (a > peak) peak = a;
       }
-      mono_limiter_.Process(o, kSubblockSize, fm ? kFmGains : kModalGains);
+      // The voice's silence is its own: the shared reverb's share comes
+      // after the peak.
+      if (wet) {
+        for (size_t k = 0; k < kSubblockSize; ++k) o[k] += wet[i + j + k];
+      }
+      mono_limiter_.Process(o, kSubblockSize, gains);
     }
   }
   silent_blocks_ = peak < kSilence ? silent_blocks_ + 1 : 0;

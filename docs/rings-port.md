@@ -162,18 +162,84 @@ The mode bank is ~91k of the steady figure. The rest (weights, exciter, limiter,
 - **Match:** `make test-fm` gives 42–78 dB SNR against upstream over 11 scenarios.
 - **Cost:** ~106 MHz for six voices on the Blackfin simulator.
 
+## String models (done; on the device since strings1)
+
+Models 1 (sympathetic strings), 2 (string), 4 (quantized sympathetic strings) and 5 (string + reverb, below). The float copies (`src/string.*`, `src/plucker.h`) stay for the harness `Part`.
+
+**`src/string_fixed.*`: `StringFixed`, `PluckerFixed`, `DcBlockerFixed`.**
+- **Formats:** string signals Q25 (±64). Values written to the delay line are clamped to ±7, so Hermite's terms (up to 9× a sample) can't overflow; upstream's strings stay within about ±2 (the stress test, repeated strums at infinite decay, peaks at ~4.6 at the output). Delays in samples are Q19; coefficients Q31; the plucker runs in Q24.
+- **Delay lines:** 2048 words per string, plus one 1024-word stretch line per voice for the dispersion allpass (only the dispersion models use it, with one string).
+- **Per sample**, upstream's loop in its order: Hermite read, dispersion (noise-modulated delay, stretch allpass, DC-blocked curved bridge), input, FIR damping, IIR damping, write, linear pickup read.
+- **Changes from upstream:**
+  - **The damping low-pass** (`stmlib::Svf` at resonance 0.5) runs as two identical TPT one-poles. At resonance 0.5 the SVF is critically damped and its low-pass is exactly that cascade, which needs only `G = g/(1+g) < 1` instead of `g` (up to ~7 with stmlib's polynomial `tan`) and `h`.
+  - **Interpolated products.** Upstream interpolates delay, compensation, pickup position, damping and brightness separately and multiplies them per sample. The port interpolates the products the loop uses: loop delay, pickup delay and the FIR's two damped taps; the dispersion-derived values are interpolated at the block's ends the same way. Exact while the parameters hold still.
+  - **The first block after `Init` starts settled.** Upstream's interpolators start from `String::Init`'s defaults (compensation, position and damping 0). That's harmless on Rings, whose strings are set up long before a strum, but an OP-1 voice is reset and struck in the same block, and a high note goes round its loop inside that block.
+  - **`SemitonesToRatio`** is mirrored: floored to 1/256 semitone after float's rounding of `semitones + 128`, which snaps near-integers (11.999999 → 12). Without the rounding, octave strings came out 0.4 cents flat and the sympathetic tests drifted to 17 dB SNR.
+  - **The input DC blocker** clears itself once input and output are quiet. Left alone, a fixed-point DC blocker settles on a small constant, which a string at infinite decay would integrate.
+- **Noise** comes from upstream's LCG (`RandomFixed`, same seed and draw order), so the tests compare waveforms.
+- **Coefficients per block** with FFloat, split so that a glide (frequency only) skips the brightness/damping half: ~2,500 cycles when the tone changes.
+
+**`src/string_voice.*`: `StringVoice`** is `Part::RenderStringVoice` for one voice with the internal exciter:
+- strum → plucker (cutoff = the excitation cutoff × 8) → DC blocker → string 0 → `0.2/n × (out − aux)` → strings 1..n−1;
+- sympathetic strings: brightness `b(2−b)` twice, damping `0.7 + 0.27 d`, position plus an LFO (upstream's approximate cosine oscillator, as a phase accumulator at its true rate), glide `2^(3(b−1))` per block, and damping spread `d + k/n (0.95 − d)`;
+- tuning from `ComputeSympatheticStringsNotes`, or from upstream's chord table (Bryan Noll's, which upstream's `dsp.h` selects) with the cv_scaler's hysteresis;
+- `n = 8 / polyphony`; "all" plays as Rings' polyphony 4 (2 strings per voice).
+- **Tonic:** the played note (the OP-1 has no separate FREQUENCY knob).
+- **Mono:** `out − aux` per string, which is what upstream's `Part` sends per voice when polyphonic: the string minus its pickup tap.
+
+**OP-1 voice:** `RingsVoice` switches on the model; limiter pre-gains string 1.4, sympathetic 1.0. `RingsVoice::CopyFrom` replaces the struct copy on a steal and copies only the strings in use (up to 64 KB, ~45k cycles); `op1/support.cc`'s `memcpy`/`memset` now go word by word.
+
+**Match** (`make test-string`, 19 scenarios at 48 kHz against upstream's float `String`/`Plucker` driven like `Part`): 46–76 dB SNR over the first 0.25 s, levels within 0.1 dB, quarter-octave band spectra within 0.05 dB.
+
+**Cost** (`make bench-string`, one string, 32 samples at 44.1 kHz): ~4,300 cycles steady without dispersion (~135 per sample), ~12,000 with dispersion; ~1,800 more when brightness or damping change, a few hundred for a frequency change; the plucker ~2,200 while sounding, nothing once quiet. Engine figures: `docs/device-tests.md` Tests 6 and 7.
+
+**After the first device test** (strings1: sympathetic strings crackled when busy, though the simulator put them below the modal model), the string models were made lighter:
+- **Steals hand over the state.** The engine keeps `RingsVoice* voices[6]` over six states; a steal swaps pointers, and the fading voice gets `CopyFrom`: the plain state plus, per string, only the history it can read in the fade (1.5x its delays, `StringFixed::CopyRecentFrom`). The full copy was up to 64 KB, probably over half a block on the device's 16-bit SDRAM.
+- **The plucker sleeps** once its burst is over and its comb and filter are below ~1e-6; it used to run every block forever. The DC blocker skips silent blocks.
+- **Glides end** within 2^-14 (0.1 cent): upstream's converge forever and kept every sympathetic string recomputing coefficients.
+- **Frequency-only updates are cheap:** the damping low-pass's `G = g/(1+g)` comes from a 1025-point table of upstream's polynomial `tan` (`kStringLowpassQ31`).
+- **Brightness/damping updates are capped** at 2 sympathetic strings per block, in turn (string 0 always updates). Frequency changes always apply: capping glides too desynchronised the sympathetic strings after a new note (7 dB SNR against upstream).
+- **The plain string loop is in assembly** (`src/string_kernel_bfin.S`, bit-exact with `StringKernelC` in `src/string_kernel.h`, checked by `make bench-string`). The delay line carries 4 guard words mirroring its first samples, so reads never wrap. It's a straightforward first version (~135 cycles per sample against ~160 in C); scheduling loads into the multiplies' parallel slots would gain more.
+- A lambda GCC didn't inline had cost 40% in C; it's forced inline.
+
+## Assembly round (strings3)
+
+Test 7 showed the device runs ~1.6x the simulator's figures for every model (the modal model reads 4 rings at ~41% simulated). The string models' hot loops went to assembly, each bit-exact with a C reference checked by `make bench-string` / `make bench-models`:
+- `src/limiter_bfin.S` (`MonoLimiterAsm`): the soft-limit table lookup clamps its magnitude to 4.0, where the index is 256 and the fraction exactly 0, matching the C's out-of-range branch without one.
+- `src/string_kernel_bfin.S`: `StringKernelAsm` (plain string, hand-scheduled) and `StringKernelStretchAsm` (the stiff string while only its stretch allpass is active: dispersion in [0, 0.75], no noise or curved bridge; its C reference `StringKernelStretchC` is bit-exact with the general dispersion loop with those terms at 0: the loop delay goes through `delay_fm = 1` in Q30, which clears its lowest bit). The noise generator advances one draw per sample regardless, so the plucker's sequence matches upstream's.
+- `src/reverb_bfin.S`: see the reverb below.
+- `ShlSat` with a constant shift is one `<< n (S)` instruction on Blackfin (inline asm; GCC 14's builtin is the one that miscompiles, `src/fixed.h`).
+- String models render a 64-sample block per call (`RingsVoice::RenderStringBlock`); the sympathetic glide is squared per 64 samples to keep its timing. Frequencies are cached; the plucker and DC blocker are skipped while quiet.
+- `make bench-models` gives per-voice cycles per model and their parts.
+
+## String + reverb (model 5)
+
+`src/reverb_fixed.*`: upstream's `Reverb` (Griesinger topology on a 32768-sample 16-bit buffer, `fx/reverb.h` and `fx/fx_engine.h`) in fixed point.
+- **Mono:** upstream feeds the reverb with left + right and mixes it back into each side; the sum of the sides is `dry + amount (wet_1 + wet_2 − dry)`, which the port computes. Upstream's odd/even pan doesn't change left + right. The dry signal is the string's `out − aux`, as in model 2.
+- **One reverb shared by the voices** (since strings6; `SharedReverb` in `src/op1_voice.*`, bookkeeping in `op1/reverb_bus.h`), as upstream runs one reverb on the sum of its voices. Until strings5 each voice ran its own, which cost ~4× the CPU with 4 voices and glitched on the device beyond polyphony 1 (Test 9). The OP-1 renders voices separately, one call each per block, and applies each voice's envelope after the call, so:
+  - each voice plays `dry (1 − amount)` and adds its dry signal to the send; its share of `amount × wet` is mixed in before its limiter, as upstream limits dry + wet;
+  - a block ends when a voice renders a second time (any render order); the reverb runs once on that block's send, and the next block's carriers share its wet signal equally. The wet signal is one block late (64 samples at 44.1 kHz, 1.45 ms);
+  - a new voice takes no share in its first block, then ramps in with the others, so the shares always sum to 1; a steal hands the stolen voice's share to the voice that takes over its ring (`Transfer`). A voice fading out after a steal neither sends nor shares;
+  - a reverb idle for 50 ms (nothing sounding in this model) restarts empty;
+  - **"all" still plays 4 voices** in this model (Rings' maximum polyphony, chosen with the per-voice reverbs).
+  - `make test-reverb-bus` checks it on the host against a second reverb fed the same sends: one run per block in shuffled render orders, the carriers' sum within 10 LSB of the reference through joins and steals, no runs without carriers, the restart after a gap.
+- **The buffer is indexed without wrapping** (`write_ptr + offset`, 54,400 words, 109 KB): every access is a fixed offset from the write pointer. Data is read at most 6,312 samples after it's written, so only a write within 6,312 samples of the write pointer's wrap also goes `kSize` further on, where the read after the wrap finds it. Values are stored with a saturating shift (floored where upstream truncates towards zero: 1 LSB).
+- **Assembly** (`src/reverb_bfin.S`) for the settled case; C (`ProcessAsm`) splits blocks where the LFOs step (every 32 samples) and at the wrap zone's edges. The C loop stays for a reverb within 6,312 samples of a Clear, and as the reference (the Blackfin checksum must equal the host's).
+- **`Clear()` is O(1):** every read fetches what the same delay line wrote `k` samples before, so after a clear, reads further back than the samples written since return 0, as upstream's zeroed buffer would, until the longest delay (6312) has been written through.
+- **LFOs:** upstream's approximate cosine oscillators, stepped every 32 samples, at their true rate (sqrt(32)/(2π) of nominal) and in Hz at the OP-1's rate; the delay lengths stay in samples, as upstream's.
+- **Match** (`make test-reverb`, 48 kHz): wet level within 0.02 dB; 27–52 dB SNR, lowest for the longest, brightest tail (one-LSB differences recirculate through the 16-bit buffer at loop gain 0.98). A reverb cleared after loud noise matches a fresh one.
+- **Cost:** ~230 cycles per sample settled (assembly); ~390 in the C loop just after a Clear.
+
+## CPU meter (device tests)
+
+`op1/cpu_meter.h`: the engine's share of time, from the cycle counter around `RingsRender` and `RingsNoteOn`, over windows of four blocks, peak held and decaying ~0.6 s. A white-encoder click shows it on the screen's six rings, each 15% of a block. It shows the engine's own share only.
+
 ## Remaining work
 
+- **Device CPU** after Test 8 decides what's next. Left in C: the stiff string's full loop (structure below 0.24 or above 0.81, ~375 cycles per sample), the reverb right after a Clear, the modal model's per-block coefficient maths. The plain string kernel could gain a little more by keeping state in registers across samples.
 - **Trim per-voice overhead:**
   - idle-voice skipping;
   - recompute the exciter only on change;
   - optionally fewer modes per voice (Rings itself uses `64/poly − 4`).
-- **String model**, in fixed point:
-  - delay lines with Hermite interpolation;
-  - FIR and IIR damping;
-  - dispersion allpass;
-  - plucker (noise burst plus comb);
-  - DC blocker.
-  - Then sympathetic strings (8 strings) and the reverb (16-bit buffer, as upstream).
 - **Done since:** the device tests, the Rings screen, and model and polyphony select on encoder clicks (`docs/device-tests.md`, Tests 2–5; `docs/HANDOVER.md`).
 - **Sample rate.** Upstream assumes 48 kHz. The port takes `OP1RINGS_SAMPLE_RATE` (default 44100). The lookup tables don't depend on sample rate.

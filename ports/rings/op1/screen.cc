@@ -17,6 +17,7 @@
 
 #include <cstdint>
 
+#include "op1/cpu_meter.h"
 #include "op1/op1.h"
 #include "op1/screen_math.h"
 #include "op1/settings.h"
@@ -153,8 +154,10 @@ extern "C" void RingsScreenUpdate(void* self, int32_t ticks) {
   if (ready && slot >= 0 && slot < kNumSlots) {
     const int16_t* knobs = reinterpret_cast<const int16_t*>(kKnobs + slot * 16);
     const op1::ScreenState s = op1::ComputeScreenState(knobs);
+    // The rings show structure, or the CPU meter: ring i at (i + 1) x 15%.
+    const int32_t lit = op1::cpu_meter_shown ? op1::cpu_meter.percent() / 15 : s.lit_rings;
     for (int32_t i = 0; i < 6; ++i) {
-      Write(ring_styles[i], i < s.lit_rings ? ring_on : ring_off);
+      Write(ring_styles[i], i < lit ? ring_on : ring_off);
     }
     SetTranslate(nodes[0], 0, s.brightness_ty);
     SetTranslate(nodes[1], 0, s.damping_ty);

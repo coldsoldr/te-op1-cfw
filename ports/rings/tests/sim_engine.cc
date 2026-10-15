@@ -8,8 +8,10 @@
 //
 // Note-on gets the slot's knobs[8] as on the OP-1: params, then model and
 // polyphony (op1/settings.h). SIM_MODEL selects the model (make
-// sim-engine-fm builds with 3, the FM voice). The last scenarios play the
-// polyphony states with fast repeated notes (constant stealing and fades).
+// sim-engine-fm builds with 3, the FM voice; make sim-model M=n any model).
+// The last scenarios play the polyphony states with fast repeated notes
+// (constant stealing and fades); their block times include the note-ons,
+// which copy the stolen voice's state.
 
 #include <cstdint>
 #include <cstdio>
@@ -99,11 +101,14 @@ int main(int argc, char** argv) {
                            "poly 4 (12 modes), fast notes" };
   for (int p = op1::POLY_1; p <= op1::POLY_4; ++p) {
     knobs[op1::kPolyKnob] = op1::EncodeSetting(p);
-    harness::CycleStats fast, chord;
+    harness::CycleStats fast, chord, note_on;
     int32_t poly_peak = 0;
     for (int b = 0; b < 240; ++b) {
-      if (b % 12 == 0) RingsNoteOn(Voice((b / 12) % op1::kNumVoices), knobs);
       uint64_t t0 = harness::ReadCycles();
+      if (b % 12 == 0) {
+        RingsNoteOn(Voice((b / 12) % op1::kNumVoices), knobs);
+        if (b >= 24) note_on.Add(harness::ReadCycles() - t0);
+      }
       for (int v = 0; v < op1::kNumVoices; ++v) {
         RingsRender(Voice(v), out, params);
         for (int i = 0; i < op1::kBlockSize; ++i) {
@@ -114,9 +119,12 @@ int main(int argc, char** argv) {
       if (b >= 24) fast.Add(harness::ReadCycles() - t0);
     }
     fast.Print(kNames[p], op1::kBlockSize / 2);
-    for (int v = 0; v < op1::kNumVoices; ++v) RingsNoteOn(Voice(v), knobs);
+    note_on.Print("  note-on alone", op1::kBlockSize / 2);
     for (int b = 0; b < 12; ++b) {
       uint64_t t0 = harness::ReadCycles();
+      if (b == 0) {
+        for (int v = 0; v < op1::kNumVoices; ++v) RingsNoteOn(Voice(v), knobs);
+      }
       for (int v = 0; v < op1::kNumVoices; ++v) RingsRender(Voice(v), out, params);
       chord.Add(harness::ReadCycles() - t0);
     }

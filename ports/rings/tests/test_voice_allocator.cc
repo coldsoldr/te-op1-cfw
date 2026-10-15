@@ -125,9 +125,11 @@ int main() {
 
   // Click stepping: models cycle through the implemented ones, polyphony
   // through all -> 1 -> 2 -> 4.
-  Check(op1::StepModel(0, 1) == 3 && op1::StepModel(3, 1) == 0, "model: modal <-> FM");
-  Check(op1::StepModel(0, -1) == 3 && op1::StepModel(3, -1) == 0, "model: backwards");
-  Check(op1::StepModel(2, 1) == 0, "model: unimplemented steps to the first");
+  Check(op1::StepModel(0, 1) == 1 && op1::StepModel(1, 1) == 2 && op1::StepModel(2, 1) == 3 &&
+        op1::StepModel(3, 1) == 4 && op1::StepModel(4, 1) == 5 && op1::StepModel(5, 1) == 0,
+        "model: 0 -> 1 -> 2 -> 3 -> 4 -> 5 -> 0");
+  Check(op1::StepModel(0, -1) == 5 && op1::StepModel(3, -1) == 2, "model: backwards");
+  Check(op1::StepModel(7, 1) == 0, "model: outside the cycle steps to the first");
   Check(op1::StepPoly(op1::POLY_ALL, 1) == op1::POLY_1 && op1::StepPoly(op1::POLY_1, 1) == op1::POLY_2 &&
         op1::StepPoly(op1::POLY_2, 1) == op1::POLY_4 && op1::StepPoly(op1::POLY_4, 1) == op1::POLY_ALL,
         "poly: all -> 1 -> 2 -> 4 -> all");

@@ -85,12 +85,13 @@ OP1_CXXFLAGS := -O2 -std=c++17 -mcpu=bf524 -ffreestanding -fno-exceptions \
 OP1_LDFLAGS  := -nostdlib -nostartfiles -T op1/link.ld -Wl,--gc-sections \
                 -Wl,--no-undefined
 OP1_ENGINE_SRC := op1/engine.cc op1/screen.cc op1/input.cc op1/patches.cc op1/support.cc \
-                  src/op1_voice.cc \
+                  src/op1_voice.cc src/string_voice.cc src/string_fixed.cc src/reverb_fixed.cc \
                   src/fm_voice_fixed.cc src/modal_resonator.cc src/fixed_tables.cc \
-                  src/mode_bank_bfin.S
+                  src/mode_bank_bfin.S src/string_kernel_bfin.S src/limiter_bfin.S src/reverb_bfin.S
 OP1_HDR := $(wildcard op1/*.h)
 
-.PHONY: op1-probe op1-engine sim-engine sim-engine-fm host-probe step-params test-fm test-screen test-alloc
+.PHONY: op1-probe op1-engine sim-engine sim-engine-fm host-probe step-params test-fm test-screen test-alloc \
+        test-string sim-model bench-string test-reverb test-reverb-bus
 
 $(BUILD)/op1_probe.elf: op1/probe.cc op1/support.cc op1/op1.h op1/link.ld | $(BUILD)
 	$(BFIN_CXX) $(OP1_CXXFLAGS) op1/probe.cc op1/support.cc $(OP1_LDFLAGS) -o $@ -lgcc
@@ -111,9 +112,9 @@ op1-engine: $(BUILD)/op1_engine.elf
 SIM_CXXFLAGS := -O2 -std=c++17 -mcpu=bf524 -msim -fno-exceptions -fno-rtti \
                 -DOP1_SIM -I. $(WARN)
 SIM_ENGINE_SRC := tests/sim_engine.cc op1/engine.cc op1/screen.cc op1/input.cc op1/patches.cc \
-                  src/op1_voice.cc \
+                  src/op1_voice.cc src/string_voice.cc src/string_fixed.cc src/reverb_fixed.cc \
                   src/fm_voice_fixed.cc src/modal_resonator.cc src/fixed_tables.cc \
-                  src/mode_bank_bfin.S
+                  src/mode_bank_bfin.S src/string_kernel_bfin.S src/limiter_bfin.S src/reverb_bfin.S
 
 $(BUILD)/sim_engine.elf: $(SIM_ENGINE_SRC) $(OP1_HDR) $(PORT_HDR) | $(BUILD)
 	$(BFIN_CXX) $(SIM_CXXFLAGS) $(SIM_ENGINE_SRC) -o $@
@@ -128,12 +129,21 @@ $(BUILD)/sim_engine_fm.elf: $(SIM_ENGINE_SRC) $(OP1_HDR) $(PORT_HDR) | $(BUILD)
 sim-engine-fm: $(BUILD)/sim_engine_fm.elf
 	$(BFIN_RUN) $< $(BUILD)/sim_engine_fm.raw
 
+#   make sim-model M=n  the same with model n (op1rings::ResonatorModel)
+#                       -> build/sim_engine_model<n>.raw
+$(BUILD)/sim_engine_model%.elf: $(SIM_ENGINE_SRC) $(OP1_HDR) $(PORT_HDR) | $(BUILD)
+	$(BFIN_CXX) $(SIM_CXXFLAGS) -DSIM_MODEL=$* $(SIM_ENGINE_SRC) -o $@
+
+sim-model: $(BUILD)/sim_engine_model$(M).elf
+	$(BFIN_RUN) $< $(BUILD)/sim_engine_model$(M).raw
+
 $(BUILD)/host_probe: tests/host_probe.cc op1/probe.cc $(OP1_HDR) | $(BUILD)
 	$(HOST_CXX) -O2 -std=c++17 -DOP1_HOST_SIM -DOP1_SIM -I. $(WARN) tests/host_probe.cc op1/probe.cc -o $@
 
 #   make step-params  clicks from parameter steps, upstream vs port, and a
 #                     check that a sustained note has no discontinuities
 STEP_PARAMS_SRC := tests/step_params.cc src/modal_resonator.cc src/op1_voice.cc \
+                   src/string_voice.cc src/string_fixed.cc src/reverb_fixed.cc \
                    src/fm_voice_fixed.cc src/fixed_tables.cc $(MI)/rings/dsp/resonator.cc \
                    $(MI)/rings/resources.cc $(MI)/stmlib/dsp/units.cc
 
@@ -173,9 +183,68 @@ $(BUILD)/test_fm_voice: $(TEST_FM_SRC) $(PORT_HDR) | $(BUILD)
 test-fm: $(BUILD)/test_fm_voice
 	$<
 
+#   make test-string  the fixed-point string models against upstream's float
+#                     String and Plucker
+TEST_STRING_SRC := tests/test_string.cc src/string_voice.cc src/string_fixed.cc \
+                   src/fixed_tables.cc $(REF_SRC)
+
+$(BUILD)/test_string: $(TEST_STRING_SRC) $(PORT_HDR) | $(BUILD)
+	$(HOST_CXX) $(HOST_CXXFLAGS) -DOP1RINGS_SAMPLE_RATE=48000 $(TEST_STRING_SRC) -o $@ -lm
+
+test-string: $(BUILD)/test_string
+	$<
+
+#   make bench-string  cycles of the fixed-point string on Blackfin
+BENCH_STRING_SRC := tests/bench_string.cc src/string_fixed.cc src/fixed_tables.cc src/string_kernel_bfin.S src/reverb_fixed.cc src/reverb_bfin.S
+
+$(BUILD)/bench_string.elf: $(BENCH_STRING_SRC) $(PORT_HDR) | $(BUILD)
+	$(BFIN_CXX) $(SIM_CXXFLAGS) $(BENCH_STRING_SRC) -o $@
+
+#   The host build runs the reverb's C loop; its "reverb:" line (samples,
+#   guards, checksum) must match the Blackfin one, which runs the assembly.
+$(BUILD)/bench_string_host: $(filter-out %.S,$(BENCH_STRING_SRC)) $(PORT_HDR) | $(BUILD)
+	$(HOST_CXX) -O2 -std=c++17 -I. $(WARN) $(filter-out %.S,$(BENCH_STRING_SRC)) -o $@
+
+bench-string: $(BUILD)/bench_string.elf $(BUILD)/bench_string_host
+	@$(BFIN_RUN) $< > $(BUILD)/bench_string.txt; s=$$?; cat $(BUILD)/bench_string.txt; exit $$s
+	@$(BUILD)/bench_string_host > $(BUILD)/bench_string_host.txt
+	@grep '^reverb:' $(BUILD)/bench_string_host.txt | sed 's/^/host  /'
+	@if [ "$$(grep '^reverb:' $(BUILD)/bench_string.txt)" = "$$(grep '^reverb:' $(BUILD)/bench_string_host.txt)" ]; \
+	then echo "reverb: Blackfin = host"; else echo "reverb: Blackfin DIFFERS from host"; exit 1; fi
+
+#   make test-reverb  the fixed-point reverb against upstream's float Reverb
+TEST_REVERB_SRC := tests/test_reverb.cc src/reverb_fixed.cc src/fixed_tables.cc $(MI)/stmlib/dsp/units.cc
+
+$(BUILD)/test_reverb: $(TEST_REVERB_SRC) $(PORT_HDR) | $(BUILD)
+	$(HOST_CXX) $(HOST_CXXFLAGS) -DOP1RINGS_SAMPLE_RATE=48000 $(TEST_REVERB_SRC) -o $@ -lm
+
+test-reverb: $(BUILD)/test_reverb
+	$<
+
+#   make test-reverb-bus  op1/reverb_bus.h: string + reverb's shared reverb
+#                         (one run per OP-1 block, the voices' shares)
+TEST_REVERB_BUS_SRC := tests/test_reverb_bus.cc src/op1_voice.cc src/string_voice.cc src/string_fixed.cc                        src/reverb_fixed.cc src/fm_voice_fixed.cc src/modal_resonator.cc src/fixed_tables.cc
+
+$(BUILD)/test_reverb_bus: $(TEST_REVERB_BUS_SRC) $(OP1_HDR) $(PORT_HDR) | $(BUILD)
+	$(HOST_CXX) -O2 -std=c++17 -I. $(WARN) $(TEST_REVERB_BUS_SRC) -o $@
+
+test-reverb-bus: $(BUILD)/test_reverb_bus
+	$<
+
 HOST_PROBE_ARGS ?= 400 40 1 0
 host-probe: $(BUILD)/host_probe
 	$(BUILD)/host_probe $(BUILD)/host_probe.wav $(HOST_PROBE_ARGS)
 
 clean:
 	rm -rf $(BUILD) $(OUT)
+
+#   make bench-models   cycles per voice and model, and of their parts
+BENCH_MODELS_SRC := tests/bench_models.cc src/op1_voice.cc src/string_voice.cc src/string_fixed.cc \
+                    src/reverb_fixed.cc src/fm_voice_fixed.cc src/modal_resonator.cc \
+                    src/fixed_tables.cc src/mode_bank_bfin.S src/string_kernel_bfin.S src/limiter_bfin.S src/reverb_bfin.S
+
+$(BUILD)/bench_models.elf: $(BENCH_MODELS_SRC) $(PORT_HDR) | $(BUILD)
+	$(BFIN_CXX) $(SIM_CXXFLAGS) $(BENCH_MODELS_SRC) -o $@
+
+bench-models: $(BUILD)/bench_models.elf
+	$(BFIN_RUN) $<

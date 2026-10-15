@@ -116,6 +116,16 @@ inline int32_t AddSat(int32_t a, int32_t b) {
 // constant shift, GCC 14 emits a 16-bit shift (0x0100c3d6 << 1 gives
 // 0xffff87ac; found by tests/dump_modal.cc).
 inline int32_t ShlSat(int32_t a, int shift) {
+#ifdef __bfin__
+  // A constant shift is one instruction, `<< n (S)`, written out by hand
+  // (the generic code below compiles to a branch that's taken in the usual
+  // case, ~10 cycles).
+  if (__builtin_constant_p(shift) && shift > 0 && shift < 32) {
+    int32_t r;
+    __asm__("%0 = %1 << %2 (S);" : "=d"(r) : "d"(a), "i"(shift));
+    return r;
+  }
+#endif
   // No overflow iff a has at least `shift` redundant sign bits (SIGNBITS).
   if (__builtin_clrsb(a) >= shift) return a << shift;
   return a < 0 ? INT32_MIN : INT32_MAX;

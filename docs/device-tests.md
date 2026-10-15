@@ -321,3 +321,191 @@ This is `screen1` plus model and polyphony select. The settings are stored in th
 4. **Persistence:** change model and polyphony, switch to another sound slot and back, then save and reload a preset. The settings should stick.
 5. **No glitches** with fast playing in polyphony 1.
 6. **Shift + turn** still fine-adjusts.
+
+## Test 6: string models (`op1_246_rings_strings1.op1`)
+
+**Result (2026-10-15):**
+1. **Sympathetic strings (screen button 2) crackle when busy** and glitch while an encoder turns, in every polyphony. Read as CPU overload: the simulator put them below the modal model, which plays cleanly, so strings cost more on the device than simulated (memory traffic the simulator doesn't model), and the build had cost spikes: a 64 KB state copy per stolen note, a plucker that never slept, coefficient updates on every glide.
+2. **The tuning around the played note sounds good;** keep it.
+3. **The mono mix (`out − aux`)** stays.
+
+Fixes in Test 7. The rest of this section is the build description from before the flash.
+
+
+This is `clicks1` plus Rings' string models in fixed point (`ports/rings/src/string_fixed.*`, `string_voice.*`). Blue clicks now step through five models, in Rings' order: **modal → sympathetic strings → string → FM → quantized sympathetic strings** (screen buttons 1, 2, 3, 4, 5). String + reverb (button 6) comes with the reverb.
+
+**What the models do** (as upstream Rings with the internal exciter):
+- **String (3):** one Karplus-Strong string, plucked by a noise burst. Structure sets the dispersion: below 0.24 a "curved bridge" (buzzy), 0.24–0.26 a plain string, above that inharmonic stiffness, and towards the top a noisy, detuned string. Brightness, damping and position as on Rings.
+- **Sympathetic strings (2):** the plucked string plus strings that only ring in sympathy, tuned by structure (unisons, fifths, octaves, detuned copies). Polyphony 1 / 2 / 4 gives 8 / 4 / 2 strings per voice; "all" gives 2 per voice on 6 voices.
+- **Quantized (5):** the same, tuned to one of Rings' 11 chords, picked by structure.
+
+**Choices to judge on the device:**
+- **Tonic.** Rings tunes the sympathetic strings around its FREQUENCY knob. The OP-1 only gives the played pitch, so they're tuned around the played note, as if Rings were played from that knob.
+- **Mono mix.** Each string model's voice is upstream's `out − aux`, the signal Rings itself sends per voice when polyphonic: the string minus its pickup tap, so position works as a pickup comb. The modal model still sums `out + aux`, as flashed.
+
+**Checks (all off the device):**
+- `make test-string`: 19 scenarios against upstream's float `String`/`Plucker` (same noise sequence): 46–76 dB SNR over the first 0.25 s, levels within 0.1 dB, band spectra within 0.05 dB.
+- `make sim-engine`: modal checksum still `a3ae5f5c` (bit-identical). `test-fm`, `test-alloc`, `step-params` pass.
+- **CPU (`make sim-model M=n`, simulator, free ≈ 324 MHz):**
+
+| Case | String (2) | Sympathetic (1) / quantized (4) |
+|---|---|---|
+| "All", 6 voices ringing | ~152 MHz | ~155 MHz |
+| "All", 3 knobs turning | ~177 MHz | ~179–183 MHz |
+| Polyphony 1, a note every 17 ms (peak) | ~150 MHz | ~268 MHz |
+| Polyphony 2 / 4, fast notes (peak) | ~113 / ~173 MHz | ~213 / ~209 MHz |
+
+  A note-on in polyphony 1 copies the stolen voice's 8 strings (~45k cycles, inside the block times above). The simulator doesn't model cache misses; the 24 strings of the polyphony-1 worst case don't fit the 16 KB data cache, so expect some extra on the device.
+- **Package:** only `OP1_vdk.ldr` changes, plus `content/display/rings.svg` (identical to clicks1's); `te-boot.ldr` absent; `verify_bootloader.py` passes. The LDR byte-diff shows only the FIRST header, the 7 vtable/patch words, the 2 filename immediates and the appended blocks; the stock tail is intact.
+
+**To check on the device:**
+1. **Clicks:** blue steps 1 → 2 → 3 → 4 → 5 → 1 on the screen; shift + click steps back. Each model sounds from the next note.
+2. **String (3):** plucked-string sound at the right pitch. Turn structure (blue) through its range: buzzy in the first quarter, clean at about a quarter, then stiffer and, in the last quarter, noisy. Damping at full should sustain almost forever.
+3. **Sympathetic (2) and quantized (5):** a plucked note with a halo of sympathetic strings; structure changes their tuning (in 5, steps through chords). Try polyphony 1 (8 strings, richest) and "all".
+4. **Polyphony 1, fast legato** in models 2 and 5 (the heaviest case): no stutter or audio dropout.
+5. **Modal and FM** sound exactly as before.
+6. **Old presets** still load as modal / "all".
+
+## Test 7: string + reverb, lighter strings, CPU meter (`op1_246_rings_strings2.op1`)
+
+**Result (2026-10-15):**
+1. **Sympathetic strings (button 2): better,** but still glitches, mostly after a parameter change. The meter shows **4 rings (60–74%) almost all the time** ("all", chords or busy playing).
+2. **Model 6 sounds good** but glitches almost constantly: **5 rings (75–89%)** almost all the time.
+3. **Calibration:** the **modal model** ("all", a 4–6 note chord) also shows **4 rings**, and plays cleanly. The simulator puts it at ~41% of the CPU, so **the device runs ~1.5–1.8x the simulator's figures** for every model.
+4. The white click (`0x3d`) works: the meter shows.
+
+Fixes in Test 8. The rest of this section is the build description from before the flash.
+
+This is strings1 with:
+- **Model 6, string + reverb** (screen button 6): Rings' reverb, one per voice (the OP-1 renders voices separately), mixed to mono. Amount and time follow damping, the reverb's low-pass follows brightness, as on Rings. **"All" plays 4 voices in this model** (Rings' maximum polyphony): six reverbs would need ~290 MHz.
+- **Lighter string models** (for Test 6's crackles):
+  - a stolen voice's strings are handed over instead of copied, and the fading voice gets only the recent history it reads (a few KB instead of 64 KB);
+  - the plucker sleeps once its burst has died away;
+  - glides end within 0.1 cent, and frequency-only coefficient updates use a table (~600 cycles instead of ~2,500);
+  - brightness/damping updates are capped at 2 sympathetic strings per block, in turn (a few ms behind 50 ms of knob smoothing);
+  - the plain string loop is in Blackfin assembly (bit-exact with its C).
+- **CPU meter:** click the **white** encoder on the Rings engine page to show the engine's CPU use on the six rings instead of structure; click again to go back. Ring *i* lights at (*i* + 1) × 15% of each audio block, with a peak hold that decays over ~0.6 s: **5 rings = 75%**, near the ~81% the OP-1 leaves free. It measures the engine only; the OP-1's own audio work comes on top. The white click code (`0x3d`) is inferred: if the click does nothing, the meter can't be shown, and nothing else changes.
+
+**Checks (off the device):**
+- `make test-reverb`: 4 scenarios against upstream's float reverb; wet level within 0.02 dB, 27–52 dB SNR (16-bit rounding in the feedback loop decorrelates long tails); a cleared reverb matches a fresh one.
+- `make test-string`: all 19 pass; modal (`a3ae5f5c`) and FM (`567afc0c`) output unchanged; `test-alloc`, `step-params`, `test-fm`, `test-screen` pass.
+- **CPU (simulator):**
+
+| Case | strings1 | strings2 |
+|---|---|---|
+| Sympathetic, "all", 6 voices | ~155 MHz | ~139 MHz |
+| Sympathetic, "all", knobs turning | ~179 MHz | ~150 MHz |
+| Sympathetic, polyphony 1, fast notes (peak) | ~268 MHz | ~221 MHz |
+| Sympathetic, polyphony-1 note-on | ~45k cycles | ~26k cycles |
+| String + reverb, "all" (4 voices) / knobs turning | — | ~184 / ~195 MHz |
+| String + reverb, polyphony 4, a note every 17 ms (peak) | — | ~291 MHz |
+
+- **Package:** only `OP1_vdk.ldr` changes, plus `content/display/rings.svg`; `te-boot.ldr` absent; `verify_bootloader.py` passes; the LDR byte-diff shows only the FIRST header, the 7 vtable/patch words, the 2 filename immediates and the appended blocks (image end `0x02d472a0`).
+
+**To check on the device:**
+1. **Model 6:** a plucked string with Rings' reverb; damping lengthens both the string and the reverb, brightness darkens the reverb.
+2. **Sympathetic strings (2):** the Test 6 cases again: busy playing and turning encoders, in polyphony 1 and "all". Still crackling?
+3. **CPU meter** (white click) in the heavy cases: sympathetic polyphony 1 with fast legato; "all" with chords; model 6 with four notes; encoders turning. **Report the most rings you see lit** and whether crackles start at a given count.
+4. **Modal and FM** unchanged.
+
+## Test 8: string models in assembly (`op1_246_rings_strings3.op1`)
+
+**Result (2026-10-15):**
+1. **Sympathetic strings (button 2) sound great, no more glitches.**
+2. **Model 6 hangs the OP-1:** one note, then a constant high-pitched buzz; the OP-1 freezes until power-cycled. Cause (found from the code, `docs/HANDOVER.md` §3): `ReverbFixed::ProcessAsm` doesn't wrap the write pointer before calling the assembly kernel, so ~0.74 s after the reverb starts it writes below its buffer, corrupts its own pointers and then random RAM. No test ran the assembly reverb through a wrap. Don't use model 6 on strings3.
+
+The rest of this section is the build description from before the flash.
+
+strings2 with the string models' hot loops rewritten, every one bit-exact with its C reference (`make bench-string`, `make bench-models` compare them; modal and FM output unchanged):
+- **Limiter** (every model): in assembly; it was ~104 cycles per sample, taken branches for its attack/release choice and sign. Now ~53.
+- **`ShlSat`:** one `<< n (S)` instruction for constant shifts (GCC's code branched; ~10 cycles each, in many places).
+- **Stiff string** (buttons 3 and 6): a lean loop, in assembly, for structure 0.24–0.81 where only its stiffness allpass is active (no noise, no curved bridge): ~375 → ~195 cycles per sample.
+- **Plain string** (every sympathetic string): scheduled by hand (state loads and stores in the multiplies' parallel slots): ~135 → ~117 cycles per sample.
+- **Reverb:** in assembly, on a buffer laid out so every access is a fixed offset (a second copy is written only within one delay length of the write pointer's wrap; 109 KB per voice): ~390 → ~230 cycles per sample.
+- **String models run per 64 samples** (one control block per call; Rings scans its knobs at 2 kHz, this is 689 Hz): per-block overhead halves; glides keep their timing.
+- Strings' frequencies are cached; the plucker and its DC blocker are skipped entirely once quiet.
+
+**CPU (simulator; the device has run ~1.6x these):**
+
+| Case | strings2 | strings3 |
+|---|---|---|
+| Modal, "all", 6 voices (reference: 4 rings, clean) | ~165 MHz | ~153 MHz |
+| Sympathetic, "all", 6 voices / knobs turning | ~139 / ~150 MHz | ~104 / ~114 MHz |
+| Sympathetic, polyphony 1, fast notes (peak) | ~221 MHz | ~173 MHz |
+| String + reverb, 4 voices / knobs turning | ~184 / ~195 MHz | ~118 / ~124 MHz |
+| String + reverb, polyphony 4, fast notes (peak) | ~291 MHz | ~192 MHz |
+| String, 6 voices | ~152 MHz | ~85 MHz |
+
+**Package:** only `OP1_vdk.ldr` changes, plus `content/display/rings.svg`; `te-boot.ldr` absent; `verify_bootloader.py` passes; the LDR byte-diff shows only the FIRST header, the 7 vtable/patch words, the 2 filename immediates and the appended blocks (image end `0x02d27788`).
+
+**To check on the device:**
+1. **Sympathetic strings (button 2)** and **model 6**: busy playing and turning encoders. Still glitching?
+2. **Meter readings** in the same cases as Test 7 (expected: around 3 rings, below the modal model's 4).
+3. **Model 6 and the string model (button 3)** sound as before across the structure range (the lean loop covers 0.24–0.81; outside it the full loop runs).
+
+## Test 9: model 6 hang fixed (`op1_246_rings_strings4.op1`)
+
+**Result (2026-10-15):**
+1. **Model 6 no longer hangs** and sounds great, but **glitches beyond polyphony 1** (CPU).
+2. The CPU meter shows **4 rings** with model 6 and 4 notes (60–74%; expected ~3).
+3. String model (button 3) at structure extremes: no glitches.
+4. Models 1–5: all perfect.
+
+The rest of this section is the build description from before the flash.
+
+strings3 with one fix: `ReverbFixed::ProcessAsm` now wraps the write pointer (0 becomes `kSize`) before each assembly run, as the C loop's mask does. Nothing else changes: modal (`a3ae5f5c`) and FM (`567afc0c`) output and every other model are as on strings3.
+
+**The test that would have caught it:** `make bench-string` now runs the reverb for 128,253 samples (about 3.9 wraps, a Clear on the way, block sizes from 1 to 64) with guard words around it, checks the write pointer after every block, and compares the result with a host build running the C loop. Before the fix it failed at the first wrap (write pointer out of range after 32,779 samples, guards broken); after it, Blackfin = host (`c36f2ef8`), guards intact.
+
+**Checks (off the device):** `test-reverb` (4 ok), `bench-string` (both string kernels identical, reverb = host), `bench-models` (limiter `092ec491`), `test-string` (19 ok), `sim-engine` (`a3ae5f5c`), `sim-engine-fm` (`567afc0c`), `sim-model M=5`, `test-alloc`, `step-params`, `test-screen`: all pass. CPU as strings3 (model 6, 4 voices: ~118 MHz simulated; ~124 MHz with knobs turning).
+
+**Package:** only `OP1_vdk.ldr` changes, plus `content/display/rings.svg`; `te-boot.ldr` absent; `verify_bootloader.py` passes; the LDR byte-diff shows only the FIRST header, the 7 vtable/patch words, the 2 filename immediates and the appended blocks (image end `0x02d277d8`).
+
+**To check on the device:**
+1. **Model 6 (button 6):** play for well over a second (the hang came ~0.74 s after the first note), single notes and 4-note chords, encoders turning. Does it still hang or buzz? How does it sound? Any glitches?
+2. **CPU meter** (white click) with model 6 and 4 notes: how many rings (expected around 3)?
+3. **String model (button 3)** at the structure extremes (below ~0.24 and above ~0.81 the full C loop runs, ~375 cycles per sample): any glitches with several notes?
+4. **Models 1–5** as on strings3.
+
+## Test 10: green handle reaches the top (`op1_246_rings_strings5.op1`)
+
+**Result (2026-10-16):** the green handle's range is good (fully right reaches the top).
+
+The rest of this section is the build description from before the flash.
+
+strings4 with one display change: the brightness (green) handle is drawn over the encoder's real range, 0..29491 (the phase engine's stock range for green, `docs/screen-interface.md` §4c), so turning green fully right puts the handle at the top. The sound is unchanged (the engine reads the knob as before; modal `a3ae5f5c` and FM `567afc0c` unchanged). `make test-screen` checks the new mapping for every knob value and that 29491 lands at the top (y = 14).
+
+**Package:** only `OP1_vdk.ldr` changes, plus `content/display/rings.svg`; `te-boot.ldr` absent; `verify_bootloader.py` passes; the LDR byte-diff shows only the FIRST header, the 7 vtable/patch words, the 2 filename immediates and the appended blocks (image end `0x02d27800`).
+
+**To check on the device:**
+1. Green fully right: the brightness handle at the top; fully left: at the bottom; it tracks in between.
+2. Nothing else changes.
+
+## Test 11: shared reverb for model 6 (`op1_246_rings_strings6.op1`)
+
+strings5 (green handle) with **one reverb shared by every model 6 voice**, as upstream runs one reverb on the sum of its voices, instead of one per voice (Test 9: glitches beyond polyphony 1, meter at 4 rings).
+- Each voice plays its dry signal (1 − amount) and sends it to the reverb; the reverb runs once per OP-1 block on the sum, and the voices share its wet signal equally (`op1/reverb_bus.h`; `docs/rings-port.md`, "String + reverb").
+- The wet signal arrives one block (1.45 ms) later than before; with one voice, the level stays within ~2 dB of strings5 through a note (the reverb's tone meets the string's at a different phase).
+- A steal hands the reverb on with the ring; a new note doesn't swell the reverb; an idle reverb (50 ms with nothing sounding in model 6) restarts empty.
+- "All" still plays 4 voices in this model. Other models are unchanged (modal `a3ae5f5c`, FM `567afc0c`).
+
+**CPU (simulator; the device has run ~1.6× these):**
+
+| Model 6 | strings4/5 | strings6 |
+|---|---|---|
+| "all" (4 voices) / knobs turning | ~118 / ~124 MHz | ~73 / ~77 MHz |
+| Polyphony 4, fast notes (peak) | ~192 MHz | ~123 MHz |
+| Polyphony 2, fast notes (peak) | ~115 MHz | ~85 MHz |
+| Polyphony 1, fast notes (peak) | ~132 MHz | ~101 MHz |
+
+Per part (`make bench-models`): a voice ~15 MHz; the shared reverb ~12 MHz settled, ~20 MHz for 6,312 samples after a restart, once whatever the polyphony. Memory: one 109 KB reverb instead of six (the image is 668 KB instead of 1.2 MB).
+
+**Checks:** `test-reverb-bus` (new, 16 checks), `test-reverb`, `bench-string`, `bench-models`, `test-string` (19 ok), `sim-engine`, `sim-engine-fm`, `sim-model M=5` (output peaks as strings5's), `test-alloc`, `step-params`, `test-screen`, `test-fm`: all pass.
+
+**Package:** only `OP1_vdk.ldr` changes, plus `content/display/rings.svg`; `te-boot.ldr` absent; `verify_bootloader.py` passes; the LDR byte-diff shows only the FIRST header, the 7 vtable/patch words, the 2 filename immediates and the appended blocks (image end `0x02ca30cc`).
+
+**To check on the device:**
+1. **Model 6 in polyphony 2, 4 and "all":** chords and busy playing, encoders turning. Still glitching?
+2. **CPU meter** in the same cases (expected: 2–3 rings with 4 notes, from 4).
+3. **Sound:** does model 6 sound as before? Listen for clicks at new notes and steals (especially polyphony 1), and for the tail: does it carry on across notes?
+4. **Green handle** (Test 10) and models 1–5 as before.

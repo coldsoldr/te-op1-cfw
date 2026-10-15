@@ -5,16 +5,18 @@
 //   click blue           next model (op1/settings.h kModelCycle)
 //   click green          next polyphony (all -> 1 -> 2 -> 4)
 //   shift + click        the previous one
+//   click white          show or hide the CPU meter (op1/cpu_meter.h)
 // The value goes into the slot's knobs[4] / knobs[5] and is saved with the
 // preset through Patch::SetKnobs, as the stock knob handler does for
 // knobs[0..3] in the same thread. Clicks are consumed (return 1: no global
 // handler) on that page; every other key, page and engine goes to the stock
-// handler. White and orange clicks pass through (stock ignores them).
+// handler. Orange clicks pass through (stock ignores them).
 
 #include "op1/input.h"
 
 #include <cstdint>
 
+#include "op1/cpu_meter.h"
 #include "op1/op1.h"
 #include "op1/settings.h"
 
@@ -23,6 +25,7 @@ namespace {
 // Key codes of the encoder clicks (inferred, strong: §7b).
 const int32_t kClickBlue = 0x3b;
 const int32_t kClickGreen = 0x3c;
+const int32_t kClickWhite = 0x3d;   // inferred from blue and green
 
 // Firmware (§4, §7).
 const uint32_t kStockKeyDown = 0x01a51058;
@@ -54,9 +57,15 @@ int32_t RingsSlot() {
   return slot;
 }
 
-bool IsOurClick(int32_t key) { return key == kClickBlue || key == kClickGreen; }
+bool IsOurClick(int32_t key) {
+  return key == kClickBlue || key == kClickGreen || key == kClickWhite;
+}
 
 void Step(int32_t slot, int32_t key, int32_t direction) {
+  if (key == kClickWhite) {
+    op1::cpu_meter_shown = !op1::cpu_meter_shown;
+    return;
+  }
   int16_t* knobs = reinterpret_cast<int16_t*>(op1::kKnobs + slot * 16);
   if (key == kClickBlue) {
     knobs[op1::kModelKnob] = op1::EncodeSetting(op1::StepModel(op1::ModelSetting(knobs), direction));

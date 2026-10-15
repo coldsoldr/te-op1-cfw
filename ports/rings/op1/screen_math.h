@@ -27,12 +27,23 @@ struct ScreenState {
   int32_t pluck;            // visible pluck variant, 0..23
 };
 
+// The phase engine's stock range for green (brightness) stops at 29491
+// (docs/screen-interface.md §4c): its handle is drawn over that range, so it
+// reaches the top. Display only; the engine reads the knob as it is.
+const int32_t kBrightnessMax = 29491;
+
 inline int32_t KnobValue(int16_t k) { return k < 0 ? 0 : k; }
+
+// Brightness rescaled to 0..32768 over the encoder's range.
+inline int32_t BrightnessDisplayValue(int16_t k) {
+  const int32_t v = KnobValue(k) > kBrightnessMax ? kBrightnessMax : KnobValue(k);
+  return (v * 32768 + kBrightnessMax / 2) / kBrightnessMax;
+}
 
 // knobs: structure, brightness, damping, position.
 inline ScreenState ComputeScreenState(const int16_t* knobs) {
   const int32_t structure = KnobValue(knobs[0]);
-  const int32_t brightness = KnobValue(knobs[1]);
+  const int32_t brightness = BrightnessDisplayValue(knobs[1]);
   const int32_t damping = KnobValue(knobs[2]);
   const int32_t position = KnobValue(knobs[3]);
   ScreenState s;

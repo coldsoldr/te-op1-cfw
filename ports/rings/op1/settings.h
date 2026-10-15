@@ -27,6 +27,10 @@ const int32_t kNumPolyStates = 4;
 // "all" keeps the 16 modes sized from the measured free CPU).
 const int32_t kPolyVoices[kNumPolyStates] = { 6, 1, 2, 4 };
 const int32_t kPolyModes[kNumPolyStates] = { 16, 60, 28, 12 };
+// Rings' polyphony per state, for the string models: 8 / polyphony strings
+// per sympathetic voice and the chord table. "All" plays as Rings'
+// polyphony 4 (2 strings per voice).
+const int32_t kRingsPolyphony[kNumPolyStates] = { 4, 1, 2, 4 };
 
 inline int32_t DecodeSetting(int16_t k, int32_t count) {
   int32_t s = (static_cast<int32_t>(k) + kSettingStep / 2) / kSettingStep;
@@ -37,9 +41,9 @@ inline int32_t DecodeSetting(int16_t k, int32_t count) {
 
 inline int16_t EncodeSetting(int32_t s) { return static_cast<int16_t>(s * kSettingStep); }
 
-// The models the engine implements, in click order (the others would play
-// modal; they join the cycle once the string model exists).
-const int32_t kModelCycle[] = { 0, 3 };   // modal, FM voice
+// The models reachable by clicks, in Rings' order: modal, sympathetic
+// strings, string, FM voice, quantized sympathetic strings, string + reverb.
+const int32_t kModelCycle[] = { 0, 1, 2, 3, 4, 5 };
 const int32_t kModelCycleLength = sizeof(kModelCycle) / sizeof(kModelCycle[0]);
 
 // The next (direction 1) or previous (-1) model in kModelCycle; a model

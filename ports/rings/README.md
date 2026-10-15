@@ -9,6 +9,9 @@ A fixed-point port of the Mutable Instruments Rings DSP for the OP-1's Blackfin 
 | `src/` | Rings DSP, copied from `mutableinstruments/rings/dsp` (namespace `op1rings`), being converted to fixed point |
 | `src/fixed.h` | Fixed-point primitives; host emulation is bit-exact with the Blackfin builtins |
 | `src/mode_bank.h`, `src/mode_bank_bfin.S` | The modal resonator's per-sample loop, in C and in Blackfin assembly (bit-exact with each other) |
+| `src/string_fixed.*`, `src/string_voice.*` | Fixed-point string, plucker and Rings' string models for one voice (sympathetic, string, quantized, string + reverb) |
+| `src/string_kernel.h`, `src/string_kernel_bfin.S` | The string's plain per-sample loop, in C and in Blackfin assembly (bit-exact with each other) |
+| `src/reverb_fixed.*` | Fixed-point Rings reverb, mono (one, shared by model 6's voices: `SharedReverb` in `src/op1_voice.*`, `op1/reverb_bus.h`) |
 | `harness/` | Scenarios, the render driver (upstream reference or port), cycle counter, `compare.py` (stdlib only: SNR and spectral band difference) |
 | `tests/` | Filter equivalence, fixed-point bit-exactness, op-cost and mode-bank benchmarks |
 
@@ -34,6 +37,11 @@ make port44              # the port at the OP-1 rate -> out/port44/*.wav
 make compare             # waveform SNR, port vs ref
 python3 harness/compare.py dirspec out/ref out/port   # spectral comparison
 make bench-ref           # upstream float Rings on Blackfin (bfin-elf-run)
+make test-string         # fixed-point string models vs upstream's float String/Plucker
+make bench-string        # string and reverb cycles on Blackfin; string kernel C vs assembly
+make test-reverb         # fixed-point reverb vs upstream's float Reverb
+make test-reverb-bus     # model 6's shared reverb: one run per block, the voices' shares
+make sim-model M=2       # the OP-1 engine in the simulator with model M (CPU per case)
 ```
 
 Mode-bank benchmark and bit-exactness check:
