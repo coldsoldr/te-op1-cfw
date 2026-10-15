@@ -1,12 +1,14 @@
-# Handover: OP-1 custom firmware project
+# Handover: Rings on the OP-1 (custom firmware)
 
-Last updated 2026-10-14 (late evening). Read this first in a fresh session, then the docs it links to.
+Last updated 2026-10-15. Read this first in a fresh session. It is self-contained; the docs it links to have the detail.
+
+**Next task: port Rings' string model** (§3). It unlocks four of Rings' six models.
 
 ## 1. Goal and hard rules
 
-Build custom firmware for the **original TE OP-1** (Analog Devices Blackfin ADSP-BF524C2, firmware 246, bootloader TE-BOOT v2.30). The owner has **one unit**. **The bootloader must never be modified or rewritten.**
+Build custom firmware for the **original TE OP-1**: Analog Devices Blackfin ADSP-BF524C2, app firmware 246, bootloader TE-BOOT v2.30. The owner has **one unit**. **The bootloader must never be modified or rewritten.**
 
-The current project is **Mutable Instruments Rings as an OP-1 synth engine**. It replaces the phase engine first; a separate 16th engine may come later.
+The project is **Mutable Instruments Rings as an OP-1 synth engine**. It takes over the phase engine's slot (engine type 7); a separate 16th engine may come later (§8).
 
 Non-negotiable rules (detail in `docs/brick-safety.md`):
 1. **Never put `te-boot.ldr` in a package.** Build with `tools/build_package.py`, which drops it.
@@ -14,220 +16,200 @@ Non-negotiable rules (detail in `docs/brick-safety.md`):
 3. **Never use `FRC` in a package file name** (it forces a bootloader rewrite).
 4. **Never put a `.KEY` file on the OP-1 disk** (irreversible OTP key programming).
 5. **Install only through the te-boot menu:** hold COM at power-on, then "1. Upload firmware".
-6. **Ask the user before anything touches the device.** The user flashes; we prepare and verify. Before asking, decode every package against stock: only the intended files may differ.
-7. **Recovery:** hold COM at power-on and flash stock `op1_246.op1`. This works whatever state the app is in.
+6. **Ask the user before anything touches the device.** The user flashes; we prepare and verify. Before asking, diff every package against stock (§7): only the intended files and words may differ.
+7. **Recovery:** hold COM at power-on and flash stock `op1 firmware/op1_246.op1`. This works whatever state the app is in.
 
-## 2. Status
+How the user works:
+- They test on the device and report back in numbered points.
+- They stay on branch `firmware-analysis-tooling`.
+- Commit and push only when they ask.
 
-**Proven on the device (2026-10-14):**
-- **The safety path works.** Stock flashing and recovery through te-boot; the unit runs te-boot v2.30.
-- **The app has no integrity check.** Byte patches work (the COW test; the label is back to POLY in later builds, which start from stock).
-- **Injected code runs.** Probe builds placed code at `0x02c00000` (new LDR blocks inserted before FINAL) and hooked the phase engine's render through its vtable. The phase engine worked.
-- **Overload is survivable.** The probe pushed the CPU into audio overload and the OP-1 recovered without crashing.
-- **The free region looks safe.** No write was detected into `0x02c00000–0x02ffffff`; it was filled with a pattern and checked during the probe runs.
+## 2. Where things stand (2026-10-15)
 
-**Measured by probe v2** (recording `incoming/probe/probe2_report.ogg`, decoded with `tools/decode_probe_beeps.py`):
-- **CPU clock: ~400 MHz** (399.6).
-- **Synth voices render at 88.2 kHz.** Blocks are 128 samples, so each voice's render is called ~689 times per second. The probe's beep (a 32-sample square) came out at 2760 Hz, which means 88.3 kHz; probe v1 heard pitches and times doubled for the same reason.
-  - Call intervals jitter: the shortest is 1.34 ms, the mean 1.45 ms.
-  - **Not an artefact of the keyboard octave.** The recording was made with the keyboard an octave up, but the probe ignores pitch: the beep is a fixed waveform, and the call rate is timed by the cycle counter. Re-checked on 2026-10-14 (see `docs/device-tests.md`).
-  - The stock phase engine steps its phase by `inc` per sample, one cycle per 2^32, so `inc = f / 88200 × 2^32`, and Rings follows the stock engine's pitch whatever the octave setting.
-- **Only sounding voices are rendered.** With one key held, exactly one voice object was called, once per interval, with no other render calls.
-- **Free CPU:** v2's figure (0) was invalid. It compared intervals against the *shortest* one, so normal jitter (~8%) looked like overload at once.
+**On the device and confirmed working: `op1 firmware/op1_246_rings_clicks1.op1`.**
+- **Sound:** Rings' **modal** model and **FM voice** at the OP-1's real voice rate. The user says it sounds "amazing".
+- **Controls:**
+  - blue = structure, green = brightness, white = damping, orange = position;
+  - knob values are smoothed over ~50 ms; **shift + turn** keeps the stock 1/16 fine adjustment;
+  - **click blue** = next model (modal ↔ FM for now), **click green** = next polyphony (all → 1 → 2 → 4 → all), **shift + click** = step back.
+- **Polyphony,** Rings style:
+  - 1 / 2 / 4 voices with 60 / 28 / 12 modes;
+  - a new note takes over the oldest voice's ringing resonator, so legato carries the ring;
+  - a chord in polyphony 1 sounds only its last note;
+  - "all" = 6 OP-1 voices × 16 modes.
+- **Saving:** the model and polyphony are saved with the slot and in snapshots. Old presets load as modal / "all".
+- **Screen:** the user's Rings screen (`incoming/rings.svg`) replaces the phase screen. Rings, sliders, position dot and pluck follow the encoders; the model and polyphony buttons light up. Rounded corners (`rx`) draw square: the OP-1 ignores `rx`.
+- No stutters, glitches or UI sluggishness reported. Device tests 1–5 and their results are in `docs/device-tests.md`.
 
-**Measured by probe v3** (2026-10-14, `incoming/probe/probe3_report.ogg`; lowest F held, octave 0):
-- **Free CPU: 81% of a block, ~324 MHz,** with one phase voice playing (no FX, no other tracks).
-- **Block period:** 1.450 ms (88.2 kHz confirmed again); the longest call interval was 1.54 ms.
-- **Held key:** 174.6 Hz = **F3, 0 cents**, under `inc = f / 88200 × 2^32`.
+**Proven facts to rely on** (detail in `docs/device-tests.md`, `docs/engine-interface.md`):
+- **Synth voices render at 88.2 kHz,** 128 samples per call (~689 calls/s per sounding voice). Pitch arrives as per-sample phase increments `inc = f / 88200 × 2^32`.
+- **CPU clock ~400 MHz.** **Free CPU ~324 MHz** (81% of a block) with one stock phase voice playing. This was measured with no FX or other tracks.
+- **Only sounding voices are rendered.**
+- **Injected code at `0x02c00000` runs.** The app has no integrity check. Audio overload is survivable (the OP-1 recovers).
 
-**Rings runs on the device (first flash, 2026-10-14, `engine16`):**
-- **The setup:** 6 voices × 16 modes at 88.2 kHz. Rings runs at 44.1 kHz on 64 samples per call, and a 2× upsampler fills the 128 output samples. Simulated: ~47 MHz with one voice ringing, ~164 MHz with six (50% of the free CPU).
-- **The result:** the user says it "sounds amazing", with no stutters and no UI sluggishness.
-- **One problem:** slight pops when turning encoders on a ringing note.
-  - **Cause:** a wrong mono-limiter constant (0.896 instead of 1.12) made the gain jump 25% whenever the limiter's peak crossed 1.0.
-  - **Fixed and tested** (`make step-params`); details in `docs/device-tests.md`, Test 2.
+**Git:** branch `firmware-analysis-tooling`, remote `origin` (`<public repo URL>`).
+- Last pushed commit: `d981a7a` (the Rings screen).
+- The model/polyphony/clicks work and this handover were written after it; check `git status` and `git log` to see whether they've been committed.
+- **Never commit TE firmware:** `op1 firmware/` and `mutableinstruments/` are gitignored.
+- `incoming/` belongs to the user and stays out of git. It holds `rings.svg`, `rings-handover.md` and the probe recordings.
 
-**Flashed and confirmed by the user (2026-10-14):**
-- **`op1_246_rings_engine16c.op1`:** modal, 16 modes, limiter fixed, ~50 ms knob smoothing.
-- **`op1_246_rings_fm.op1`:** the FM voice in place of modal.
-- Both "sound great"; all encoders work. (`engine16b` and `engine10b` are older builds.)
+## 3. Next task: the string model
 
-**Built and verified, not flashed:**
-- **`op1_246_rings_screen1.op1`:** `engine16c` plus the first Rings screen, on the device since 2026-10-14. **Everything worked;** see `docs/device-tests.md`, Test 4.
-  - The screen shows and follows the encoders, and the sound is unchanged.
-  - Rounded corners draw square.
-  - Shift + encoder keeps its stock fine adjustment.
+Rings' six models, in upstream order (`op1rings::ResonatorModel`; the screen's `model0`–`model5`):
 
-**Git:** branch `firmware-analysis-tooling` (the user wants to stay on it), pushed to `origin` (`<public repo URL>`). Latest commits:
-- `3b96e5e` 88.2 kHz engine and probe v3
-- `2e0d097` probe v2
-- `e20a050` injection pipeline
-- `ae09351` fixed-point voice
-- `4f2a796` port groundwork
+| # | Model | Status |
+|---|---|---|
+| 0 | Modal resonator | done (`src/modal_resonator.*`) |
+| 1 | Sympathetic strings | **needs the string model** |
+| 2 | Modulated / inharmonic string | **needs the string model** |
+| 3 | FM voice | done (`src/fm_voice_fixed.*`) |
+| 4 | Quantized sympathetic strings | **needs the string model** (plus the chord table) |
+| 5 | String + reverb | **needs the string model and the reverb** |
 
-**Never commit TE firmware.** `op1 firmware/` and `mutableinstruments/` are gitignored. `incoming/` belongs to the user; it holds `rings.svg`, `rings-handover.md` and the probe recordings.
+**Upstream facts** (`mutableinstruments/rings/dsp/`; the float copies are in `ports/rings/src/string.*`, `plucker.h`, `fx/reverb.h`, `part.cc`):
+- **`String`:** a delay line (`kDelayLineSize` = 2048 floats) with interpolated reads, plus a stiffness/dispersion delay (1024). It also has FIR/IIR damping, a dispersion allpass, a pickup position and a DC blocker.
+- **`Plucker`** (the internal exciter): a noise burst plus a comb. It is triggered on strum with `(frequency, filter_cutoff × 8, position)`.
+- **`Part::RenderStringVoice`:**
+  - dispersion comes from structure, with a dead zone at 0.24–0.26;
+  - sympathetic models run `num_strings = 2 × kMaxPolyphony / polyphony` strings per voice (8 / 4 / 2 for polyphony 1 / 2 / 4), tuned by `ComputeSympatheticStringsNotes`;
+  - string 0 is excited and the others resonate sympathetically, with modified brightness, damping and position and an LFO on position;
+  - the gain is `1/√(2 × num_strings)`.
+- **Quantized sympathetic** takes its chord from a table (`chords[polyphony][11][8]` in `part.cc`), indexed by a chord derived from structure. Look at how `cv_scaler.cc` computes `performance_state.chord`.
+- **String + reverb:** damping is reshaped (`damping *= 2 − damping`). Then comes a stereo reverb (`fx/reverb.h`, upstream's 16-bit buffer) with amount, time and LP from damping and brightness, and an odd/even pan from position.
+- **Limiter pre-gains** (`Part::model_gains_`): modal 1.4, sympathetic 1.0, string 1.4, FM 0.7, quantized 1.0, string + reverb 1.4. `MonoLimiter` takes them per model (`LimiterGains` in `src/op1_voice.cc`).
 
-## 3. Environment
+**Suggested approach** (the same method as the modal and FM ports, which worked well):
+1. **Fixed-point `String` and `Plucker`** in new files, leaving the float copies for the harness. Keep the delay line in int32 or int16; there's plenty of SDRAM (the image region is 4 MB).
+2. **A host test against upstream** (like `tests/test_fm_voice.cc`, which runs upstream at 48 kHz). Watch for stmlib approximations that the port must mirror to match bit-closely: the FM port needed `SemitonesToRatio`'s 1/256-semitone floor.
+3. **Wire into `RingsVoice`:**
+   - `set_model` gains MODEL_STRING, then the sympathetic models (several `String`s per voice);
+   - add the models to `kModelCycle` in `op1/settings.h`, and they become clickable;
+   - the screen already shows any model.
+4. **CPU sizing** with `make sim-engine`. Sympathetic strings with 8 strings in polyphony 1, and "all" at 6 voices, need budgets.
+   - Rings' maximum polyphony is 4, so define strings per voice for "all" (e.g. 1 or 2).
+   - Remember the fast-notes worst case: the allocator can have one new voice plus two fading voices.
+5. **The reverb** for model 5, mixed to mono.
+6. **Package, diff against stock, and ask the user to flash** (§7).
+
+## 4. Architecture of the OP-1 build (`ports/rings/`)
+
+**Why fixed point:** the BF524 has no FPU. Float Rings would need ~16.5 GHz per modal voice, and libgcc soft-float costs ~330 cycles per operation. Everything at run time is fixed point; a few per-block calculations use `FFloat` (`src/ffloat.h`, a software float with a 32-bit mantissa).
+
+| File | Role |
+|---|---|
+| `op1/engine.cc` | Render and note-on entry points (they replace the phase voice vtable's +0x14 and +0x1c). Rings runs at 44.1 kHz on 64 samples per call; a 4-point Lagrange `Upsampler` doubles it to 128 samples at 88.2 kHz. Holds per-voice `RingsVoice`, `ParamSmoother` and `Upsampler`, applies `VoiceAllocator` decisions, and does fade-outs. The image header (`OP1X`) points to the patch table |
+| `op1/settings.h` | Model in `knobs[4]` and polyphony in `knobs[5]`, as `setting × 4096` (0 = modal / "all"); `kPolyVoices`/`kPolyModes`; `kModelCycle` (models reachable by clicks); `StepModel`/`StepPoly` |
+| `op1/voice_allocator.h` | Rings polyphony on the OP-1's 6 voices. Steal the oldest (`copy_from`: the new voice takes over its resonator state), fade the stolen voice (512 samples, at most 2 at once), silence voices stolen before they sounded |
+| `op1/param_smoother.h` | ~50 ms one-pole per voice and parameter; snaps within 2^-12 and at note-on |
+| `op1/screen.cc`, `screen_math.h` | Rings screen: `Init` finds the SVG nodes and copies colours from their default state; `Update` sets them from the displayed slot's knobs each frame, then calls `Screen::Draw` |
+| `op1/rings.svg`, `gen_rings_svg.py` | The package's SVG, generated from `incoming/rings.svg` (metadata dropped, 24 pluck variants, `…box`/`…num`/`…dots` ids) |
+| `op1/input.cc` | Encoder clicks (key codes `0x3b` blue, `0x3c` green, confirmed). Synth controller key-down / shifted key-down / key-up hooks, active only on the engine page of a phase slot; they write knobs[4..5] plus `Patch::SetKnobs` |
+| `op1/patches.cc` | The image's patch table: screen filename immediates, screen Init/Update, the 3 key hooks |
+| `op1/op1.h` | Addresses and conventions, `Header` and `Patch` structs |
+| `src/op1_voice.*` | `RingsVoice`: strum → excitation filter → `ModalResonator` (or `FmVoiceFixed`) → `MonoLimiter` (per-model gains). Also `set_model`, `set_resolution`, idle sleep |
+| `src/modal_resonator.*`, `mode_bank.h`, `mode_bank_bfin.S` | Fixed-point modal resonator: a Chamberlin SVF bank with a closed-form state map on coefficient changes; the assembly inner loop runs at 23.7 cycles per mode per sample |
+| `src/fm_voice_fixed.*` | Fixed-point FM voice (the follower is dropped: its input is silent with the internal exciter) |
+| `src/fixed_tables.*`, `resources/gen_fixed_tables.py` | Generated tables (sin/cos/tan of partials, exp2, log2, stiffness, sine, FM ratio quantizer) |
+| `tools/inject_app.py` | Adds the image's blocks before FINAL and patches the phase voice vtable from the header. It also applies the header's patch table (kinds: 32-bit word, imm16 lo/hi), checking each stock value |
+
+**Hook addresses** (all plain SDRAM; detail in `docs/engine-interface.md` and `docs/screen-interface.md`):
+- **Phase voice vtable** `0x191113c`: render `0x1911150` (stock `0x01a0bc5c`), note-on `0x1911158` (stock `0x01a0be82`). Note-on gets R1 = the slot's `int16 knobs[8]`.
+- **Knobs:** `0xff8013c4 + slot×16`. Current slot `[0xff8016d4]`; engine type `[0xff8016e4 + slot×4]`; core slot `[0x01aaac0c]`; synth sub-page `[0x01b4ee88]` (0 = engine page); `Patch::SetKnobs` at `0x1a00d14` (patches at `0x1ddd7e8 + slot×0x38`).
+- **Screen:** the PdScreen filename immediates at `0x1a0cd8e`/`0x1a0cd92`; vtable Init `0x1911190`, Update `0x1911188`.
+- **Keys:** synth controller vtable `0x1911994`: key down `0x19119a8`, shifted `0x19119b0`, key up `0x19119b8`.
+
+**CPU** (`make sim-engine`, Blackfin simulator, all 6 voices rendered every block; free ≈ 324 MHz):
+
+| Case | Cost |
+|---|---|
+| "All", 6 voices ringing | ~164 MHz |
+| "All", 3 knobs turning continuously | ~226 MHz |
+| Polyphony 1, a note every 17 ms (peak) | ~273 MHz |
+| Six-note chord in polyphony 1 | ~80 MHz |
+| Polyphony 2 / polyphony 4, fast notes (peak) | ~205 / ~185 MHz |
+| FM, 6 voices | ~106 MHz |
+
+## 5. Environment
 
 **Windows 11:**
-- Use `.venv/Scripts/python` (Python 3.11; `svg.path`, `sympy`; no numpy). Run tools from the repo root.
+- Use `.venv/Scripts/python` (Python 3.11; no numpy). Run tools from the repo root.
 - `ffmpeg` is on PATH.
 
-**WSL Ubuntu 20.04,** toolchain in `~/op1-toolchain/bfin/bin/`:
-- binutils 2.43 and gdb 15.2 (`tools/build_bfin_toolchain.sh`);
-- **GCC 14.2 C/C++ with newlib** (`tools/build_bfin_gcc.sh`, log `~/op1-gcc-build.log`).
-- **Simulator:** `bfin-elf-run` in its *default* environment; `--environment operating` double-faults on newlib syscalls. L1 addresses aren't mapped there, so tests use `-DOP1_SIM`.
-- `--trace-insn=on` plus `bfin-elf-addr2line` works as a profiler (see the trace tests).
-- Windows paths are under `/mnt/i/...`.
+**WSL Ubuntu 20.04:**
+- The toolchain is in `~/op1-toolchain/bfin/bin/`: binutils 2.43, gdb 15.2, GCC 14.2 C/C++ with newlib (`tools/build_bfin_toolchain.sh`, `tools/build_bfin_gcc.sh`).
+- Run make from `ports/rings` like this: `wsl -e bash -lc 'cd /mnt/i/GitHub/PersonalProjects/OP1.CustomFirmware/ports/rings && make …'`.
+- **Simulator:** `bfin-elf-run`, default environment only. L1 isn't mapped there, so simulator builds use `-DOP1_SIM`.
 
 **Gotchas:**
-- **Git Bash heredocs** passed to Python mangle `\\` and `\n` inside string literals. Use the Edit tool for code containing backslashes, or write scripts to files.
-- **GCC 14's `__builtin_bfin_shl_fr1x32`** miscompiles constant shifts (it emits a 16-bit shift). `ShlSat` uses `SIGNBITS` instead.
-- **Blackfin symbols get a leading underscore:** C `__image_end` is `___image_end` in linker scripts.
-- **objdump's `/* R0=0x... */` annotations can be stale.** Trust the `.L`/`.H` pairs.
+- **Git Bash heredocs** passed to Python mangle `\\`, `\n` and escaped quotes inside string literals. Every time this session that cost a fix. Write scripts and code with the Write/Edit tools when they contain backslashes.
+- **GCC 14's `__builtin_bfin_shl_fr1x32`** miscompiles constant shifts. `ShlSat` uses `SIGNBITS` instead.
+- **Blackfin symbols get a leading underscore** (C `__image_end` is `___image_end` in linker scripts).
+- **objdump's `/* R0=… */` annotations can be stale;** trust the `.L`/`.H` pairs.
+- **The image has no startup code or run-time initialisers.** Constant tables of addresses must be link-time constants (e.g. `Patch.value` is `const void*`). Check that no `.init_array`/`.ctors` sections appear.
+- **Calling firmware functions from our C++ works** (GCC's Blackfin ABI matches VisualDSP's for R0–R2 arguments and the R0 return).
 
-## 4. Repo layout
+**Reverse-engineering material** (outside the repo):
+- `op1 firmware/analysis/` holds the ELF and disassembly of the app (`OP1_vdk.dis`, 11M lines; grep it).
+- `%TEMP%\op1re\` holds the indexes `compact.txt`, `calls.txt`, `consts.txt`, `srctags.txt` and the helpers `op1lib.py`, `show.py START END` and `vt.py BASE N`.
+- `%TEMP%\op1inject\` holds `check.py` (byte-diffs an injected LDR against stock) and `pkgdiff.py` (diffs packages).
 
-| Path | What |
+## 6. Tests and make targets (WSL, from `ports/rings`)
+
+| Target | What |
 |---|---|
-| `tools/ldr_dump.py` | Parse and rebuild Blackfin LDR files (`serialize()` recomputes checksums and the FIRST length) |
-| `tools/patch_app.py` | Byte patches at runtime addresses, with expected-value checks |
-| `tools/inject_app.py` | **Add an image linked at `0x02c00000` to `OP1_vdk.ldr`** (blocks before FINAL, `.bss` as FILL, optional `--fill-pattern`) and hook the phase engine's vtable from the image's `OP1X` header |
-| `tools/build_package.py`, `tools/verify_bootloader.py` | Package without te-boot and the pre-flash gate |
-| `tools/decode_probe_beeps.py`, `tools/decode_probe_tones.py` | Decoders for the probe recordings (v2 and v1) |
-| `tools/build_bfin_toolchain.sh`, `tools/build_bfin_gcc.sh` | Toolchain builds (WSL) |
-| `ports/rings/` | The Rings port. **Start with `ports/rings/README.md`** |
-| `docs/rings-port.md` | Port design, measurements, remaining work |
-| `docs/engine-interface.md` | Synth engine interface: factory, 6 voices, vtable, render ABI, pitch buffer, hook addresses |
-| `docs/memory-map.md` | App load map, heaps, CPLBs, free regions (`0x02c00000–0x02ffffff` recommended) |
-| `docs/device-tests.md` | Device test procedures and results (probe v1 and v2; the engine test) |
-| `docs/firmware-246-baseline.md`, `docs/brick-safety.md`, `docs/app-boot-chain.md`, `docs/emulation-feasibility.md` | Earlier groundwork |
+| `make op1-engine` | The engine image → `build/op1_engine.elf` |
+| `make sim-engine` / `sim-engine-fm` | Entry points in the Blackfin simulator: CPU for every case above. Writes `build/sim_engine.raw` (s16le, 88.2 kHz). **"All" with modal must print checksum `a3ae5f5c`** (bit-exact since the limiter fix) |
+| `make test-fm` | FM voice against upstream (42–78 dB SNR) |
+| `make step-params` | Parameter-step clicks, upstream vs port; checks a sustained note and smoothed steps for discontinuities |
+| `make test-alloc` | Polyphony allocator, settings encoding, click stepping |
+| `make test-screen` | Screen geometry against the SVG spec |
+| `make host-probe`, `make op1-probe` | The CPU probe (v3) and its host simulation |
+| `make ref`, `port`, `compare` | Harness: upstream float Rings against the port's float `Part` (48 kHz) |
 
-Gitignored files in `op1 firmware/`:
-- `op1_246.op1` (stock, **the recovery file**), `op1_246/` (unpacked) and `op1_246-noboot.op1`;
-- `work_*` directories and the built `op1_246_rings_*.op1` packages;
-- `analysis/` (ELF and disassembly of the app and te-boot).
+## 7. Package workflow
 
-Throwaway analysis scripts live in `%TEMP%\op1re\` (`op1lib.py`, `show.py`, `vt.py`, the indexes), `%TEMP%\op1mem\` and `%TEMP%\op1inject\` (`check.py` byte-diffs an injected LDR against stock; `pkgdiff.py` diffs packages). They're not in the repo, and the method matters more than the code.
-
-## 5. Rings port: where it stands
-
-The full detail is in `docs/rings-port.md`.
-
-**Why fixed point:** the BF524 has no FPU. Upstream float Rings needs about 16.5 GHz for one modal voice, and libgcc soft-float costs ~330 cycles per operation. The port is therefore **all fixed point**:
-- **Modal resonator:**
-  - upstream's TPT SVF bank becomes a Chamberlin SVF bank, mathematically equivalent;
-  - a closed-form state map runs when coefficients change;
-  - the inner loop is Blackfin assembly (`src/mode_bank_bfin.S`), 23.7 cycles per mode per sample, bit-exact with its C reference.
-- **Coefficients:**
-  - fixed point from generated tables (`resources/gen_fixed_tables.py`; upstream's `tan` approximation is built in);
-  - FFloat (a software float with a 32-bit mantissa) only where a few operations are needed per block.
-- **`RingsVoice`** (`src/op1_voice.*`) is one complete voice:
-  - strum → excitation low-pass → resonator → limiter;
-  - a mono path with a cheaper limiter for the OP-1;
-  - idle-voice sleep and exciter sleep.
-- **Validation:** the harness renders identical scenarios through upstream Rings and the port. Modal results are 44–66 dB SNR, with at most 0.05 dB mean spectral difference.
-- **FM voice:** ported to fixed point (`src/fm_voice_fixed.*`); `make test-fm` gives 42–78 dB SNR against upstream. `RingsVoice::set_model` selects modal or FM.
-- **Not started:**
-  - the string model;
-  - sympathetic strings;
-  - reverb;
-  - the screen (the user's `incoming/rings.svg`).
-
-**OP-1 integration:**
-- **Images:** `ports/rings/op1/` (`engine.cc`, `probe.cc`, `link.ld`, `op1.h`), built with `make op1-engine` and `make op1-probe` in WSL from `ports/rings`.
-- **Hook:** the phase engine's voice vtable at `0x191113c`:
-  - `+0x14` render `0x1911150` (stock `0x01a0bc5c`);
-  - `+0x1c` note-on `0x1911158` (stock `0x01a0be82`);
-  - `+0x2c` note-off `0x1911168`.
-- **Render ABI:** `render(this = R0, int16 out[128] = R1, int16 params[4] = R2)`.
-  - The voice index is `(this - 0xffb00000) / 28`.
-  - Pitch is per-sample phase increments at `0xff801950`, scaled for **88.2 kHz**: `inc = f / 88200 * 2^32`.
-- **Rate:** Rings runs at 44.1 kHz on 64 samples per call; `Upsampler` in `op1/engine.cc` (4-point Lagrange) doubles it to the 128 samples.
-- **Simulated cost** (`make sim-engine`, at the real call rate), with one voice ringing / six ringing:
-  - 16 modes per voice (the default): about 47 / 164 MHz;
-  - 10 modes: about 37 / 121 MHz.
-  - The table for 10–24 modes is in `docs/device-tests.md`.
-- **Off-device checks:**
-  - `make sim-engine` measures the CPU cost and writes `build/sim_engine.raw` (88.2 kHz, s16le) for pitch checks;
-  - `make host-probe HOST_PROBE_ARGS="MHZ FREE% CALLS STRAY"` makes a WAV for testing the decoder.
-
-## 6. Open questions
-
-- **Free CPU under real load.** Probe v3 measured ~324 MHz with one phase voice and nothing else. Still unknown: the cost of other tracks, FX, more voices, and how much the UI needs.
-- **Encoder mapping:** which of `params[0..3]` is which encoder (blue, green, white, orange), and their range (assumed 0..32767).
-- **Envelope and output:** whether the OP-1's ADSR and FX come after render (inferred), and the expected output level.
-- **88.2 kHz:** is the rate fixed, or does it depend on settings? Does the core decimate the voice output to 44.1 kHz?
-- **Screen:** the phase engine screen class looks up its own SVG element IDs (e.g. "blue"), so swapping `pd.svg` for `rings.svg` alone could break it. It needs reverse engineering.
-
-## 7. Next steps (agreed direction: replace the phase engine with Rings; ask before every flash)
-
-1. ~~Adapt the engine to 88.2 kHz.~~ Done (2026-10-14): Rings at 44.1 kHz plus a 2× upsampler, with the packages rebuilt.
-2. ~~Probe v3.~~ Done (2026-10-14): ~324 MHz free, the lowest F reads F3, and 88.2 kHz is confirmed. Modes per voice raised from 10 to 16.
-3. ~~First Rings flash.~~ Done (2026-10-14): it sounds right, with no stutters, but encoder turns popped. The limiter bug is fixed.
-4. ~~Second flash (`engine16b`).~~ Done: it sounds right, and the encoders are confirmed.
-   - Blue = structure, green = brightness, white = damping, orange = position.
-   - The ranges and release behaviour stay as they are.
-5. **Knob smoothing:** built as `engine16c` (`op1/param_smoother.h`); flash it.
-
-**Agreed plan from here (user decisions, 2026-10-14):**
-- **Controls:**
-  - **Model and polyphony select = encoder push-clicks** (user decision on 2026-10-14, replacing shift + blue / shift + green).
-    - The user wants to keep shift + encoder's stock fine adjustment of each parameter.
-    - Which encoder clicks do what is to be decided with the user.
-  - **Polyphony has 4 states: 1, 2, 4 and "all".** States 1/2/4 trade voices for resonances as Rings does (64/poly − 4 = 60/28/12 modes), using least-recently-used resonator assignment; a stolen OP-1 voice fades out. "All" is 6 voices × 16 modes and lights all three poly squares.
-  - Store the model and polyphony in presets if there's a spare slot.
-- **Steps:**
-  1. ~~FM voice.~~ Done (2026-10-14): `src/fm_voice_fixed.*`, `make test-fm`, test package `op1_246_rings_fm.op1`. ~106 MHz for six voices.
-     - Upstream mapping: structure = ratio, brightness = FM amount, damping = decay, position = feedback.
-     - It costs more than expected (~17 MHz per voice), which could be optimised later.
-  2. **In parallel, read-only investigation of the screen and input code,** written up in `docs/screen-interface.md`:
-     - the phase engine's screen class: how it loads `content/display/pd.svg`, looks up ids (`static`, `blue`, `green`, `white`, `red1`, `red2`, `new`) and updates them;
-     - the SVG API it calls;
-     - how encoder turns and shift reach the synth screen (`KeyHandler.cpp`, `CtlKnob`, `shiftkey`);
-     - where engine parameters live in presets (`Ranges.cpp`: 8 knob slots per synth).
-  3. ~~Rings screen, first version.~~ Done; works on the device (`op1_246_rings_screen1.op1`).
-     - **Code:** `op1/screen.cc`, with its geometry in `op1/screen_math.h` (`make test-screen`).
-     - **SVG:** `op1/rings.svg`, made by `op1/gen_rings_svg.py` from the user's `incoming/rings.svg`.
-     - **Hooks:** applied through the image header's new patch table (`tools/inject_app.py`).
-     - The user approved the SVG changes: pluck variants, box/glyph ids, rounded corners left as is.
-     - **Separate engine slot:** the user asked where a separate (16th) engine fits instead of replacing phase. The answer: after Rings is complete on the phase slot, as its own read-only investigation. Its first question is safety: a preset with an unknown engine type must not crash stock firmware if the user ever goes back to it. A cheaper option is "stock phase" as an extra model.
-  4. **Model and polyphony switching on encoder push-clicks,** with the screen buttons. **Resume here.**
-     - First, a read-only investigation: what key codes encoder presses produce, and how they reach the synth controller. The key path is `KeyDispatch` → controller slot +0x14 key down / +0x24 key up; synth controller vtable `0x1911994`, `docs/screen-interface.md` §4.
-     - Check what stock code does with encoder presses on the synth engine page, and hook only the phase engine's page.
-     - Store the model and polyphony in phase `knobs[4..5]`. The shift + encoder hook at `0x19119c0` is no longer needed.
-  5. **The string model,** which enables models 1, 2, 4 and 5, then the reverb.
-  6. Possibly a separate 16th engine (needs the engine list, menu, screen and presets; see `docs/engine-interface.md`).
-
-**Other user wishes, still open:**
-- **Revert COW → POLY.** Any build from stock already shows POLY.
-- **CWO → COW in the effect menu,** as a display-only hook. Now feasible with the injection pipeline.
-- **PORTAMENTO → PORTA was dropped.** Don't propose it.
-
-## 8. Workflow
-
-**Byte patch:**
-```
-cp -r "op1 firmware/op1_246" "op1 firmware/<work>"
-.venv/Scripts/python tools/patch_app.py "op1 firmware/<work>/OP1_vdk.ldr" "op1 firmware/<work>/OP1_vdk.ldr" ADDR:OLD:NEW
-.venv/Scripts/python tools/build_package.py "op1 firmware/<work>" "op1 firmware/op1_246_<name>.op1"
-```
-
-**Injected code:**
 ```
 (WSL, ports/rings) make op1-engine
 .venv/Scripts/python tools/inject_app.py "op1 firmware/op1_246/OP1_vdk.ldr" OUT.ldr ports/rings/build/op1_engine.elf
 cp -r "op1 firmware/op1_246" "op1 firmware/work_x"; cp OUT.ldr "op1 firmware/work_x/OP1_vdk.ldr"
-cp ports/rings/op1/rings.svg "op1 firmware/work_x/content/display/rings.svg"   # engines with the screen
-.venv/Scripts/python tools/build_package.py "op1 firmware/work_x" "op1 firmware/op1_246_<name>.op1"
+cp ports/rings/op1/rings.svg "op1 firmware/work_x/content/display/rings.svg"
+.venv/Scripts/python tools/build_package.py "op1 firmware/work_x" "op1 firmware/op1_246_rings_<name>.op1"
 ```
 
-Then byte-diff the LDR against stock and decode-diff the package. Only these may differ:
-- in the LDR: the FIRST header, the vtable words and patch-table targets `inject_app.py` lists, and the appended blocks;
-- in the package: `OP1_vdk.ldr`, plus the added `content/display/rings.svg`.
+**Verify before asking the user to flash:**
+1. **Check the patches.** `inject_app.py` prints each vtable word and patch. Check every target against the image's symbols (`bfin-elf-nm build/op1_engine.elf`).
+2. **Byte-diff the LDR** with `%TEMP%\op1inject\check.py`. Only these may differ: the FIRST header, the listed vtable/patch words, the two filename immediates, and the appended blocks; the stock tail must be intact.
+3. **Diff the package** with `pkgdiff.py`. Only `OP1_vdk.ldr` may change, plus the added `content/display/rings.svg`; `te-boot.ldr` must be absent.
+4. **Run `tools/verify_bootloader.py`** on the package: it must pass.
 
-Show the user, and let them flash through te-boot.
+`build_package.py` refuses to overwrite an existing package. Use a new name, or delete our own stale build after looking at it.
 
-## 9. Memory
+## 8. Later and open items
 
-Persistent notes are in `%USERPROFILE%\.claude\projects\I--GitHub-PersonalProjects-OP1-CustomFirmware\memory\`.
+- **A separate 16th engine** (instead of replacing phase). Do it after Rings is complete on the phase slot, as its own read-only investigation:
+  - the factory's `type < 15` check and its jump table `0x18f5a04`;
+  - `instr_types` names, the engine picker, per-type screens, `Ranges`, preset type names.
+  - **Safety first:** a preset or saved slot with an unknown engine type must not crash stock firmware if the user ever goes back to it, possibly at every boot. User data lives on the disk and survives reflashing.
+  - Cheaper option: "stock phase" as an extra model.
+- **Free CPU under real load** (FX, other tracks) is unmeasured; the 324 MHz figure is with one voice and nothing else.
+- **Green encoder range:** the phase engine's stock range caps green (brightness) at 29491 (~0.9). The screen shows the true value. It could be stretched to full range if the user wants.
+- **FM costs ~17 MHz per voice,** more than expected; it could be optimised.
+- **The limiter** updates its gain once per 32-sample sub-block (a small zipper at −66 to −80 dB); per-sample interpolation would remove it.
+- **Other user wishes:**
+  - CWO → COW in the effect menu (display-only; feasible with the patch table);
+  - PORTAMENTO → PORTA was dropped: don't propose it;
+  - COW → POLY is moot (builds from stock show POLY).
+
+## 9. Docs and memory
+
+| Doc | Content |
+|---|---|
+| `docs/rings-port.md` | Port design, validation, measurements |
+| `docs/engine-interface.md` | Engine types, factory, voice vtables, render ABI, pitch |
+| `docs/screen-interface.md` | Screen class, SVG API, frame loop, input path, presets; §6 the screen hook, §7 encoder clicks |
+| `docs/device-tests.md` | Every device test (probes v1–v3, Tests 2–5) with procedures and results |
+| `docs/memory-map.md` | App load map; the free region `0x02c00000–0x02ffffff` |
+| `docs/brick-safety.md`, `docs/firmware-246-baseline.md`, `docs/app-boot-chain.md` | Safety and groundwork |
+| `ports/rings/README.md` | Port layout and harness builds |
+
+Persistent notes: `%USERPROFILE%\.claude\projects\I--GitHub-PersonalProjects-OP1-CustomFirmware\memory\`.

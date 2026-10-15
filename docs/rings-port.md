@@ -175,6 +175,5 @@ The mode bank is ~91k of the steady figure. The rest (weights, exciter, limiter,
   - plucker (noise burst plus comb);
   - DC blocker.
   - Then sympathetic strings (8 strings) and the reverb (16-bit buffer, as upstream).
-- **Run the device tests** (`docs/device-tests.md`), then size modes per voice from the measured free CPU.
-- **Screen.** Your `incoming/rings.svg` (with `rings-handover.md`) defines a Rings screen. Using it means reverse-engineering the phase engine's screen class: it looks up its own SVG element IDs (e.g. "blue"), so swapping `pd.svg` alone could break it.
+- **Done since:** the device tests, the Rings screen, and model and polyphony select on encoder clicks (`docs/device-tests.md`, Tests 2–5; `docs/HANDOVER.md`).
 - **Sample rate.** Upstream assumes 48 kHz. The port takes `OP1RINGS_SAMPLE_RATE` (default 44100). The lookup tables don't depend on sample rate.

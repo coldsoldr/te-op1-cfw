@@ -1,17 +1,17 @@
-// Rings screen for the OP-1 (op1/screen.cc): the patches that put it in
-// place of the phase engine's screen, for the image header's patch table.
+// Rings screen for the OP-1 (op1/screen.cc): the entry points and the file
+// name that op1/patches.cc puts in place of the phase engine screen's.
 
 #ifndef OP1RINGS_OP1_SCREEN_H_
 #define OP1RINGS_OP1_SCREEN_H_
 
 #include <cstdint>
 
-#include "op1/op1.h"
+extern "C" void RingsScreenInit(void* self);
+extern "C" void RingsScreenUpdate(void* self, int32_t ticks);
 
 namespace op1 {
 
-const uint32_t kNumScreenPatches = 4;
-extern const Patch kScreenPatches[kNumScreenPatches];
+extern const char kRingsSvgName[];
 
 }  // namespace op1
 

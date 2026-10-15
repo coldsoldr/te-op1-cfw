@@ -344,3 +344,144 @@ int RingsOnKnob(void *ctrl /*R0*/, int knob /*R1*/, int16_t *delta /*R2*/) {
 - **`<rect rx>`:** does the parser honour rounded corners? No stock SVG uses them.
 - **Writing knobs from the UI thread:** is it safe to write `knobs[4..5]` from `OnKnob`, which runs in the KeyHandler thread? Stock `Ranges::ApplyKnob` writes the same array from the same thread, so it should be.
 - **Exact meaning** of `0x1df4e38` (the displayed slot) and `0x1aaac0c` (the Core's active slot). They're expected to match while the synth screen shows.
+
+## 7. Encoder push-clicks
+
+**Status (2026-10-15):** the hook (d) is implemented in `ports/rings/op1/input.cc` and applied through `op1/patches.cc`. **It works on the device** (`op1_246_rings_clicks1.op1`), which confirms `0x3b` = blue click and `0x3c` = green click.
+
+**Summary.** The four encoder push switches reach the controller as **ordinary keys**. They go through `s_key_queue`, `KeyDispatch` and the active controller's key slots, with both press and release. The codes are **`0x3b` blue, `0x3c` green, `0x3d` white, `0x3e` orange**. That assignment is strongly supported but inferred, because the code that builds them is in encrypted L1 (evidence in (b)). In synth mode, stock firmware ignores them. They can be consumed by hooking the synth controller's key slots: `+0x14`, `+0x1c` and `+0x24`.
+
+### (a) Where key codes come from (confirmed unless marked)
+
+The buttons are read through **MCP23017 I2C GPIO expanders**. Every read asks for 2 bytes from register `0x12` (GPIOA/GPIOB). The callback context is `bank << 8 | reg`.
+
+| device | role | evidence |
+|---|---|---|
+| `0x22` | **master**. Its GPIO low 4 bits are the interrupt lines of the four key expanders. Its **upper 12 bits are the encoder pins**, inverted (`(pins >> 4) ^ 0xfff`) and stored in `W[0x1001c48]` | Interrupt handler `0xffa03794` (registered `0x1a9c4ca(0xc, …)` at `0x19ae6e2`) reads `0x22` reg `0x12` with callback `0xffa03e1a`, which tests bits 0..3 and reads `0x23`/`0x24`/`0x25`/`0x26` (L1 `0xffa03f3c`..`0xffa04092`) |
+| `0x23`, `0x24`, `0x25`, `0x26` | **key banks 3, 4, 5, 6** (contexts `0x312`, `0x412`, `0x512`, `0x612`) | `0x19ae7cc` (plain SDRAM) and L1 `0xffa03f50`..`0xffa0405e` |
+| `0x20` | other "master gpio" (`gpio.cpp:400 master_gpio_init_done`; all registers read with `callback_store_all`) | `0x19ae5a8` |
+
+- **Key scan** (L1 `0xffa03bb4`, `gpio.cpp:112 gpio_bank_num < … old_keys`). For each changed bit of `old_keys[bank]` (`0xff801860 + bank*2`), the key code is `bank*16 + bit - 0x30`. The visible `R7 += -0x30` sits in a 16-bit loop with `R7 += 1`, so the code range is `0x00..0x3f`. The scan calls the key callback `[0xff801870]`.
+- **Key callback** `[0xff801870] = 0xffa04a10`, set by `0x19ae024` from `OP_Main` at `0x19f0832`. It packs `{u8 key, u8 state}` and calls `KeyHandler::PushKey` (`0x19c2f24`), then the wake function `0x19c2f04`. Its first encrypted 8 bytes hold only `LINK` and `B[SP+0xc] = R0`, so **the code is passed through unchanged** (inferred from block alignment). Compare the plain SDRAM twin `0x19efe40`, which adds `0x38`.
+- **SDRAM GPIO keys** (`0x19efe40`, registered with `0x19ae0c8` at `0x19f084a`): raw index + `0x38`, so they produce **`0x38`** and **`0x39`**. Those two are the BF524 pins `B[0xff90785d]`/`B[0xff90785e]`. The global handler stores them in `B[0x18b621c]`/`B[0x18b621d]` and calls audio routing (`0x195b1fc`, `0x19deaec`). They are probably jack sensing (inferred).
+- **`0x19efe6c`** pushes a fixed virtual key **`0x3f`** with state 1, from bytes at `0x18e62bc`. It is installed at `0x18c1eb8` by `0x1a6ee48` (USB/MIDI side, inferred).
+- **Encoders** (callback `[0xff801874] = 0xffa04a44`, set by `0x19ae008`) are given the 12 encoder bits of device `0x22`.
+  - **Loop 1** (`0xffa04a90`..`0xffa04ae4`) decodes each encoder's 2 quadrature bits with the 16-entry table at `0x18e64ac` (`0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0`). It feeds `KeyHandler::AddKnob(k, delta)`; `AddKnob` has no plain-SDRAM caller.
+  - **Loop 2** (`0xffa04b06`..`0xffa04b70`) tests one bit per iteration (`R0 >>>= R7; BITTST(R0,0)`), with `R4` iterations and `R7`, `R6` each `+= 1` per iteration. For each changed bit it builds **`B[SP] = R6` (key code), `B[SP+1] = (bits & mask) != 0` (state)**, then calls PushKey and `0x19c2f04`.
+  - So **the push switches become key events in `s_key_queue`, with codes `R6 .. R6+3`, sent on both edges** (confirmed structure). `R6`'s start value is in an encrypted 8-byte block (`0xffa04b00`..`0xffa04b07`), so it isn't readable directly.
+
+### (b) The key code map (names inferred, handler behaviour confirmed)
+
+**The MIDI controller mode states the numbering.** `0x190f6ec` (mode 11, near `opzcontroller_template`, `midi_knobs_relative`) has key-down `0x1963dbc` with a 64-entry table at `0x18d2a44` (`key < 0x40`). For every non-note key without a special case, it sends **CC = key + 5** with value 127 (`0x1963f4c`: `R7 += 5; 0x19e3004(R7, 0x7f)`). Matching the CC numbers to the codes:
+
+| code | key (CC) | stock handling |
+|---|---|---|
+| `0x00` | help (5) | global: mode 9, help flag `B[0xff9077f4] = 1` |
+| `0x01` | metronome (6) | mode 4 (tempo) |
+| `0x02`..`0x05` | synth, drum, tape, mixer (7..10) | modes 0..3; all four held → mode `0xe` |
+| `0x06`..`0x09` | T1..T4 (11..14) | `Keys.cpp` "track key" (`0x19c318c`); synth: sub-page 0..3 |
+| `0x0a`, `0x0b`, `0x0c` | lift, drop, scissors (15..17) | synth: `0x1a50aa8` (copy patch), `0x1a50b40` (drop; sampler-specific) |
+| `0x10`..`0x14`, `0x2d`..`0x2f` | keys "1..8" (21..25, 50..52) | `Keys.cpp` sound index `0x19c31e6`: `0x2d..0x2f` → 0..2, `0x10..0x14` → 3..7; global: select sound slot |
+| `0x15` | seq (26) | mode 7 (`SeqManager`) |
+| `0x21`, `0x22`, `0x23` | rec, play, stop (38..40) | tape rec ("Out of clips"); play sends MIDI `0xfa`/`0xfb`, stop sends `0xfc` |
+| `0x24`, `0x25` | (41, 42) | synth: octave −/+ (`0x1a86158(∓1)`, `VoiceCtl.cpp`) |
+| `0x26` | **shift** (43) | `SetShift(1)`/`SetShift(0)`. **This confirms §4b's inference** |
+| `0x2b` | mic/input (48) | mode 5 (`mic_line_screen.cpp`) |
+| `0x2c` | COM (49) | mode 6; also recorded in `B[0x1dd4d95]` by `KeyDispatch` |
+| 24 codes | keyboard | `0x0d..0x0f`, `0x16..0x20`, `0x27..0x2a`, `0x30..0x35` (`IsNoteKey` `0x19c316c`, table `0x18e0a80`) |
+| `0x36`, `0x37` | (59, 60) | no handler found |
+| `0x38`, `0x39` | SDRAM GPIO (see (a)) | global `0x19ac94c`/`0x19ac964` |
+| **`0x3b`..`0x3e`** | **encoder push blue, green, white, orange (64..67)** | see below |
+| `0x3f` | virtual (USB/MIDI) | MIDI mode `0x1964bb0` |
+
+**Why `0x3b`..`0x3e` are the encoder clicks** (inferred, strong):
+1. Expander keys can only produce `0x00..0x3f`. Buttons and keyboard fill `0x00..0x37`, the SDRAM GPIO uses `0x38`/`0x39`, and `0x3f` is virtual. That leaves four consecutive free codes, `0x3b..0x3e`, for loop 2's four consecutive codes (`0x3a` is unused anywhere).
+2. **The only stock consumer of `0x3b`/`0x3c` is the mic/line input controller** (mode 5, vtable `0x1910b4c`, key-down `0x19def54`). It uses them for the **FM-radio popup**:
+   - `0x3b` commits or closes the popup (`0x19df0b4`);
+   - `0x3c` opens or cancels it (`0x19df024`);
+   - the popup (`fmpopup.svg`, driven by `0x19a4010`) shows nodes **`blue`** and **`green`** under a **down-arrow** (`<g id="arrow">`: a vertical line with a "V" head), that is "press the blue/green encoder". So `0x3b` = blue and `0x3c` = green, which fixes the base.
+3. CC = key + 5 puts them at CC 64..67, which matches the OP-1's published encoder-push CCs (from memory, not checked in this image).
+
+No code compares a key with `0x3d` or `0x3e` (all `0x3d`/`0x3e` compares found are SQL-tokeniser or date code). So **stock firmware doesn't use white and orange clicks anywhere**.
+
+### (c) Stock behaviour on encoder clicks (confirmed)
+
+- **Synth controller (mode 0)** handles keys `0x02`, `0x06..0x0b`, `0x24`, `0x25` only. Every other key returns 0:
+  - key down `0x1a51058`: `key < 0x24` → table `0x18fb2c0` for keys 2..`0xb`; `0x24`/`0x25` octave;
+  - shifted key down `0x1a50904`: 6, 8, 9 open the preset, FX and LFO browsers; `0x24`/`0x25`;
+  - key up `0x1a5056c`: `0x24`/`0x25` only, returning 0.
+  - Key down always runs two UI prologues first: `0x1a50204` (lazy init, `0x1df6eec`) and `0x1a501e8`, which hides the popup node `[0x1df6edc]`.
+- **Global handlers:**
+  - key down `0x19ac4b4`: `key < 0x3a` → table `0x18ddcac`, otherwise → `0x19ac508`. For a non-note key, `0x19ac508` only re-enters help mode (`SetMode(9)`) if the help flag `B[0xff9077f4]` is set;
+  - shifted `0x19ac9b8`: `key < 0x30` → table `0x18dddc0`, otherwise note keys only;
+  - key up `0x19acd60`: `key < 0x3a` → table `0x18ddeac`, otherwise note keys only.
+- **So in synth mode an encoder click does nothing** (except in help mode). White and orange do nothing anywhere.
+- **Press and release are both delivered.** `KeyDispatch` (`0x19b6c74`) does nothing while `B[0x1dd4d94] == 0`. Otherwise:
+  - press with shift → `+0x1c` only; press without shift → `+0x14` only;
+  - release → `+0x24`, whatever the shift state;
+  - **a nonzero return skips the matching global handler**;
+  - `+0x44` (synth: `0x1a504e8`, which returns the screen id for the sub-page, e.g. `0x1a3bf44(type)` on page 0) and the event record `0x19d7c94` run after every key, consumed or not.
+- **The calling convention:** `R0 = this + W[vt+slot-4]` (0 for every slot of `0x1911994`, checked), `R1 = key` (u8). The return is in `R0`.
+
+### (d) Recommended hook
+
+Hook the synth controller vtable (`0x1911994`). All three are plain SDRAM words, patched through the image patch table like the screen hooks (§6):
+
+| slot | word | stock | ours |
+|---|---|---|---|
+| +0x14 key down | **`0x19119a8`** | `0x01a51058` | `RingsKeyDown` |
+| +0x1c shifted key down | **`0x19119b0`** | `0x01a50904` | `RingsShiftKeyDown` |
+| +0x24 key up | **`0x19119b8`** | `0x01a5056c` | `RingsKeyUp` |
+
+```
+static inline int rings_page_active(void) {
+    int slot = *(volatile int *)0xff8016d4;
+    return *(volatile int *)0x1b4ee88 == 0                      // engine sub-page (T1)
+        && *(volatile int *)(0xff8016e4 + slot * 4) == 7;       // phase slot = Rings
+}
+#define IS_CLICK(k) ((unsigned)((k) - 0x3b) < 4)                 // 0x3b blue .. 0x3e orange
+
+int RingsKeyDown(void *ctrl /*R0*/, int key /*R1*/) {
+    if (IS_CLICK(key) && rings_page_active()) {
+        int slot = *(int *)0xff8016d4;
+        int16_t *k = (int16_t *)(0xff8013c4 + slot * 16);
+        if (key == 0x3b) k[4] = next_model(k[4]);              // blue  = resonator model
+        if (key == 0x3c) k[5] = next_poly(k[5]);               // green = polyphony 1/2/4/all
+        Patch_SetKnobs((void *)(0x1ddd7e8 + slot * 0x38), k);  // 0x1a00d14, as OnKnob does
+        return 1;                                              // consumed: no global handler
+    }
+    return orig_KeyDown(ctrl, key);                            // 0x1a51058
+}
+int RingsShiftKeyDown(void *ctrl, int key) {                    // shift held while clicking
+    if (IS_CLICK(key) && rings_page_active()) return 1;         // or step backwards
+    return orig_ShiftKeyDown(ctrl, key);                        // 0x1a50904
+}
+int RingsKeyUp(void *ctrl, int key) {
+    if (IS_CLICK(key) && rings_page_active()) return 1;
+    return orig_KeyUp(ctrl, key);                               // 0x1a5056c
+}
+```
+
+- **Act on press, swallow the release.** Stock key-up for these codes is a no-op, so swallowing is only for tidiness. Pass `0x3d`/`0x3e` through, or claim them later.
+- **No extra condition on mode is needed.** This vtable is only active in synth mode (mode 0). Browsers and other overlays switch the active controller, so the hook doesn't fire there. `[0x1de4c40]` (synth or drum focus) only matters for the global handler.
+- Consumed clicks skip the two key-down prologues (popup hide). That is harmless; call `0x1a501e8` first if a lingering popup ever shows.
+
+### (e) Writing knobs[4]/knobs[5] (confirmed)
+
+- **Same thread, same pattern as stock.** `KnobDispatch` and `KeyDispatch` are both called by the KeyHandler thread (`0x19c2cc0`: keys at `0x19c2d3e`, knobs after them).
+  - `SynthController::OnKnob` on the engine page (`0x1a50610`): `Ranges::ApplyKnob(k, &delta, type, knobs = 0xff8013c4 + slot*16)` at `0x1a5063e`, then **`Patch::SetKnobs(0x1ddd7e8 + slot*0x38, knobs)` at `0x1a50646`**. It takes no lock and doesn't touch the Core.
+  - Our key handler runs in the same thread, so writing `k[4]`/`k[5]` and calling `0x1a00d14` is exactly what stock does for `k[0..3]`.
+  - `SetKnobs` copies all 8 values into the patch JSON `"knobs"` and calls the patch's +0x34 (dirty/save), so the values persist per slot and per preset (§5).
+- **Phase's range entries 4..7 are mode 0.** Shift + encoder never writes `k[4..7]`, so our values aren't overwritten by stock knob handling (§4b).
+- **No redraw nudge is needed.**
+  - `RingsUpdate` reads `k[4]`/`k[5]` every frame (§3).
+  - `GetSynthParams` recomputes from `knobs[]` on every call.
+  - The after-key hook still returns the engine screen id.
+  - The voice sees the new values at the next note-on (`R1 = &knobs[slot][0]`, §4c), or at once if render reads `0xff8013c4 + [0x1aaac0c]*16`.
+- **Small race (inferred, low risk).** The audio Core can read `knobs[]` while we write one int16. The write is atomic, and stock `ApplyKnob` has the same race.
+
+### (f) Open questions and a probe
+
+- **Prove the codes on the device.** `0x3b..0x3e` rest on the free-code argument plus the FM popup. For a one-flash confirmation, make `RingsKeyDown`, `RingsShiftKeyDown` and `RingsKeyUp` record the last `(key, state)` in a global before any filtering. `RingsUpdate` then shows `key - 0x38` in binary on `ring0..5` and the press state on `core`. Expected: blue lights `0b000011`, green `0b000100`, white `0b000101`, orange `0b000110`.
+- If the codes turn out different, only `IS_CLICK` changes. The hook words and the method stay the same.
+- **Unexplained:** `0x36`/`0x37` (no handler, maybe unconnected pins), and the exact meaning of `0x0a..0x0c` and `0x24`/`0x25`. The names come from the CC = key + 5 rule plus handler behaviour.

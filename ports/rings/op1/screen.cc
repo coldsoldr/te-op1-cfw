@@ -10,8 +10,8 @@
 // (ring0 lit, ring5 dim, model0 selected, model1 not...), so the style's byte
 // order doesn't matter.
 //
-// The model and polyphony buttons show the build's model (OP1RINGS_MODEL)
-// and "all" (6 voices) until model and polyphony select exist.
+// The model and polyphony buttons show the slot's knobs[4] and knobs[5]
+// (op1/settings.h); polyphony "all" lights all three polyphony buttons.
 
 #include "op1/screen.h"
 
@@ -19,13 +19,7 @@
 
 #include "op1/op1.h"
 #include "op1/screen_math.h"
-
-#ifndef OP1RINGS_MODEL
-#define OP1RINGS_MODEL 0
-#endif
-
-extern "C" void RingsScreenInit(void* self);
-extern "C" void RingsScreenUpdate(void* self, int32_t ticks);
+#include "op1/settings.h"
 
 namespace {
 
@@ -166,16 +160,19 @@ extern "C" void RingsScreenUpdate(void* self, int32_t ticks) {
     SetTranslate(nodes[1], 0, s.damping_ty);
     SetTranslate(nodes[2], s.posdot_tx, 0);
     for (int32_t i = 0; i < op1::kPluckVariants; ++i) SetVisible(pluck_nodes[i], i == s.pluck);
+    const int32_t model = op1::ModelSetting(knobs);
     for (int32_t i = 0; i < 6; ++i) {
-      const bool on = i == OP1RINGS_MODEL;
+      const bool on = i == model;
       Write(model_box_styles[i], on ? box_on : box_off);
       Write(model_num_styles[i], on ? num_on : num_off);
     }
-    // Polyphony "all": every button lit.
+    // Buttons 0, 1, 2 = polyphony 1, 2, 4 (POLY_1..POLY_4); "all" lights all.
+    const op1::PolyState poly = op1::PolySetting(knobs);
     for (int32_t i = 0; i < 3; ++i) {
-      Write(poly_box_styles[i], box_on);
-      Write(poly_dots_line_styles[i], dots_line_on);
-      Write(poly_dots_fill_styles[i], dots_fill_on);
+      const bool on = poly == op1::POLY_ALL || poly == op1::POLY_1 + i;
+      Write(poly_box_styles[i], on ? box_on : box_off);
+      Write(poly_dots_line_styles[i], on ? dots_line_on : dots_line_off);
+      Write(poly_dots_fill_styles[i], on ? dots_fill_on : dots_fill_off);
     }
   }
   // Update must draw (Screen::UpdateAll doesn't).
@@ -184,17 +181,7 @@ extern "C" void RingsScreenUpdate(void* self, int32_t ticks) {
 
 namespace op1 {
 
-// The file name the PdScreen getter passes to Screen::Screen.
-extern const char kRingsSvgName[];
+// The file name the PdScreen getter passes to Screen::Screen (op1/patches.cc).
 const char kRingsSvgName[] = "rings.svg";
-
-const Patch kScreenPatches[kNumScreenPatches] = {
-  // PdScreen getter 0x1a0cd50: R2.L = 0x2e40; R2.H = 0x018f ("pd.svg").
-  { 0x01a0cd8e, kImm16Lo, 0x2e40, kRingsSvgName },
-  { 0x01a0cd92, kImm16Hi, 0x018f, kRingsSvgName },
-  // PdScreen vtable 0x191116c: Init (+0x24), Update (+0x1c).
-  { 0x01911190, kWord32, 0x01a0cca0, reinterpret_cast<const void*>(&RingsScreenInit) },
-  { 0x01911188, kWord32, 0x01a0c0a0, reinterpret_cast<const void*>(&RingsScreenUpdate) },
-};
 
 }  // namespace op1

@@ -1,8 +1,8 @@
 // Rings engine for the OP-1: replaces the phase engine's render and note-on
-// (vtable +0x14, +0x1c). Six voices, one RingsVoice each; the OP-1 core
-// allocates voices and applies its envelope after render. The header's patch
-// table also puts the Rings screen in place of the phase screen
-// (op1/screen.cc).
+// (vtable +0x14, +0x1c). Six OP-1 voices, one RingsVoice each; the OP-1 core
+// allocates its voices and applies its envelope after render. The header's
+// patch table (op1/patches.cc) also puts the Rings screen in place of the
+// phase screen (op1/screen.cc) and takes the encoder clicks (op1/input.cc).
 //
 // The OP-1 renders voices at 88.2 kHz, 128 samples per call. Rings runs at
 // half that (44.1 kHz, 64 samples per call; upstream runs at 48 kHz) and is
@@ -12,28 +12,24 @@
 // white = damping, orange = position (confirmed on the device). They're
 // smoothed per voice over ~50 ms, as upstream smooths its pots
 // (op1/param_smoother.h).
+//
+// Model and polyphony come from the slot's knobs[4] and knobs[5]
+// (op1/settings.h), latched at note-on: a change applies from the next note,
+// so it never clicks a ringing voice. 0 (every existing preset) is the modal
+// model with polyphony "all", the original behaviour: 6 voices x 16 modes
+// (probe v3 measured ~324 MHz free; six ringing voices simulate at ~164 MHz).
+// Polyphony 1, 2 and 4 trade voices for modes as Rings does
+// (op1/voice_allocator.h).
 
 #include <cstdint>
 
 #include "op1/op1.h"
 #include "op1/param_smoother.h"
-#include "op1/screen.h"
+#include "op1/patches.h"
+#include "op1/settings.h"
+#include "op1/voice_allocator.h"
 #include "src/fixed.h"
 #include "src/op1_voice.h"
-
-// Probe v3 measured ~324 MHz free with one voice playing. At 16 modes, six
-// ringing voices simulate at ~164 MHz (more when knobs move), leaving room
-// for other tracks, FX and the UI. Rings itself uses 12 modes per voice at
-// polyphony 4.
-#ifndef OP1RINGS_MODES_PER_VOICE
-#define OP1RINGS_MODES_PER_VOICE 16
-#endif
-
-// Resonator model, until model select (shift + blue) is wired up:
-// 0 = modal, 3 = FM voice (op1rings::ResonatorModel).
-#ifndef OP1RINGS_MODEL
-#define OP1RINGS_MODEL 0
-#endif
 
 namespace {
 
@@ -80,16 +76,17 @@ int32_t Upsampler::extended_[kRingsBlockSize + 3];
 RingsVoice voices[op1::kNumVoices];
 Upsampler upsamplers[op1::kNumVoices];
 op1::ParamSmoother smoothers[op1::kNumVoices];
+op1::VoiceAllocator allocator;
 bool initialized;
 int32_t out_buffer[kRingsBlockSize];
 
 void InitAll() {
   for (int32_t v = 0; v < op1::kNumVoices; ++v) {
-    voices[v].Init(OP1RINGS_MODES_PER_VOICE);
-    voices[v].set_model(static_cast<op1rings::ResonatorModel>(OP1RINGS_MODEL));
+    voices[v].Init(op1::kPolyModes[op1::POLY_ALL]);
     upsamplers[v].Init();
     smoothers[v].Init();
   }
+  allocator.Init();
   initialized = true;
 }
 
@@ -97,11 +94,39 @@ inline int32_t ParamToQ31(int16_t p) {
   return p <= 0 ? 0 : static_cast<int32_t>(p) << 16;
 }
 
+// The slot's knobs[8], from note-on's R1 if it points into the knob array,
+// else from the slot the core plays. Null if neither is usable.
+const int16_t* SettingsKnobs(const int16_t* knobs) {
+#ifdef OP1_SIM
+  return knobs;   // tests/sim_engine.cc passes its own array
+#else
+  const uint32_t p = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(knobs));
+  if (p >= op1::kKnobs && p < op1::kKnobs + op1::kNumSlots * 16 && ((p - op1::kKnobs) & 15) == 0) {
+    return knobs;
+  }
+  const int32_t slot = *reinterpret_cast<const volatile int32_t*>(op1::kCoreSlot);
+  if (slot >= 0 && slot < op1::kNumSlots) {
+    return reinterpret_cast<const int16_t*>(op1::kKnobs + slot * 16);
+  }
+  return nullptr;
+#endif
+}
+
+// The models the voice implements; the others play modal for now.
+op1rings::ResonatorModel VoiceModel(int32_t setting) {
+  return setting == op1rings::MODEL_FM_VOICE ? op1rings::MODEL_FM_VOICE : op1rings::MODEL_MODAL;
+}
+
 }  // namespace
 
 extern "C" void RingsRender(void* self, int16_t* out, const int16_t* params) {
   if (!initialized) InitAll();
   const int32_t v = op1::VoiceIndex(self);
+  if (allocator.silent(v)) {
+    // Its note was taken over by another voice and has faded out.
+    for (int32_t i = 0; i < op1::kBlockSize; ++i) out[i] = 0;
+    return;
+  }
   int32_t target[op1::ParamSmoother::kNumParams];
   for (int32_t i = 0; i < op1::ParamSmoother::kNumParams; ++i) {
     target[i] = ParamToQ31(params[kParamOrder[i]]);
@@ -119,11 +144,37 @@ extern "C" void RingsRender(void* self, int16_t* out, const int16_t* params) {
   const uint32_t rings_inc = inc < 0x80000000u ? inc << 1 : 0xffffffffu;
   voices[v].RenderMono(&rings_inc, patch, out_buffer, kRingsBlockSize);
   upsamplers[v].Process(out_buffer, out);
+  allocator.Rendered(v);
+  if (allocator.fading(v)) {
+    // Linear fade-out (Q15 gain) of a voice whose note was taken over.
+    int32_t gain = allocator.fade_gain(v);
+    const int32_t step = allocator.fade_step(v);
+    for (int32_t i = 0; i < op1::kBlockSize; ++i) {
+      out[i] = static_cast<int16_t>((out[i] * (gain > 0 ? gain : 0)) >> 15);
+      gain -= step;
+    }
+    allocator.AdvanceFade(v, op1::kBlockSize);
+  }
 }
 
-extern "C" void RingsNoteOn(void* self) {
+extern "C" void RingsNoteOn(void* self, const int16_t* knobs) {
   if (!initialized) InitAll();
   const int32_t v = op1::VoiceIndex(self);
+  const int16_t* settings = SettingsKnobs(knobs);
+  const int32_t model = settings ? op1::ModelSetting(settings) : 0;
+  const op1::PolyState poly = settings ? op1::PolySetting(settings) : op1::POLY_ALL;
+
+  const op1::VoiceAllocator::NoteOnAction action = allocator.NoteOn(v, poly);
+  if (action.copy_from >= 0) {
+    // Take over the stolen voice's ringing state; it fades out on its own.
+    voices[v] = voices[action.copy_from];
+    upsamplers[v] = upsamplers[action.copy_from];
+  } else if (action.reset) {
+    voices[v].Init(op1::kPolyModes[poly]);
+    upsamplers[v].Init();
+  }
+  voices[v].set_resolution(op1::kPolyModes[poly]);
+  voices[v].set_model(VoiceModel(model));
   voices[v].NoteOn();
   smoothers[v].Snap();
 }
@@ -131,5 +182,5 @@ extern "C" void RingsNoteOn(void* self) {
 extern "C" __attribute__((section(".op1header"), used))
 const op1::Header op1_header = {
   op1::kHeaderMagic, 3, &RingsRender, &RingsNoteOn, nullptr,
-  op1::kScreenPatches, op1::kNumScreenPatches, 0,
+  op1::kPatches, op1::kNumPatches, 0,
 };

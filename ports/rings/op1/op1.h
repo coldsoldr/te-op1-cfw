@@ -18,6 +18,12 @@ const int32_t kNumVoices = 6;
 const uint32_t kPitchBuffer = 0xff801950;
 const int32_t kBlockSize = 128;
 
+// int16 knobs[8] per synth slot (8 slots); the slot the core plays
+// (docs/screen-interface.md §4c).
+const uint32_t kKnobs = 0xff8013c4;
+const int32_t kNumSlots = 8;
+const uint32_t kCoreSlot = 0x01aaac0c;
+
 // Voices render at 88.2 kHz (measured by probe v2; the stock phase engine
 // does phase += inc per sample with one cycle per 2^32, so the increments
 // are f / 88200 * 2^32).
@@ -26,6 +32,8 @@ const int32_t kVoiceSampleRate = 88200;
 // The stock phase engine's methods (vtable at 0x191113c).
 typedef void (*RenderFn)(void* self, int16_t* out, const int16_t* params);
 typedef void (*VoidFn)(void* self);
+// Note-on gets R1 = the slot's knobs[8] (docs/screen-interface.md §4c).
+typedef void (*NoteOnFn)(void* self, const int16_t* knobs);
 const uint32_t kPhaseRender = 0x01a0bc5c;
 const uint32_t kPhaseNoteOn = 0x01a0be82;
 
@@ -87,7 +95,7 @@ struct Header {
   uint32_t magic;         // 'O' 'P' '1' 'X'
   uint32_t version;
   RenderFn render;        // render entry
-  VoidFn note_on;         // note-on entry (null = keep stock)
+  NoteOnFn note_on;       // note-on entry (null = keep stock)
   VoidFn note_off;        // note-off entry (null = keep stock)
   const Patch* patches;   // further patches (null = none)
   uint32_t num_patches;

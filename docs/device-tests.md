@@ -269,3 +269,55 @@ This is the modal engine of `engine16c` (smoothing included) plus the first Ring
 3. **Movement:** the handles, dot and pluck follow the four encoders, and the handles move the right way (up = more).
 4. **Rounded corners** on the button boxes (`rx`): do they show rounded or square?
 5. **Sound unchanged,** and the screen stays smooth while playing.
+
+## Test 5: model and polyphony on encoder clicks (`op1_246_rings_clicks1.op1`)
+
+**Result (2026-10-15): everything works as expected.**
+1. **Clicks:** a click steps forward and shift + click steps back, for model and polyphony. **This confirms the click key codes** (`0x3b` blue, `0x3c` green).
+2. **Polyphony 1:** legato carries the ring into the new note with no clicks; a chord sounds only its last note.
+3. **Polyphony 2 / 4** limit the voices.
+4. **Saving** works, both in the slot and in a snapshot.
+5. **No glitches** with fast playing.
+6. **Shift + turn** still fine-adjusts.
+
+The rest of this section is the build description from before the flash.
+
+
+This is `screen1` plus model and polyphony select. The settings are stored in the phase slot's spare preset values `knobs[4]` (model) and `knobs[5]` (polyphony), as `setting × 4096` (`ports/rings/op1/settings.h`). 0, which every existing preset has, means modal and "all", so old presets sound as before.
+
+**Controls** (`op1/input.cc`, synth engine page of a Rings/phase slot only):
+- **Click blue:** next model. For now that's modal ↔ FM, the two implemented.
+- **Click green:** next polyphony, all → 1 → 2 → 4 → all.
+- **Shift + click:** step back.
+- **Shift + turn** keeps its stock fine adjustment. White and orange clicks, other pages and other engines are untouched.
+- The hooks are the synth controller's key-down, shifted key-down and key-up (`0x19119a8`, `0x19119b0`, `0x19119b8`), through the patch table (`op1/patches.cc`). A click writes the setting and calls `Patch::SetKnobs`, as the stock knob handler does, so it's saved with the preset.
+- **The click key codes `0x3b`–`0x3e` are inferred** (`docs/screen-interface.md` §7). If clicks do nothing, the codes are wrong: every other key still goes to stock, so nothing else breaks. The probe in §7(f) would then pin them down.
+
+**Engine** (`op1/engine.cc`, `op1/voice_allocator.h`):
+- **Settings are latched at note-on** (note-on's R1 = the slot's knobs). A change applies from the next note and never clicks a ringing voice.
+- **Polyphony 1 / 2 / 4:** 60 / 28 / 12 modes per voice, as Rings.
+  - When all voices are busy, the new OP-1 voice takes over the oldest voice's resonator state and strikes it at its own pitch, so the ring carries on as on Rings.
+  - The stolen OP-1 voice fades out over 5.8 ms; at most two fade at once.
+  - A voice stolen before it sounded (a chord) goes silent at once.
+- **"All":** 6 voices × 16 modes, bit-identical to before (simulator checksum).
+- **Screen:** lights the selected model and polyphony ("all" = all three).
+
+**Checks:**
+- `make test-alloc`: allocation, encoding and click stepping.
+- **`make sim-engine`, worst cases:**
+
+| Case | Peak |
+|---|---|
+| Polyphony 1, a note every 17 ms | ~273 MHz |
+| Six-note chord in polyphony 1 | ~80 MHz |
+| Polyphony 2 / polyphony 4, fast notes | ~205 / ~185 MHz |
+
+  The measured free CPU is ~324 MHz. FM selected through the knobs matches the earlier FM build bit for bit.
+
+**To check on the device:**
+1. **Clicks:** blue toggles the model buttons 1 ↔ 4 (modal ↔ FM) and the sound changes from the next note. Green steps the polyphony buttons: all three, then 1, 2, 4. Shift + click steps back.
+2. **Polyphony 1:** playing legato, the ring carries into the new note, with no clicks. Chords play only the last note.
+3. **Polyphony 2 / 4** limit the voices. Polyphony 1 should sound richer (60 modes).
+4. **Persistence:** change model and polyphony, switch to another sound slot and back, then save and reload a preset. The settings should stick.
+5. **No glitches** with fast playing in polyphony 1.
+6. **Shift + turn** still fine-adjusts.

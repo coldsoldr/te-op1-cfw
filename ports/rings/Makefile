@@ -84,12 +84,13 @@ OP1_CXXFLAGS := -O2 -std=c++17 -mcpu=bf524 -ffreestanding -fno-exceptions \
                 -ffunction-sections -fdata-sections -I. $(WARN)
 OP1_LDFLAGS  := -nostdlib -nostartfiles -T op1/link.ld -Wl,--gc-sections \
                 -Wl,--no-undefined
-OP1_ENGINE_SRC := op1/engine.cc op1/screen.cc op1/support.cc src/op1_voice.cc \
+OP1_ENGINE_SRC := op1/engine.cc op1/screen.cc op1/input.cc op1/patches.cc op1/support.cc \
+                  src/op1_voice.cc \
                   src/fm_voice_fixed.cc src/modal_resonator.cc src/fixed_tables.cc \
                   src/mode_bank_bfin.S
 OP1_HDR := $(wildcard op1/*.h)
 
-.PHONY: op1-probe op1-engine op1-engine-fm sim-engine sim-engine-fm host-probe step-params test-fm test-screen
+.PHONY: op1-probe op1-engine sim-engine sim-engine-fm host-probe step-params test-fm test-screen test-alloc
 
 $(BUILD)/op1_probe.elf: op1/probe.cc op1/support.cc op1/op1.h op1/link.ld | $(BUILD)
 	$(BFIN_CXX) $(OP1_CXXFLAGS) op1/probe.cc op1/support.cc $(OP1_LDFLAGS) -o $@ -lgcc
@@ -99,14 +100,8 @@ $(BUILD)/op1_engine.elf: $(OP1_ENGINE_SRC) $(OP1_HDR) op1/link.ld $(PORT_HDR) | 
 	$(BFIN_CXX) $(OP1_CXXFLAGS) $(OP1_ENGINE_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
 	$(BFIN_BIN)/bfin-elf-size -A $@
 
-#   make op1-engine-fm  the engine with the FM voice instead of the modal model
-$(BUILD)/op1_engine_fm.elf: $(OP1_ENGINE_SRC) $(OP1_HDR) op1/link.ld $(PORT_HDR) | $(BUILD)
-	$(BFIN_CXX) $(OP1_CXXFLAGS) -DOP1RINGS_MODEL=3 $(OP1_ENGINE_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
-	$(BFIN_BIN)/bfin-elf-size -A $@
-
 op1-probe: $(BUILD)/op1_probe.elf
 op1-engine: $(BUILD)/op1_engine.elf
-op1-engine-fm: $(BUILD)/op1_engine_fm.elf
 
 # Checks of the images' code off the device:
 #   make sim-engine   the engine's entry points in bfin-elf-run: CPU cost, and
@@ -115,7 +110,8 @@ op1-engine-fm: $(BUILD)/op1_engine_fm.elf
 #                     (decode with tools/decode_probe_beeps.py)
 SIM_CXXFLAGS := -O2 -std=c++17 -mcpu=bf524 -msim -fno-exceptions -fno-rtti \
                 -DOP1_SIM -I. $(WARN)
-SIM_ENGINE_SRC := tests/sim_engine.cc op1/engine.cc op1/screen.cc src/op1_voice.cc \
+SIM_ENGINE_SRC := tests/sim_engine.cc op1/engine.cc op1/screen.cc op1/input.cc op1/patches.cc \
+                  src/op1_voice.cc \
                   src/fm_voice_fixed.cc src/modal_resonator.cc src/fixed_tables.cc \
                   src/mode_bank_bfin.S
 
@@ -127,7 +123,7 @@ sim-engine: $(BUILD)/sim_engine.elf
 
 #   make sim-engine-fm  the same with the FM voice -> build/sim_engine_fm.raw
 $(BUILD)/sim_engine_fm.elf: $(SIM_ENGINE_SRC) $(OP1_HDR) $(PORT_HDR) | $(BUILD)
-	$(BFIN_CXX) $(SIM_CXXFLAGS) -DOP1RINGS_MODEL=3 $(SIM_ENGINE_SRC) -o $@
+	$(BFIN_CXX) $(SIM_CXXFLAGS) -DSIM_MODEL=3 $(SIM_ENGINE_SRC) -o $@
 
 sim-engine-fm: $(BUILD)/sim_engine_fm.elf
 	$(BFIN_RUN) $< $(BUILD)/sim_engine_fm.raw
@@ -145,6 +141,13 @@ $(BUILD)/step_params: $(STEP_PARAMS_SRC) $(OP1_HDR) $(PORT_HDR) | $(BUILD)
 	$(HOST_CXX) $(HOST_CXXFLAGS) $(STEP_PARAMS_SRC) -o $@ -lm
 
 step-params: $(BUILD)/step_params
+	$<
+
+#   make test-alloc   op1/voice_allocator.h (polyphony) and op1/settings.h
+$(BUILD)/test_voice_allocator: tests/test_voice_allocator.cc $(OP1_HDR) | $(BUILD)
+	$(HOST_CXX) -O2 -std=c++17 -I. $(WARN) tests/test_voice_allocator.cc -o $@
+
+test-alloc: $(BUILD)/test_voice_allocator
 	$<
 
 #   make test-screen  op1/screen_math.h against the screen spec's formulas

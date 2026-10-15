@@ -118,6 +118,8 @@ class RingsVoice {
 
   // MODEL_MODAL or MODEL_FM_VOICE (RenderMono only; Render is modal).
   void set_model(ResonatorModel model) { model_ = model; }
+  // Modes per voice (the coefficients are recomputed on the next render).
+  void set_resolution(int32_t resolution) { resonator_.set_resolution(resolution); }
 
   // phase_increment: size values (f / fs * 2^32); out, aux: size Q27 samples
   // (after the limiter, ~[-1, 1]). size must be a multiple of
