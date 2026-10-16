@@ -77,6 +77,9 @@ const int32_t k0_02Q31 = 42949673;               // 0.02
 
 }  // namespace
 
+uint32_t (*profile_clock)() = nullptr;
+uint32_t profile_update_cycles = 0;
+
 void ModalResonator::Init() {
   frequency_ = 10713070;        // 220 Hz at 44.1 kHz, Q31
   structure_ = 1 << 29;         // 0.25
@@ -86,6 +89,10 @@ void ModalResonator::Init() {
   previous_position_ = 0;
   resolution_ = kMaxModalModes;
   coefficients_valid_ = false;
+  hold_ = false;
+  changed_ = false;
+  weights_valid_ = false;
+  weights_n_ = 0;
   num_modes_ = 0;
   previous_input_ = 0;
   for (int32_t i = 0; i < kMaxModalModes; ++i) {
@@ -102,6 +109,17 @@ int32_t ModalResonator::ComputeFilters() {
       computed_resolution_ == resolution_) {
     return num_modes_;
   }
+  changed_ = true;
+  if (coefficients_valid_ && hold_) return num_modes_;
+  if (!profile_clock) return RecomputeFilters();
+  const uint32_t start = profile_clock();
+  const int32_t num_modes = RecomputeFilters();
+  profile_update_cycles += profile_clock() - start;
+  return num_modes;
+}
+
+int32_t ModalResonator::RecomputeFilters() {
+  weights_valid_ = false;   // the gains change
   // Before the first update the TPT state is zero; after it, translate.
   const bool first_update = !coefficients_valid_;
 #ifdef OP1RINGS_NO_STATE_TRANSLATION
@@ -289,14 +307,24 @@ void ModalResonator::Process(const int32_t* in, int32_t* out, int32_t* aux,
   const bool large_jump = delta > k0_02Q31 || delta < -k0_02Q31;
   const int32_t segments = large_jump ? 4 : 1;
   const size_t segment_size = size / segments;
-  const int32_t recip_segment_size = kOne / static_cast<int32_t>(segment_size);
+  // kOne / segment_size, folded for the usual sizes (a division is a libgcc
+  // call on Blackfin).
+  const int32_t recip_segment_size = segment_size == 32 ? kOne / 32
+      : segment_size == 8 ? kOne / 8 : kOne / static_cast<int32_t>(segment_size);
   int32_t* start = scratch_start_;
   int32_t* end = scratch_end_;
-  ComputeWeights(previous_position_, start, n);
+  // The last block ended at previous_position_: its weights are still right
+  // unless the gains (or the number of modes) changed since.
+  const bool kept = weights_valid_ && weights_n_ == n;
+  if (!kept) ComputeWeights(previous_position_, start, n);
   for (int32_t k = 0; k < segments; ++k) {
     int32_t position = k + 1 == segments
         ? position_ : previous_position_ + (delta >> 2) * (k + 1);
-    ComputeWeights(position, end, n);
+    if (kept && delta == 0) {
+      for (int32_t i = 0; i < n; ++i) end[i] = start[i];
+    } else {
+      ComputeWeights(position, end, n);
+    }
     for (int32_t i = 0; i < n; ++i) {
       modes_[i].weight = start[i];
       modes_[i].weight_increment = MulQ31Fast(end[i] - start[i], recip_segment_size);
@@ -307,6 +335,8 @@ void ModalResonator::Process(const int32_t* in, int32_t* out, int32_t* aux,
                     out + offset, aux + offset, segment_size);
   }
   previous_position_ = position_;
+  weights_valid_ = true;
+  weights_n_ = n;
 }
 
 }  // namespace op1rings

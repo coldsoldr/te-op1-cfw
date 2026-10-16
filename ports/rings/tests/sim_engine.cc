@@ -19,6 +19,7 @@
 #include "harness/cycles.h"
 #include "op1/op1.h"
 #include "op1/settings.h"
+#include "src/modal_resonator.h"
 
 #ifndef SIM_MODEL
 #define SIM_MODEL 0
@@ -38,8 +39,10 @@ int main(int argc, char** argv) {
   uint32_t* pitch = op1::sim_pitch_buffer;
   const uint32_t kA3 = 10713115;   // 220 Hz: 220 / 88200 * 2^32
   for (int i = 0; i < op1::kBlockSize; ++i) pitch[i] = kA3;
-  // .25 .6 .7 .3, then model and polyphony "all".
-  int16_t knobs[8] = { 8192, 19660, 22937, 9830, op1::EncodeSetting(SIM_MODEL), 0, 0, 0 };
+  // .25 .6 .7 .3, then model, polyphony "all" and the Rings engine (0 is
+  // stock phase, which the simulator can't run).
+  int16_t knobs[8] = { 8192, 19660, 22937, 9830, op1::EncodeSetting(SIM_MODEL), 0,
+                       op1::EncodeSetting(op1::ENGINE_RINGS), 0 };
   const int16_t* params = knobs;
   int16_t out[op1::kBlockSize];
 
@@ -71,6 +74,26 @@ int main(int argc, char** argv) {
   // which is what Print assumes.
   one.Print("6 renders/block, 1 active", op1::kBlockSize / 2);
 
+  // Polyphony 1, a note every 12 blocks (each steals the last, which fades)
+  // while three knobs turn: the worst case for coefficient updates (two
+  // 60-mode voices recomputing).
+  {
+    int16_t moving[4] = { params[0], params[1], params[2], params[3] };
+    knobs[op1::kPolyKnob] = op1::EncodeSetting(op1::POLY_1);
+    harness::CycleStats stats;
+    for (int b = 0; b < 240; ++b) {
+      moving[0] = static_cast<int16_t>(8192 + (b % 60) * 300);
+      moving[1] = static_cast<int16_t>(19660 - (b % 60) * 200);
+      moving[2] = static_cast<int16_t>(22937 - (b % 60) * 200);
+      uint64_t t0 = harness::ReadCycles();
+      if (b % 12 == 0) RingsNoteOn(Voice((b / 12) % op1::kNumVoices), knobs);
+      for (int v = 0; v < op1::kNumVoices; ++v) RingsRender(Voice(v), out, moving);
+      if (b >= 24) stats.Add(harness::ReadCycles() - t0);
+    }
+    stats.Print("poly 1, fast notes, turning", op1::kBlockSize / 2);
+    knobs[op1::kPolyKnob] = 0;
+  }
+
   // All six voices playing.
   for (int v = 0; v < op1::kNumVoices; ++v) RingsNoteOn(Voice(v), knobs);
   for (int b = 0; b < 50; ++b) {
@@ -84,6 +107,8 @@ int main(int argc, char** argv) {
   // continuously (a step every block, so the coefficients are recomputed in
   // every call): the worst case for knob movement.
   harness::CycleStats turning;
+  const uint32_t updates_before = op1rings::profile_update_cycles;
+  uint64_t turning_cycles = 0;
   int16_t moving[4] = { params[0], params[1], params[2], params[3] };
   for (int b = 0; b < 50; ++b) {
     moving[0] = static_cast<int16_t>(8192 + b * 300);
@@ -91,9 +116,17 @@ int main(int argc, char** argv) {
     moving[2] = static_cast<int16_t>(22937 - b * 200);
     uint64_t t0 = harness::ReadCycles();
     for (int v = 0; v < op1::kNumVoices; ++v) RingsRender(Voice(v), out, moving);
+    turning_cycles += harness::ReadCycles() - t0;
     if (b > 0) turning.Add(harness::ReadCycles() - t0);
   }
   turning.Print("6 active, knobs turning", op1::kBlockSize / 2);
+  // What the CPU meter's second reading shows (op1/cpu_meter.h): the
+  // coefficient updates' share of the time, here of the engine's cycles.
+  const uint32_t updates = op1rings::profile_update_cycles - updates_before;
+  printf("  coefficient updates  %.1f%% of the engine's cycles, %.1f MHz\n",
+         100.0 * updates / static_cast<double>(turning_cycles),
+         updates / 50.0 * (op1::kVoiceSampleRate / static_cast<double>(op1::kBlockSize)) / 1e6);
+
 
   // Polyphony 1, 2 and 4: a note every 12 blocks (17 ms) on the next OP-1
   // voice, so every note steals and fades; then a six-note chord at once.

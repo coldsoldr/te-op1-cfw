@@ -56,6 +56,22 @@ inline int32_t SoftLimitQ27(int32_t x) {
 
 inline int32_t Abs(int32_t x) { return x < 0 ? -x : x; }
 
+// max(peak, |x[i]|) over n samples (|INT32_MIN| saturates on Blackfin; the
+// signals here are far below it). Blackfin: ABS and MAX, no branches.
+inline int32_t PeakOf(const int32_t* x, size_t n, int32_t peak) {
+  for (size_t i = 0; i < n; ++i) {
+#ifdef __bfin__
+    int32_t a;
+    __asm__("%0 = ABS %1;" : "=d"(a) : "d"(x[i]));
+    __asm__("%0 = MAX (%0, %1);" : "+d"(peak) : "d"(a));
+#else
+    const int32_t a = Abs(x[i]);
+    if (a > peak) peak = a;
+#endif
+  }
+  return peak;
+}
+
 // Limiter gains per model (upstream Part::model_gains_: modal 1.4, FM 0.7,
 // string 1.4, sympathetic strings 1.0).
 constexpr LimiterGains kModalGains = { 375809638, 1202590843, FFloat(1.12) };
@@ -263,6 +279,8 @@ void RingsVoice::Init(int32_t resolution) {
   model_ = MODEL_MODAL;
   polyphony_ = 1;
   strum_ = false;
+  coefficient_hold_ = false;
+  cutoff_valid_ = false;
   silent_blocks_ = 0;
   resonator_.Init();
   resonator_.set_resolution(resolution);
@@ -278,6 +296,10 @@ void RingsVoice::CopyFrom(const RingsVoice& other) {
   polyphony_ = other.polyphony_;
   strum_ = other.strum_;
   silent_blocks_ = other.silent_blocks_;
+  cutoff_valid_ = other.cutoff_valid_;
+  cutoff_f0_ = other.cutoff_f0_;
+  cutoff_brightness_ = other.cutoff_brightness_;
+  cutoff_fc_ = other.cutoff_fc_;
   resonator_ = other.resonator_;
   fm_voice_ = other.fm_voice_;
   excitation_filter_ = other.excitation_filter_;
@@ -291,9 +313,19 @@ void RingsVoice::RenderSubblock(uint32_t phase_increment, const VoicePatch& patc
   static constexpr FFloat k0_25 = FFloat(0.25);
   const int32_t f0 = static_cast<int32_t>(phase_increment >> 1);   // Q31
 
-  const FFloat fc = ExcitationCutoff(f0, patch.brightness);
-  excitation_filter_.SetCutoff(fc.ToQ31());
+  // Recomputed only when pitch or brightness changes (the same values give
+  // the same coefficients: bit-identical).
+  if (!cutoff_valid_ || cutoff_f0_ != f0 || cutoff_brightness_ != patch.brightness) {
+    cutoff_fc_ = ExcitationCutoff(f0, patch.brightness);
+    excitation_filter_.SetCutoff(cutoff_fc_.ToQ31());
+    cutoff_f0_ = f0;
+    cutoff_brightness_ = patch.brightness;
+    cutoff_valid_ = true;
+  }
+  const FFloat fc = cutoff_fc_;
 
+  // A strike always tunes the resonator to its note.
+  resonator_.set_hold(coefficient_hold_ && !strum_);
   if (strum_) {
     // Upstream RenderModalVoice: impulse x0 = 0.25 * 2^(2 fc^2) / fc.
     FFloat fc2 = fc * fc;
@@ -412,13 +444,10 @@ void RingsVoice::RenderMono(const uint32_t* phase_increment,
       } else if (model_ == MODEL_FM_VOICE) {
         RenderFmSubblock(phase_increment[i], patch, o);
       } else if (!strings) {
-        RenderSubblock(phase_increment[i], patch, o, aux_);
-        for (size_t k = 0; k < kSubblockSize; ++k) o[k] += aux_[k];
+        // Both outputs summed by the mode bank itself (out == aux).
+        RenderSubblock(phase_increment[i], patch, o, o);
       }
-      for (size_t k = 0; k < kSubblockSize; ++k) {
-        int32_t a = o[k] < 0 ? -o[k] : o[k];
-        if (a > peak) peak = a;
-      }
+      peak = PeakOf(o, kSubblockSize, peak);
       // The voice's silence is its own: the shared reverb's share comes
       // after the peak.
       if (wet) {

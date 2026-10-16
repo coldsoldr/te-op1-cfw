@@ -23,6 +23,12 @@ namespace op1rings {
 const int32_t kMaxModalModes = 64;
 const int32_t kMaxModalBlockSize = 32;
 
+// Profiling (the OP-1 engine's CPU meter, op1/cpu_meter.h): when
+// profile_clock is set, the cycles spent recomputing coefficients are added
+// to profile_update_cycles.
+extern uint32_t (*profile_clock)();
+extern uint32_t profile_update_cycles;
+
 class ModalResonator {
  public:
   void Init();
@@ -39,10 +45,24 @@ class ModalResonator {
     resolution_ = resolution < kMaxModalModes ? resolution : kMaxModalModes;
   }
 
-  // in: Q27 input (upstream scale, before its * 0.125); out, aux: Q27.
+  // in: Q27 input (upstream scale, before its * 0.125); out, aux: Q27
+  // (out == aux: their sum in one buffer).
   void Process(const int32_t* in, int32_t* out, int32_t* aux, size_t size);
 
+  // While held, Process keeps the current coefficients even if the
+  // parameters changed (the OP-1 engine spreads coefficient updates over
+  // blocks: op1/coefficient_budget.h). The first update always happens.
+  void set_hold(bool hold) { hold_ = hold; }
+  // Whether the parameters differed from the coefficients' at a Process
+  // since the last call (updated or held); clears the flag.
+  bool TakeChanged() {
+    const bool changed = changed_;
+    changed_ = false;
+    return changed;
+  }
+
   int32_t num_modes() const { return num_modes_; }
+  int32_t resolution() const { return resolution_; }
 
   // For tests: computes the coefficients for the current parameters.
   int32_t UpdateCoefficients() { return ComputeFilters(); }
@@ -62,6 +82,7 @@ class ModalResonator {
   };
 
   int32_t ComputeFilters();
+  int32_t RecomputeFilters();   // ComputeFilters' work, when it's needed
   void ComputeWeights(int32_t position, int32_t* weights, int32_t n) const;
 
   int32_t frequency_;
@@ -79,6 +100,12 @@ class ModalResonator {
   int32_t computed_damping_;
   int32_t computed_resolution_;
   bool coefficients_valid_;
+  bool hold_;
+  bool changed_;
+  // scratch_start_ holds the weights for previous_position_ with the current
+  // gains (n of them): the next block starts from them.
+  bool weights_valid_;
+  int32_t weights_n_;
 
   int32_t num_modes_;
   int32_t gain_[kMaxModalModes];   // cos rho / 2, Q31

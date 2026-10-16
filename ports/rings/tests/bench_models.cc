@@ -27,7 +27,8 @@ int32_t Q31(double x) { return op1rings::FFloat(x).ToQ31(); }
 
 const uint32_t kInc = static_cast<uint32_t>(220.0 / 44100.0 * 4294967296.0);
 
-void BenchVoice(const char* name, op1rings::ResonatorModel model, int32_t polyphony, bool turning) {
+// turning: bit 0 structure, bit 1 brightness, bit 2 damping (true: all three).
+void BenchVoice(const char* name, op1rings::ResonatorModel model, int32_t polyphony, int turning) {
   voice.Init(16);
   voice.set_polyphony(polyphony);
   voice.set_model(model);
@@ -35,11 +36,9 @@ void BenchVoice(const char* name, op1rings::ResonatorModel model, int32_t polyph
   op1rings::VoicePatch patch = { Q31(0.4), Q31(0.6), Q31(0.7), Q31(0.3) };
   harness::CycleStats stats;
   for (int c = 0; c < 400; ++c) {
-    if (turning) {
-      patch.structure = Q31(0.4) + c * 200000;
-      patch.brightness = Q31(0.6) - c * 200000;
-      patch.damping = Q31(0.7) - c * 200000;
-    }
+    if (turning & 1) patch.structure = Q31(0.4) + c * 200000;
+    if (turning & 2) patch.brightness = Q31(0.6) - c * 200000;
+    if (turning & 4) patch.damping = Q31(0.7) - c * 200000;
     uint64_t t0 = harness::ReadCycles();
     for (int i = 0; i < kCall; ++i) send[i] = 0;
     voice.RenderMono(&kInc, patch, out, kCall, send);
@@ -81,16 +80,19 @@ bool CheckLimiter() {
 int main() {
   harness::EnableCycleCounter();
   if (!CheckLimiter()) return 1;
-  BenchVoice("modal 16 modes", op1rings::MODEL_MODAL, 4, false);
-  BenchVoice("modal 16, turning", op1rings::MODEL_MODAL, 4, true);
-  BenchVoice("sympathetic x2", op1rings::MODEL_SYMPATHETIC_STRING, 4, false);
-  BenchVoice("sympathetic x2, turning", op1rings::MODEL_SYMPATHETIC_STRING, 4, true);
-  BenchVoice("sympathetic x8", op1rings::MODEL_SYMPATHETIC_STRING, 1, false);
-  BenchVoice("string", op1rings::MODEL_STRING, 4, false);
+  BenchVoice("modal 16 modes", op1rings::MODEL_MODAL, 4, 0);
+  BenchVoice("modal 16, turning", op1rings::MODEL_MODAL, 4, 7);
+  BenchVoice("modal 16, structure turning", op1rings::MODEL_MODAL, 4, 1);
+  BenchVoice("modal 16, brightness turning", op1rings::MODEL_MODAL, 4, 2);
+  BenchVoice("modal 16, damping turning", op1rings::MODEL_MODAL, 4, 4);
+  BenchVoice("sympathetic x2", op1rings::MODEL_SYMPATHETIC_STRING, 4, 0);
+  BenchVoice("sympathetic x2, turning", op1rings::MODEL_SYMPATHETIC_STRING, 4, 7);
+  BenchVoice("sympathetic x8", op1rings::MODEL_SYMPATHETIC_STRING, 1, 0);
+  BenchVoice("string", op1rings::MODEL_STRING, 4, 0);
   // String + reverb: the voice (its string, its send) and, once per block
   // for every voice, the shared reverb (op1/reverb_bus.h).
-  BenchVoice("string + reverb (voice)", op1rings::MODEL_STRING_AND_REVERB, 4, false);
-  BenchVoice("string + reverb (voice), turning", op1rings::MODEL_STRING_AND_REVERB, 4, true);
+  BenchVoice("string + reverb (voice)", op1rings::MODEL_STRING_AND_REVERB, 4, 0);
+  BenchVoice("string + reverb (voice), turning", op1rings::MODEL_STRING_AND_REVERB, 4, 7);
   {
     reverb.Init();
     reverb.Clear();

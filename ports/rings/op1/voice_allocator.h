@@ -80,6 +80,17 @@ class VoiceAllocator {
     return action;
   }
 
+  // OP-1 voice v now plays another engine (stock phase): it leaves the
+  // Rings voice list, stops fading, and its Rings state is reset when it's
+  // next struck as Rings (it's marked silent; the other engine renders it).
+  void Forget(int32_t v) {
+    Remove(v);
+    fade_gain_[v] = 0;
+    fade_step_[v] = 0;
+    fresh_[v] = false;
+    silent_[v] = true;
+  }
+
   // The engine calls this after rendering a voice.
   void Rendered(int32_t v) { fresh_[v] = false; }
 

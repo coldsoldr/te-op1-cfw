@@ -91,7 +91,7 @@ OP1_ENGINE_SRC := op1/engine.cc op1/screen.cc op1/input.cc op1/patches.cc op1/su
 OP1_HDR := $(wildcard op1/*.h)
 
 .PHONY: op1-probe op1-engine sim-engine sim-engine-fm host-probe step-params test-fm test-screen test-alloc \
-        test-string sim-model bench-string test-reverb test-reverb-bus
+        test-string sim-model bench-string test-reverb test-reverb-bus bench-mode-bank
 
 $(BUILD)/op1_probe.elf: op1/probe.cc op1/support.cc op1/op1.h op1/link.ld | $(BUILD)
 	$(BFIN_CXX) $(OP1_CXXFLAGS) op1/probe.cc op1/support.cc $(OP1_LDFLAGS) -o $@ -lgcc
@@ -211,6 +211,22 @@ bench-string: $(BUILD)/bench_string.elf $(BUILD)/bench_string_host
 	@grep '^reverb:' $(BUILD)/bench_string_host.txt | sed 's/^/host  /'
 	@if [ "$$(grep '^reverb:' $(BUILD)/bench_string.txt)" = "$$(grep '^reverb:' $(BUILD)/bench_string_host.txt)" ]; \
 	then echo "reverb: Blackfin = host"; else echo "reverb: Blackfin DIFFERS from host"; exit 1; fi
+
+#   make bench-mode-bank  the modal mode bank: cycles on Blackfin, and the
+#                         assembly against C (Blackfin and host builds, two
+#                         outputs and one): every checksum must agree
+$(BUILD)/bench_mode_bank.elf: tests/bench_mode_bank.cc src/mode_bank_bfin.S $(PORT_HDR) | $(BUILD)
+	$(BFIN_CXX) $(SIM_CXXFLAGS) tests/bench_mode_bank.cc src/mode_bank_bfin.S -o $@
+
+$(BUILD)/bench_mode_bank_host: tests/bench_mode_bank.cc $(PORT_HDR) | $(BUILD)
+	$(HOST_CXX) -O2 -std=c++17 -I. $(WARN) tests/bench_mode_bank.cc -o $@ -lm
+
+bench-mode-bank: $(BUILD)/bench_mode_bank.elf $(BUILD)/bench_mode_bank_host
+	@$(BFIN_RUN) $< > $(BUILD)/bench_mode_bank.txt; s=$$?; cat $(BUILD)/bench_mode_bank.txt; exit $$s
+	@$(BUILD)/bench_mode_bank_host | sed 's/^/host /' | tee $(BUILD)/bench_mode_bank_host.txt
+	@two=$$(cat $(BUILD)/bench_mode_bank.txt $(BUILD)/bench_mode_bank_host.txt | grep checksum | grep -v mono | awk '{print $$NF}' | sort -u | wc -l); \
+	one=$$(cat $(BUILD)/bench_mode_bank.txt $(BUILD)/bench_mode_bank_host.txt | grep checksum | grep mono | awk '{print $$NF}' | sort -u | wc -l); \
+	if [ "$$two" = 1 ] && [ "$$one" = 1 ]; then echo "mode bank: assembly = C = host"; else echo "mode bank: checksums DIFFER"; exit 1; fi
 
 #   make test-reverb  the fixed-point reverb against upstream's float Reverb
 TEST_REVERB_SRC := tests/test_reverb.cc src/reverb_fixed.cc src/fixed_tables.cc $(MI)/stmlib/dsp/units.cc

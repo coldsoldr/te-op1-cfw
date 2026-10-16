@@ -41,6 +41,7 @@ make test-string         # fixed-point string models vs upstream's float String/
 make bench-string        # string and reverb cycles on Blackfin; string kernel C vs assembly
 make test-reverb         # fixed-point reverb vs upstream's float Reverb
 make test-reverb-bus     # model 6's shared reverb: one run per block, the voices' shares
+make bench-mode-bank     # the modal mode bank: cycles, assembly = C = host
 make sim-model M=2       # the OP-1 engine in the simulator with model M (CPU per case)
 ```
 

@@ -483,6 +483,14 @@ strings4 with one display change: the brightness (green) handle is drawn over th
 
 ## Test 11: shared reverb for model 6 (`op1_246_rings_strings6.op1`)
 
+**Result (2026-10-16):**
+1. Model 6: **occasional glitches** remain; the user is happy with it for now.
+2. CPU meter **definitely lower: around 2–4 rings** (from 4).
+3. Model 6 **sounds great**.
+4. Green handle good.
+
+The rest of this section is the build description from before the flash.
+
 strings5 (green handle) with **one reverb shared by every model 6 voice**, as upstream runs one reverb on the sum of its voices, instead of one per voice (Test 9: glitches beyond polyphony 1, meter at 4 rings).
 - Each voice plays its dry signal (1 − amount) and sends it to the reverb; the reverb runs once per OP-1 block on the sum, and the voices share its wet signal equally (`op1/reverb_bus.h`; `docs/rings-port.md`, "String + reverb").
 - The wet signal arrives one block (1.45 ms) later than before; with one voice, the level stays within ~2 dB of strings5 through a note (the reverb's tone meets the string's at a different phase).
@@ -509,3 +517,151 @@ Per part (`make bench-models`): a voice ~15 MHz; the shared reverb ~12 MHz settl
 2. **CPU meter** in the same cases (expected: 2–3 rings with 4 notes, from 4).
 3. **Sound:** does model 6 sound as before? Listen for clicks at new notes and steals (especially polyphony 1), and for the tail: does it carry on across notes?
 4. **Green handle** (Test 10) and models 1–5 as before.
+
+## Test 12: the MULTI engine (`op1_246_rings_multi1.op1`)
+
+**Result (2026-10-16):**
+1. Boots; slots load.
+2. Orange click switches both ways ("it's great"); the screen follows.
+3. Rings mostly fine, but **the modal model (button 1) glitches a lot (clicks and pops), particularly while moving the encoders.** Read as CPU overload: six ringing voices with encoders turning simulate at ~202 MHz (~1.6x on the device: ~320 of ~324 MHz free); polyphony 1 with a fading 60-mode voice is worse. Fix in Test 13.
+4. Rings and phase notes ring out properly together.
+5. Engine choice survives slot changes and a power cycle.
+6. Engine browser shows MULTI; picking it and the other browsers work.
+7. Preset browser: MULTI folder with the phase presets; they load.
+8. Orange does nothing on other engines.
+
+The rest of this section is the build description from before the flash.
+
+strings6 (Rings unchanged) with the phase slot turned into a **MULTI** engine:
+- **Two engines per slot: stock phase or Rings,** in `knobs[6]` (0 = phase). **Click orange** on the engine page to switch; the new engine plays from the next note (a ringing note keeps its engine). Saved with the slot and in presets.
+  - Phase voices call the stock phase render and note-on (our voice objects are the stock ones); Rings' polyphony leaves them alone.
+  - Blue, green and white clicks work as before while the slot plays Rings; on phase they go to the stock firmware (which ignores them).
+- **The screen follows the engine:** the stock phase drawing (`pd.svg`, the stock Init and Update) or Rings'. `rings.svg` is now loaded by our Init with the firmware's own SVG loader; on a switch the incoming drawing's cache is flushed, as the firmware does when the screen changes.
+- **"phase" shows as "multi"** in the engine browser (shift + T1; the list query reads `CASE type WHEN 'phase' THEN 'multi' ...`) and in the preset browser (the 16 factory phase presets' folder, in `op1_factory.db`). Display only: presets and slots keep `"type":"phase"`, so stock firmware still knows them.
+- **Existing Rings slots come up as stock phase** (their `knobs[6]` is 0): one orange click turns each back into Rings, with its model and polyphony.
+
+**Checks (off the device):** `test-alloc` (engine encoding, `Forget`), `sim-engine` (`a3ae5f5c`), `sim-engine-fm` (`567afc0c`), `sim-model M=5` (`7d5e0bee`, as strings6), `test-screen`, `test-reverb-bus`: pass. The new query, run on stock `op1_factory.db`, changes only `synth_types` row 5 (`phase` to `multi`); the drum, fx, lfo and seq lists are unchanged. The db tool refuses a second run; the packaged db differs from stock only in those 16 folders.
+
+**Package:** `OP1_vdk.ldr` and `content/op1_factory.db` change, plus `content/display/rings.svg`; `te-boot.ldr` absent; `verify_bootloader.py` passes; the LDR byte-diff shows only the FIRST header, the 7 vtable/patch words, the query's 2 immediates and the appended blocks (image end `0x02ca33e4`; the PdScreen filename immediates are stock again).
+
+**To check on the device:**
+1. **Boot** normally; the 8 slots load.
+2. **A phase slot:** the stock phase screen and sound. **Click orange:** the Rings screen appears; the next note is Rings. Click again: back to phase (screen at once, sound from the next note). Any leftover drawing or flicker at the switch?
+3. **Rings as before:** models, polyphony, CPU meter, model 6.
+4. **Mixed:** hold a Rings note, switch to phase, play: both ring out correctly.
+5. **Save and reload:** switch a slot to Rings, change slot and come back, power-cycle: still Rings.
+6. **Engine browser (shift + T1):** MULTI where PHASE was, same place; picking it works; other engines and the sampler entry unchanged. Also the drum, FX (T3) and LFO (T4) browsers.
+7. **Preset browser** (press the active slot key again): a MULTI folder with the 16 phase presets; they load and play as stock phase.
+8. **Orange click** does nothing on other engines (stock behaviour).
+
+## Test 13: the modal model's coefficient budget (`op1_246_rings_multi2.op1`)
+
+**Result (2026-10-16):**
+1. Modal in "all" with several notes, encoders turning: **still clicks, worst on the blue encoder (structure).**
+2. **Polyphony 1, 2 and 4 are glitch free** on the modal model.
+3. The sound follows the encoders smoothly.
+4. Everything else fine.
+
+**Follow-up (2026-10-16), modal in "all":**
+- 3 notes held: no clicks. Meter **1 ring** held, **3 rings while turning blue**.
+- Clicks start when voices are still ringing out and 3 new notes are played, then an encoder turns (more voices sounding).
+- 6 notes: **3 to 5 rings** turning blue or green.
+- The glitch sounds like a **crackle**.
+
+**Reading:** CPU overload, not update stepping (3 notes, whose voices already take turns updating, are clean). But turning costs far more on the device than simulated: 3 voices' updates are ~5% of the CPU in the simulator, while the meter rose by ~15-45%. Either the updates are several times slower on the device (cache misses on their tables?) or the OP-1's own encoder handling lands inside the engine's measured time. Test 14 measures which.
+
+The rest of this section is the build description from before the flash.
+
+multi1 with one fix for Test 12's clicks and pops on the modal model (button 1) while encoders turn.
+
+**Cause (read as CPU overload):** while parameters move (encoders, knob smoothing, bend), every ringing modal voice recomputed its coefficients on every call, ~860 cycles per mode. Six 16-mode voices with knobs turning simulated at ~204 MHz (~1.6x on the device: over the ~324 MHz free). In polyphony 1 a new note's strike and the fading old voice both recomputed 60 modes.
+
+**Fix (`op1/coefficient_budget.h`):**
+- at most 32 modes' coefficients per OP-1 call (two 16-mode voices), plus one voice whatever its size; voices take turns (round robin), a voice that waits keeps its coefficients for that call;
+- a strike always updates its voice; a voice fading out after a steal never updates, and nobody updates during a fade (4 calls);
+- six voices turning then update two per call, each one every third call (~230 Hz, behind the ~50 ms knob smoothing).
+
+**Checks (off the device):**
+- `make step-params`: smoothed steps with updates every 2nd and every 3rd call stay below -60 dB (worst: a sudden +0.5 structure step, -65.5 dB every 3rd call against -69.7 dB every call; position unaffected).
+- `make test-alloc`: the budget in index order (two per call, each voice every third call, also after the sounding voices change) and in shuffled orders (no starving: 43-48% of calls, at most 12 calls' wait).
+- CPU (simulator):
+
+| Modal case | multi1 | multi2 |
+|---|---|---|
+| 6 voices ringing, still | ~150 MHz | ~150 MHz |
+| 6 voices, 3 knobs turning | ~204 MHz (peak ~206) | ~167 MHz (peak ~168) |
+| Polyphony 1, fast notes, knobs turning | ~123 MHz, peak ~219 | ~101 MHz, peak ~187 |
+
+- Modal output with still knobs unchanged (`a3ae5f5c`), FM (`567afc0c`), model 6 (`7d5e0bee`); `test-string` 19 ok, `test-screen`, `test-reverb-bus`, `bench-models` pass.
+
+**Package:** as multi1 (`OP1_vdk.ldr`, `content/op1_factory.db` with the 16 folders, `rings.svg`; `te-boot.ldr` absent; `verify_bootloader.py` passes; image end `0x02ca3614`).
+
+**To check on the device:**
+1. **Modal (button 1), "all", 4-6 notes ringing, turning each encoder** fast and slow: still clicks or pops? CPU meter (white click) while turning: how many rings?
+2. **Modal polyphony 1**, fast notes while turning: clean?
+3. **Sound while turning:** does the sound still follow the encoders smoothly (no stepping or lag)?
+4. Everything else as multi1 (phase/Rings switching, the other models).
+
+## Test 14: measuring the coefficient updates on the device (`op1_246_rings_multi3.op1`)
+
+**Result (2026-10-16), modal, "all":**
+
+| Case | Engine reading | Updates reading |
+|---|---|---|
+| 6 notes, turning blue | 3-4 rings | 0-1 |
+| 6 notes, turning green / encoders still | 3-4 rings | 0 |
+| 3 notes, turning blue | 3 rings | 0 |
+
+**Reading:** the coefficient updates are cheap on the device too (the budget works; ~4% simulated). The problem is the **base load**: six 16-mode voices take 3-4 rings (45-74%) with the encoders still, so anything more (voices ringing out, the OP-1's own work while turning) reaches the 5-ring zone and crackles. Polyphony 1, 2 and 4 use fewer modes in total and are clean. Per modal voice (simulator): ~35k cycles per call, of which the mode bank ~24k (already ~23.7 cycles per mode per sample, near the minimum for bit-exact Q31 arithmetic), the limiter ~3.4k, the rest ~7k (upsampler, smoothing, extra passes).
+
+The rest of this section is the build description from before the flash.
+
+multi2 plus a diagnostic and one bit-identical saving:
+- **CPU meter, second reading:** white click now cycles **hidden -> engine (as before) -> coefficient updates only** (shift + white: back). The second reading is the share of time spent recomputing the modal model's coefficients (`ModalResonator` timed with the cycle counter, `op1rings::profile_update_cycles`). Same ring scale: ring *i* at (*i* + 1) x 15%.
+- **The excitation filter's cutoff is cached** (recomputed only when pitch or brightness changes): ~4% less per modal voice; output bit-identical (`a3ae5f5c`, `567afc0c`, `7d5e0bee`).
+
+**Simulator, for comparison:** six 16-mode voices with three knobs turning: ~164 MHz in all; the coefficient updates **~17.5 MHz** (~4% of the CPU: 0 rings on the second reading even at 3x).
+
+**Checks:** `test-alloc`, `step-params`, `test-screen`, `test-reverb-bus`, `test-string` (19), `bench-models`, `test-fm`, `sim-engine`, `sim-engine-fm`, `sim-model M=5`: pass. Package as multi2 (image end `0x02ca37b0`).
+
+**To check on the device** (modal, "all"):
+1. 6 notes ringing, **turning blue**: engine reading (one white click) and updates reading (two clicks): how many rings each?
+2. The same **turning green**, and **with the encoders still**.
+3. **3 notes**, turning blue: both readings.
+
+If the updates reading is high (2+ rings), the updates are much slower on the device than simulated: make them cheaper. If it stays at 0-1 while the engine reading jumps, the extra time isn't our updates (e.g. the OP-1's encoder handling interrupting the render).
+
+## Test 15: lighter modal voices in polyphony "all" (`op1_246_rings_multi4.op1`)
+
+**Result (2026-10-16): "everything sounds great, everything is working a treat."**
+- The modal model in "all" is clean now (14 modes).
+- **Model 2 (sympathetic strings) and model 6 (string + reverb) still crackle somewhat in "all"; in polyphony 4 both are good.** The user is happy with it as it is; revisit at the end (`docs/HANDOVER.md`, open items).
+- **Rings / MULTI is paused here.** multi4 stays on the device.
+
+The rest of this section is the build description from before the flash.
+
+multi3 (meter readings kept) with the modal model's base load cut, against Test 13/14's crackle with many notes while turning (the coefficient updates were only 0-1 rings; six 16-mode voices sat at 3-4 rings before anything else).
+
+**The user's choice: the bit-identical savings, plus 14 modes per voice in "all"** (from 16; polyphony 1, 2 and 4 unchanged). "All" loses the two highest partials of each note.
+
+**Bit-identical savings** (modal output unchanged with 16 modes: `a3ae5f5c`):
+- the mode bank sums its two outputs into one buffer (out == aux; integer sums don't depend on order), removing a pass;
+- the pickup weights are kept from the last block while position and gains don't change (two `ComputeWeights` per sub-block saved);
+- no libgcc divisions in the render path (the coefficient budget's round robin `%`, the weights' `kOne / segment_size`): each was hundreds of instructions;
+- the voice index without a division;
+- the excitation cutoff cached (multi3).
+A per-function instruction profile in the simulator found these (the mode bank is ~70% of a modal voice; its loop is at 23 instructions for 23.7 cycles per mode per sample, the bit-exact minimum here: a variant without the weight's add for still weights saved nothing and was dropped).
+
+**CPU (simulator), modal, "all":**
+
+| Case | multi2 | multi4 |
+|---|---|---|
+| 6 voices ringing, still | ~150 MHz | ~123 MHz |
+| 6 voices, 3 knobs turning | ~167 MHz | ~142 MHz |
+
+**Checks:** modal checksum with 14 modes `ef8618dd` (new reference); FM `567afc0c` and model 6 `7d5e0bee` unchanged; `bench-mode-bank` (new make target: assembly = C = host, two outputs and one), `test-alloc`, `step-params`, `test-screen`, `test-reverb-bus`, `test-reverb`, `test-string` (19), `bench-models`, `bench-string`, `test-fm`: pass. Package as multi3 (image end `0x02ca37d4`).
+
+**To check on the device** (modal, "all"):
+1. 6 notes ringing (and voices ringing out plus new notes), turning each encoder, blue especially: still crackling?
+2. Engine reading (one white click) with 6 notes, still and turning: how many rings (multi3: 3-4)?
+3. Sound: does "all" still sound right with 14 modes?

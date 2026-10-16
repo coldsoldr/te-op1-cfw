@@ -1,8 +1,12 @@
-// Rings engine for the OP-1: replaces the phase engine's render and note-on
-// (vtable +0x14, +0x1c). Six OP-1 voices, one RingsVoice each; the OP-1 core
-// allocates its voices and applies its envelope after render. The header's
-// patch table (op1/patches.cc) also puts the Rings screen in place of the
-// phase screen (op1/screen.cc) and takes the encoder clicks (op1/input.cc).
+// The "MULTI" engine for the OP-1: takes over the phase engine's render and
+// note-on (vtable +0x14, +0x1c) and plays one of several engines per note,
+// picked by the slot's knobs[6] (op1/settings.h, an orange click: op1/
+// input.cc): stock phase (its own render and note-on, called as they were)
+// or Rings. The engine is latched at note-on, so a change applies from the
+// next note. Six OP-1 voices, one RingsVoice each; the OP-1 core allocates
+// its voices and applies its envelope after render. The header's patch
+// table (op1/patches.cc) also hooks the phase screen (op1/screen.cc: the
+// stock screen or Rings', by engine) and takes the encoder clicks.
 //
 // The OP-1 renders voices at 88.2 kHz, 128 samples per call. Rings runs at
 // half that (44.1 kHz, 64 samples per call; upstream runs at 48 kHz) and is
@@ -16,13 +20,14 @@
 // Model and polyphony come from the slot's knobs[4] and knobs[5]
 // (op1/settings.h), latched at note-on: a change applies from the next note,
 // so it never clicks a ringing voice. 0 (every existing preset) is the modal
-// model with polyphony "all", the original behaviour: 6 voices x 16 modes
+// model with polyphony "all", the original behaviour: 6 voices x 14 modes
 // (probe v3 measured ~324 MHz free; six ringing voices simulate at ~164 MHz).
 // Polyphony 1, 2 and 4 trade voices for modes as Rings does
 // (op1/voice_allocator.h).
 
 #include <cstdint>
 
+#include "op1/coefficient_budget.h"
 #include "op1/cpu_meter.h"
 #include "op1/op1.h"
 #include "op1/param_smoother.h"
@@ -84,11 +89,16 @@ RingsVoice* voices[op1::kNumVoices];
 Upsampler upsamplers[op1::kNumVoices];
 op1::ParamSmoother smoothers[op1::kNumVoices];
 op1::VoiceAllocator allocator;
+op1::CoefficientBudget coefficient_budget;   // the modal model's updates per block
 op1::ReverbBus reverb_bus;   // string + reverb's reverb, shared by the voices
 static_assert(op1::ReverbBus::kBlock == kRingsBlockSize, "reverb bus: one block per call");
 bool initialized;
+op1::Engine voice_engines[op1::kNumVoices];   // latched at note-on
 int32_t out_buffer[kRingsBlockSize];
 int32_t wet_share[kRingsBlockSize];   // a voice's share of the shared reverb
+
+// For the CPU meter's coefficient-update reading (op1/cpu_meter.h).
+uint32_t ProfileClock() { return op1::Cycles(); }
 
 void InitAll() {
   for (int32_t v = 0; v < op1::kNumVoices; ++v) {
@@ -96,8 +106,11 @@ void InitAll() {
     voices[v]->Init(op1::kPolyModes[op1::POLY_ALL]);
     upsamplers[v].Init();
     smoothers[v].Init();
+    voice_engines[v] = op1::ENGINE_PHASE;
   }
   allocator.Init();
+  coefficient_budget.Init();
+  op1rings::profile_clock = &ProfileClock;
   reverb_bus.Init();
   initialized = true;
 }
@@ -129,11 +142,33 @@ op1rings::ResonatorModel VoiceModel(int32_t setting) {
   return static_cast<op1rings::ResonatorModel>(setting);
 }
 
+// The stock phase engine's render and note-on (docs/engine-interface.md):
+// our voice objects are the stock Pd voices, so they're called as the
+// vtable would. The simulator has no firmware: silence there.
+#ifdef OP1_SIM
+void PhaseRender(void* self, int16_t* out, const int16_t* params) {
+  (void)self;
+  (void)params;
+  for (int32_t i = 0; i < op1::kBlockSize; ++i) out[i] = 0;
+}
+void PhaseNoteOn(void* self, const int16_t* knobs) {
+  (void)self;
+  (void)knobs;
+}
+#else
+void PhaseRender(void* self, int16_t* out, const int16_t* params) {
+  reinterpret_cast<op1::RenderFn>(op1::kPhaseRender)(self, out, params);
+}
+void PhaseNoteOn(void* self, const int16_t* knobs) {
+  reinterpret_cast<op1::NoteOnFn>(op1::kPhaseNoteOn)(self, knobs);
+}
+#endif
+
 }  // namespace
 
 namespace op1 {
 CpuMeter cpu_meter;
-bool cpu_meter_shown;
+int32_t cpu_meter_mode;
 }  // namespace op1
 
 namespace {
@@ -141,6 +176,10 @@ namespace {
 void Render(void* self, int16_t* out, const int16_t* params) {
   if (!initialized) InitAll();
   const int32_t v = op1::VoiceIndex(self);
+  if (voice_engines[v] == op1::ENGINE_PHASE) {
+    PhaseRender(self, out, params);
+    return;
+  }
   if (allocator.silent(v)) {
     // Its note was taken over by another voice and has faded out.
     for (int32_t i = 0; i < op1::kBlockSize; ++i) out[i] = 0;
@@ -166,8 +205,16 @@ void Render(void* self, int16_t* out, const int16_t* params) {
   // voice that took over carries the ring on).
   const bool carrier = voices[v]->model() == op1rings::MODEL_STRING_AND_REVERB && !allocator.fading(v);
   const bool shared = reverb_bus.Render(v, op1::Cycles(), patch, carrier, wet_share);
+  // The modal model recomputes its coefficients within a budget per block
+  // (op1/coefficient_budget.h); a voice fading out after a steal keeps its
+  // own and asks for none.
+  const bool fading = allocator.fading(v);
+  const bool allowed = coefficient_budget.Allow(v);
+  voices[v]->set_coefficient_hold(fading || !allowed);
   voices[v]->RenderMono(&rings_inc, patch, out_buffer, kRingsBlockSize,
                         carrier ? reverb_bus.send() : nullptr, shared ? wet_share : nullptr);
+  const int32_t demand = voices[v]->TakeCoefficientDemand();
+  coefficient_budget.Report(v, demand, fading);
   upsamplers[v].Process(out_buffer, out);
   allocator.Rendered(v);
   if (allocator.fading(v)) {
@@ -186,6 +233,13 @@ void NoteOn(void* self, const int16_t* knobs) {
   if (!initialized) InitAll();
   const int32_t v = op1::VoiceIndex(self);
   const int16_t* settings = SettingsKnobs(knobs);
+  voice_engines[v] = settings ? op1::EngineSetting(settings) : op1::ENGINE_PHASE;
+  if (voice_engines[v] == op1::ENGINE_PHASE) {
+    // Stock phase: out of Rings' voice list (nothing steals or fades it).
+    allocator.Forget(v);
+    PhaseNoteOn(self, knobs);
+    return;
+  }
   const int32_t model = settings ? op1::ModelSetting(settings) : 0;
   op1::PolyState poly = settings ? op1::PolySetting(settings) : op1::POLY_ALL;
   // String + reverb: "all" plays as Rings' polyphony 4, its maximum (the

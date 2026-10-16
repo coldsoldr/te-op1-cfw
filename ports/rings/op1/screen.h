@@ -1,13 +1,13 @@
-// Rings screen for the OP-1 (op1/screen.cc): the entry points and the file
-// name that op1/patches.cc puts in place of the phase engine screen's.
+// The MULTI engine's screen (op1/screen.cc): the phase screen's Init and
+// Update, which op1/patches.cc puts in its vtable, and our drawing's name.
 
 #ifndef OP1RINGS_OP1_SCREEN_H_
 #define OP1RINGS_OP1_SCREEN_H_
 
 #include <cstdint>
 
-extern "C" void RingsScreenInit(void* self);
-extern "C" void RingsScreenUpdate(void* self, int32_t ticks);
+extern "C" void MultiScreenInit(void* self);
+extern "C" void MultiScreenUpdate(void* self, int32_t ticks);
 
 namespace op1 {
 

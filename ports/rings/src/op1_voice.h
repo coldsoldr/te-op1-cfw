@@ -135,6 +135,15 @@ class RingsVoice {
   ResonatorModel model() const { return model_; }
   // Modes per voice (the coefficients are recomputed on the next render).
   void set_resolution(int32_t resolution) { resonator_.set_resolution(resolution); }
+  // Modal model: keep the resonator's coefficients this render even if the
+  // parameters move (a strike always updates them); see
+  // op1/coefficient_budget.h.
+  void set_coefficient_hold(bool hold) { coefficient_hold_ = hold; }
+  // The modes whose coefficients the parameters asked to recompute since
+  // the last call (updated or held): the resolution, or 0.
+  int32_t TakeCoefficientDemand() {
+    return resonator_.TakeChanged() ? resonator_.resolution() : 0;
+  }
   // Rings' polyphony (1, 2 or 4): the string models' strings per voice and
   // chord table.
   void set_polyphony(int32_t polyphony) { polyphony_ = polyphony; }
@@ -175,6 +184,13 @@ class RingsVoice {
   ResonatorModel model_;
   int32_t polyphony_;
   bool strum_;
+  bool coefficient_hold_;
+  // The excitation filter's cutoff for the last pitch and brightness (it
+  // costs FFloat work, a reciprocal included, and they rarely change).
+  bool cutoff_valid_;
+  int32_t cutoff_f0_;
+  int32_t cutoff_brightness_;
+  FFloat cutoff_fc_;
   int32_t silent_blocks_;               // consecutive renders below -96 dBFS
   int32_t excitation_[kSubblockSize];   // scratch, kept off the stack
   int32_t aux_[kSubblockSize];          // scratch for RenderMono

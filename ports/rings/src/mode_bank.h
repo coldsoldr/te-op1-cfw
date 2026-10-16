@@ -34,8 +34,10 @@ struct Mode {
 };
 
 // in: Q27 resonator input (already scaled), size samples. previous_input is
-// the last input of the previous block (updated). out/aux: Q27. num_modes is
-// even (modes are processed in pairs).
+// the last input of the previous block (updated). out/aux: Q27; out == aux
+// sums all the modes into one buffer (the same values as out + aux: integer
+// sums don't depend on order). num_modes is even (modes are processed in
+// pairs).
 extern "C" void ModeBankProcessAsm(Mode* modes, int32_t num_modes,
                                    const int32_t* in, int32_t* previous_input,
                                    int32_t* out, int32_t* aux, int32_t size);
@@ -59,8 +61,12 @@ inline void ModeBankProcessC(Mode* modes, int32_t num_modes, const int32_t* in,
       mode.weight += mode.weight_increment;
       sums[m & 1] += MulQ31ByQ15(bp, static_cast<int16_t>(mode.weight >> 16));
     }
-    out[s] = sums[0];
-    aux[s] = sums[1];
+    if (out == aux) {
+      out[s] = sums[0] + sums[1];
+    } else {
+      out[s] = sums[0];
+      aux[s] = sums[1];
+    }
   }
   *previous_input = x_prev;
 }

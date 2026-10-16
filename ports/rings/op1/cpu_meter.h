@@ -7,6 +7,11 @@
 //
 // The engine's share only: the OP-1's own audio work (envelopes, FX, mixing)
 // comes on top.
+//
+// A second reading, for device tests: the share spent recomputing the modal
+// model's coefficients (op1rings::profile_update_cycles, counted by
+// ModalResonator while op1rings::profile_clock is set). The white click
+// cycles hidden -> engine -> coefficient updates.
 
 #ifndef OP1RINGS_OP1_CPU_METER_H_
 #define OP1RINGS_OP1_CPU_METER_H_
@@ -14,6 +19,7 @@
 #include <cstdint>
 
 #include "op1/op1.h"
+#include "src/modal_resonator.h"
 
 namespace op1 {
 
@@ -30,25 +36,37 @@ class CpuMeter {
     if (elapsed >= kWindow) {
       // Percent, without overflow (elapsed < 2^32 / 2^8 x 2^8).
       int32_t load = static_cast<int32_t>((busy_ >> 8) * 100 / ((elapsed >> 8) + 1));
-      if (elapsed > 8 * kWindow) load = 0;   // first call after a pause
+      const uint32_t updates = op1rings::profile_update_cycles - updates_start_;
+      int32_t update_load = static_cast<int32_t>((updates >> 8) * 100 / ((elapsed >> 8) + 1));
+      if (elapsed > 8 * kWindow) load = update_load = 0;   // first call after a pause
       display_ = load > display_ - 1 ? load : display_ - 1;
       if (display_ < 0) display_ = 0;
+      update_display_ = update_load > update_display_ - 1 ? update_load : update_display_ - 1;
+      if (update_display_ < 0) update_display_ = 0;
       busy_ = 0;
       window_start_ = now;
+      updates_start_ = op1rings::profile_update_cycles;
     }
   }
 
   int32_t percent() const { return display_; }
+  int32_t update_percent() const { return update_display_; }
 
  private:
   uint32_t start_;
   uint32_t window_start_;
   uint32_t busy_;
   int32_t display_;
+  uint32_t updates_start_;
+  int32_t update_display_;
 };
 
+// What the rings show: structure, or a meter reading.
+enum MeterMode { METER_OFF = 0, METER_ENGINE = 1, METER_UPDATES = 2 };
+const int32_t kNumMeterModes = 3;
+
 extern CpuMeter cpu_meter;
-extern bool cpu_meter_shown;
+extern int32_t cpu_meter_mode;
 
 }  // namespace op1
 

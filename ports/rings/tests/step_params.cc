@@ -12,11 +12,14 @@
 // Part 1: upstream float Resonator vs the port's ModalResonator, same input
 //         and steps, 32-sample blocks (is the port worse than upstream?).
 // Part 2: the OP-1 voice (RingsVoice::RenderMono, 64 samples per call as in
-//         op1/engine.cc), stepped raw vs through the engine's ParamSmoother.
+//         op1/engine.cc), stepped raw vs through the engine's ParamSmoother,
+//         also with the coefficients updated only every 2nd / 3rd call (the
+//         engine's coefficient budget, op1/coefficient_budget.h).
 //
 // Checks: a sustained note with fixed parameters must have no burst above
 // -60 dB (the mono limiter once switched gain by 25% when its peak crossed
-// 1.0, which popped), and smoothed steps of any size must stay below -60 dB.
+// 1.0, which popped), and smoothed steps of any size must stay below -60 dB,
+// with updates every call, every 2nd and every 3rd call.
 //
 //   make step-params   (exits 1 if a check fails)
 
@@ -133,7 +136,7 @@ std::vector<double> RenderPort(int p, double delta) {
 
 // The OP-1 voice as op1/engine.cc drives it: raw parameters, or through the
 // engine's ParamSmoother (snapped at note-on).
-std::vector<double> RenderVoice(int p, double delta, bool smooth) {
+std::vector<double> RenderVoice(int p, double delta, bool smooth, int update_every = 1) {
   static op1rings::RingsVoice voice;
   static op1::ParamSmoother smoother;
   voice.Init(kModes);
@@ -154,6 +157,7 @@ std::vector<double> RenderVoice(int p, double delta, bool smooth) {
     patch.brightness = v[1];
     patch.damping = v[2];
     patch.position = v[3];
+    voice.set_coefficient_hold((b / 64) % update_every != 0);
     voice.RenderMono(&inc, patch, out, 64);
     for (int i = 0; i < 64; ++i) y.push_back(out[i] / 134217728.0);
   }
@@ -199,15 +203,19 @@ int main() {
     }
   }
   printf("\nPart 2: OP-1 voice, 64-sample calls: HF burst after the step, dB re note\n");
-  printf("%-11s %6s %8s %8s %10s\n", "param", "delta", "floor", "raw", "smoothed");
+  printf("%-11s %6s %8s %8s %10s %8s %8s\n", "param", "delta", "floor", "raw", "smoothed", "every 2",
+         "every 3");
   bool smooth_pass = true;
   for (int p = 0; p < 4; ++p) {
     for (double delta : kDeltas) {
       if (kBase[p] + delta > 1.0) continue;
       std::vector<double> raw = RenderVoice(p, delta, false);
       const double smoothed = Click(RenderVoice(p, delta, true));
-      if (smoothed >= -60.0) smooth_pass = false;
-      printf("%-11s %6.2f %8.1f %8.1f %10.1f\n", kNames[p], delta, Floor(raw), Click(raw), smoothed);
+      const double every2 = Click(RenderVoice(p, delta, true, 2));
+      const double every3 = Click(RenderVoice(p, delta, true, 3));
+      if (smoothed >= -60.0 || every2 >= -60.0 || every3 >= -60.0) smooth_pass = false;
+      printf("%-11s %6.2f %8.1f %8.1f %10.1f %8.1f %8.1f\n", kNames[p], delta, Floor(raw), Click(raw),
+             smoothed, every2, every3);
     }
   }
   printf("Smoothed steps (engine's ParamSmoother): %s\n",

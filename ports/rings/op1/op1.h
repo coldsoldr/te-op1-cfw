@@ -39,8 +39,12 @@ const uint32_t kPhaseNoteOn = 0x01a0be82;
 
 inline int32_t VoiceIndex(const void* self) {
   uint32_t offset = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(self)) - kVoiceObjectBase;
-  uint32_t v = offset / kPhaseVoiceObjectSize;
-  return v < static_cast<uint32_t>(kNumVoices) ? static_cast<int32_t>(v) : 0;
+  // offset / 28 for the six voices' offsets (0..167), without libgcc's
+  // division (~500 instructions per call on Blackfin): (offset * 2341) >> 16
+  // equals it on that whole range (checked for every offset).
+  static_assert(kPhaseVoiceObjectSize == 28 && kNumVoices == 6, "VoiceIndex: the constant is for 28 x 6");
+  if (offset >= kPhaseVoiceObjectSize * kNumVoices) return 0;
+  return static_cast<int32_t>((offset * 2341u) >> 16);
 }
 
 #ifdef OP1_SIM
@@ -71,7 +75,15 @@ inline void BusyWait(uint32_t start, uint32_t cycles) {
 #endif
 
 inline int16_t Saturate16(int32_t x) {
+#ifdef __bfin__
+  // `<< 16 (S)` then `>>> 16`: the clamp in two instructions (GCC compiles
+  // the comparisons below to branches).
+  int32_t r;
+  __asm__("%0 = %1 << 16 (S);" : "=d"(r) : "d"(x));
+  return static_cast<int16_t>(r >> 16);
+#else
   return static_cast<int16_t>(x > 32767 ? 32767 : (x < -32768 ? -32768 : x));
+#endif
 }
 
 // A patch tools/inject_app.py applies to the app, after checking the stock
