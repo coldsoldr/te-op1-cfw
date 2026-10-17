@@ -48,7 +48,7 @@ BFIN_CXXFLAGS := -O2 -std=c++11 -mcpu=bf524 -msim -fno-exceptions -fno-rtti -DTE
                  -DOP1MARBLES_SUBSTEPS=$(SUBSTEPS) -I. -I$(MI) $(WARN)
 BENCH_SECONDS ?= 4
 
-.PHONY: all ref copy copy-check port test compare bench bench-ref tables clean
+.PHONY: all ref copy copy-check port test compare bench bench-ref tables sim-seq clean
 
 all: copy-check port test compare
 
@@ -114,3 +114,14 @@ bench-ref: $(BUILD)/render_copy_bfin.elf
 
 clean:
 	rm -rf $(BUILD) $(OUT)
+
+# make sim-seq: the sequencer (op1/marbles_seq.*) driven as the OP-1 drives a
+# sequencer, on the host and in the Blackfin simulator (cycles per tick).
+SEQ_SRC := tests/sim_seq.cc op1/marbles_seq.cc $(PORT_SRC)
+$(BUILD)/sim_seq: $(SEQ_SRC) $(PORT_HDR) op1/marbles_seq.h | $(BUILD)
+	$(HOST_CXX) $(HOST_CXXFLAGS) $(SEQ_SRC) -o $@
+$(BUILD)/sim_seq.elf: $(SEQ_SRC) $(PORT_HDR) op1/marbles_seq.h | $(BUILD)
+	$(BFIN_CXX) $(BFIN_CXXFLAGS) $(SEQ_SRC) -o $@
+sim-seq: $(BUILD)/sim_seq $(BUILD)/sim_seq.elf
+	$(BUILD)/sim_seq
+	$(BFIN_RUN) $(BUILD)/sim_seq.elf

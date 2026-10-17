@@ -806,3 +806,81 @@ If no beeps come after turning blue: no window had completed yet (wait 2 s and t
 **Procedure:** a note with the effect off, then Clouds fully dry: the same level? Then the effect list: "multi" where phone was, and choosing it still gives Clouds/phone.
 
 **Results, clouds4 (2026-10-17):** the level with Clouds on now matches; "multi" shows in the FX list. **clouds4 is the current device firmware.**
+
+## Test 20: sequencer probe (`op1_246_rings_seqprobe1.op1`)
+
+**Not flashed yet.** clouds4 plus a probe on the **tombola** sequencer (`ports/rings/op1/seq_probe.cc`, `make op1-seqprobe`), for the open questions of `docs/sequencer-interface.md` §10. Tombola plays as stock, but its screen shows the probe's readout instead of the balls: ten numbers, each with its index drawn small on its left (0–4 left column, 5–9 right column).
+
+| # | Shows |
+|---|---|
+| 0 | status digits: `1` (version), echo on (0/1), velocity mode (0–3), instrument (0 synth, 1 drum), synth sequencer playing, drum sequencer playing |
+| 1 | sequencer ticks in the last second (expect tempo × 96 / 60: 192 at 120 BPM) |
+| 2 | tempo × 10 as the firmware's tick clock has it (1200 = 120 BPM) |
+| 3 | largest tick phase + 1 (expect 48) |
+| 4 | ticks, total (does it move while stopped?) |
+| 5 | ticks at phase 0 (expect number 4 / 48) |
+| 6 | key presses (thousands) and the last key (units): `012005` = 12 presses, last key 5 |
+| 7 | the last key press's second argument (the unknown "flag") |
+| 8 | key releases (thousands) and all-notes-off calls (units) |
+| 9 | instrument-switch calls (thousands) and screen frames per second (units) |
+
+Clicks on the tombola screen (only while the sequencer is on): **orange** = echo mode on/off; **blue** = next velocity mode (0: 127, 1: 64, 2: 16, 3: alternating 127/16); **green** = clear the counters. **Echo mode**: keys you play are taken by the probe and played back by the sequencer thread (the way Marbles will play notes); stock tombola's balls stop meanwhile.
+
+**Checks (off the device):** builds with no undefined symbols or constructors; the 9 new hooks each checked against their stock value by `inject_app.py` and against `bfin-elf-nm`; `verify_bootloader.py` passes; against clouds4 only `OP1_vdk.ldr` changes and `content/display/seqprobe.svg` is added. The probe doesn't touch op1.db.
+
+**Procedure** (report in numbered points; photos of the screen are fine):
+1. Synth mode. Choose **tombola** as the sequencer and turn it on: does the readout appear? Note numbers 0–5 with the transport **stopped** (watch whether 4 moves).
+2. Press **play** on the tape: numbers 1–5 again. Then tempo 60 and 180: numbers 1 and 2.
+3. Tape **recording**: do the ticks (number 4) keep moving?
+4. Press a few keys normally: numbers 6 and 7. Then while holding **shift**, and any other way of playing you can think of (e.g. while recording): does number 7 change?
+5. **Orange click** (status digit 2 becomes 1). Play keys: do you hear them, without stuck notes, also fast and with chords? Then **blue clicks** through the velocity modes on two or three engines (e.g. FM, sampler, MULTI/Rings): does the level or tone change with velocity (mode 3 alternates loud/soft per note)?
+6. With echo on, hold a note and switch to **drum** mode and back (also with tombola chosen for drums): numbers 8 and 9, stuck notes, anything odd.
+7. Orange again (echo off): does stock tombola work as before (with the readout instead of balls)?
+8. Anything else.
+
+**If something is wrong:** power off; recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1` (or multi4).
+
+**Results, seqprobe1 (2026-10-17; photos `incoming/stopped.jpg`, `60bpm.jpg`, `180bpm.jpg`):**
+1. **Tick rate:** 96 ticks/s at 60 BPM, 288 at 180 BPM: **96 ticks per beat** (one per audio block's clock step, as inferred). The largest phase + 1 is **48** (half a beat); phase-0 ticks ≈ total / 48 (186 against ~8,900).
+2. **Ticks run all the time:** the totals keep counting with the transport stopped and while recording. The sequencer clock is free-running, not tied to the tape.
+3. **KeyDown's flag:** 0 for a normal key, **1 with shift held** (tombola plays shifted keys directly).
+4. **Notes from the sequencer thread** (echo mode): no stuck notes, also fast and with chords. **Velocity is heard** on the engines tried.
+5. **Drum mode with tombola:** the same readout and the same random drum triggers (the shared player object works for both instruments).
+6. Echo off: stock tombola plays as before (the readout replaces its balls, as designed).
+
+## Test 21: Marbles on tombola (`op1_246_rings_marbles2.op1`)
+
+**Not flashed yet.** clouds4 plus **Marbles as the synth sequencer**, on tombola (`ports/marbles/op1/marbles_seq.*`, `marbles_op1.cc`; `make op1-marbles` in `ports/rings`). Marbles is on by default; the **orange click** on the tombola screen swaps Marbles ↔ stock tombola. Settings are in RAM only (reset at power-on). **marbles2** has the user's **Orbit** screen (`ports/marbles/op1/marbles.svg`, mappings in `marbles-screen.md`); marbles1 (a digit readout) was never flashed.
+
+**How it plays:**
+- The T clock is locked to the OP-1 tempo (96 ticks per beat). Each gate plays a note: **T1 with X1, T2 with X2, T3 with X3**, so gates overlap into chords. T2 is the steady clock; T1/T3 follow the T model. Y sets the velocity.
+- **Scale mode** (default): notes = the root (the last key you pressed; C at first) + X over two octaves, quantized by steps to the scale.
+- **Keys mode** (shift + white): notes come only from the chord you hold; it stays latched after you let go, until you start a new chord.
+- **Shift + key** plays that key straight through (not into Marbles).
+
+**Controls** (white click = page):
+
+| Page | Blue | Green | White | Orange | Blue click | Green click |
+|---|---|---|---|---|---|---|
+| T | rate (1 bar … 1/32, triplets between) | bias | jitter | deja vu amount | T model (shift: back) | T deja vu off/on/locked |
+| X | spread | bias | steps | length (1–16) | scale (shift: back) | X deja vu off/on/locked |
+
+Shift + white = scale ↔ keys mode. Shift + encoder = fine (if the OP-1 passes shifted encoders here: see 9 below).
+
+**Screen (Orbit):** the blue core grows with rate / spread, the green diamond slides along the axis (bias), the white triangle climbs its track (jitter / steps), the orange column fills (deja vu / length; the tick is the locked middle). The three gate dots on the rings light with T1 / T2 / T3. Right column: the model (page T) or scale (page X) marker, the deja vu state of the shown page, scale/keys, and the page.
+
+**Checks (off the device):** `make sim-seq` (ports/marbles), host and Blackfin: notes on the 1/8, 1/16 and 1/4-triplet grids (also after rate changes), keys mode plays only the latched chord, deja vu locked × length 4 repeats exactly, full jitter stays near the grid, no stuck or doubled notes; ~2,900 cycles per tick (~0.6 MHz at 120 BPM). `make test` (the port's component tests) still passes. The image: no undefined symbols or constructors, ends at `0x02d2c934`; the 10 new hooks checked against their stock values and `bfin-elf-nm`; `verify_bootloader.py` passes; against clouds4 only `OP1_vdk.ldr` changes and `content/display/marbles.svg` is added (`gen_marbles_svg.py`: metadata stripped, the example state checked).
+
+**Procedure** (numbered points as usual):
+1. Synth mode, choose tombola, turn the sequencer on: does Marbles play (notes at 1/8 by default, in time with the metronome/tape)?
+2. Press a key: does the melody move to that root? Shift + white, hold a chord, release: only those notes?
+3. Turn each encoder on both pages: does each do what the table says, and does its indicator move? Is the speed right (roughly how many detents does a full sweep take)?
+4. Blue clicks through the T models and scales; green clicks through deja vu: with deja vu locked and a short length, does it loop?
+5. Jitter up: does the rhythm loosen but stay roughly in time?
+6. Shift + key: played straight through?
+7. Turn the sequencer off and on, change octave, switch to drums and back: any stuck notes?
+8. Orange: stock tombola back (balls screen), orange again: Marbles.
+9. Hold shift and turn an encoder: does it change more finely (shifted encoders reaching Marbles), or not at all?
+10. Anything else.
+
+**If something is wrong:** power off; recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1`.

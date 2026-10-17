@@ -212,3 +212,11 @@ Upstream's external-clock code (`RampExtractor`) isn't needed for this.
 4. **New destinations:** pitch and volume through the random host (needs the probe's confirmation), and the routing presets.
 5. **Clock while idle:** keep Marbles running when no voice sounds (catch-up from a block counter) or let it pause.
 6. **Tempo sync** as a clock option (the rate becomes a beat division).
+
+## 9. Marbles as a sequencer (2026-10-17; supersedes the LFO plan of §6–§8)
+
+The user chose a **sequencer** host: Marbles on the **tombola** sequencer (synth only), swapped by the orange click. Firmware map: `docs/sequencer-interface.md` (probe results §10, Test 20).
+- **Core:** `op1/marbles_seq.*`, platform-free. One Marbles sample per sequencer tick (96 per beat). The T clock runs in a new **synced mode** (`TGenerator::set_synced_period` / `SyncTo`): the master ramp completes exactly every `period` ticks (the rate encoder picks 1 bar … 1/32 with triplets), jitter stretches cycles by upstream's multiplier and is pulled back to the grid. Free-running mode is unchanged (bit-exact with upstream as before).
+- **Notes:** T1/T2/T3 gates each play a note from X1/X2/X3 (overlapping into chords); Y → velocity 48–127. Pitch: **scale** (root = last key + X over 2 octaves, Marbles' quantizer) or **keys** (the latched held chord, X picks a key). Shift + key plays through.
+- **Controls:** T page rate / bias / jitter / deja vu; X page spread / bias / steps / length; white = page, shift + white = pitch source, blue = T model or scale, green = the page's deja vu off/on/locked.
+- **Glue:** `op1/marbles_op1.cc` (tombola player, controller and screen words; RAM settings; a digit readout until `marbles.svg` arrives). Image: `make op1-marbles` in `ports/rings` (Clouds + Marbles). Checks: `make sim-seq`. Device: Test 21.

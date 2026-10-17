@@ -90,7 +90,7 @@ OP1_ENGINE_SRC := op1/engine.cc op1/screen.cc op1/input.cc op1/patches.cc op1/su
                   src/mode_bank_bfin.S src/string_kernel_bfin.S src/limiter_bfin.S src/reverb_bfin.S
 OP1_HDR := $(wildcard op1/*.h)
 
-.PHONY: op1-probe op1-engine op1-fxprobe op1-clouds sim-engine sim-engine-fm host-probe step-params test-fm test-screen test-alloc \
+.PHONY: op1-probe op1-engine op1-fxprobe op1-clouds op1-seqprobe op1-marbles sim-engine sim-engine-fm host-probe step-params test-fm test-screen test-alloc \
         test-string sim-model bench-string test-reverb test-reverb-bus bench-mode-bank
 
 $(BUILD)/op1_probe.elf: op1/probe.cc op1/support.cc op1/op1.h op1/link.ld | $(BUILD)
@@ -120,6 +120,25 @@ op1-probe: $(BUILD)/op1_probe.elf
 op1-engine: $(BUILD)/op1_engine.elf
 op1-fxprobe: $(BUILD)/op1_fxprobe.elf
 op1-clouds: $(BUILD)/op1_clouds.elf
+
+#   make op1-seqprobe the Clouds image plus the tombola sequencer probe
+#                     (op1/seq_probe.cc) -> build/op1_seqprobe.elf
+$(BUILD)/op1_seqprobe.elf: $(OP1_ENGINE_SRC) $(CLOUDS_SRC) op1/seq_probe.cc $(OP1_HDR) $(CLOUDS_HDR) op1/link.ld $(PORT_HDR) | $(BUILD)
+	$(BFIN_CXX) $(OP1_CXXFLAGS) -I$(CLOUDS) -I.. -Wno-class-memaccess -DOP1_CLOUDS -DOP1CLOUDS_SAMPLE_RATE=22050 -DOP1_SEQ_PROBE 	  $(OP1_ENGINE_SRC) $(CLOUDS_SRC) op1/seq_probe.cc $(OP1_LDFLAGS) -o $@ -lgcc
+	$(BFIN_BIN)/bfin-elf-size -A $@
+
+op1-seqprobe: $(BUILD)/op1_seqprobe.elf
+
+#   make op1-marbles  the Clouds image plus Marbles on the tombola sequencer
+#                     (../marbles/op1/marbles_op1.cc) -> build/op1_marbles.elf
+MARBLES := ../marbles
+MARBLES_SRC := $(MARBLES)/op1/marbles_op1.cc $(MARBLES)/op1/marbles_seq.cc                $(MARBLES)/src/t_generator_fx.cc $(MARBLES)/src/x_y_generator_fx.cc                $(MARBLES)/src/output_channel_fx.cc $(MARBLES)/src/quantizer_fx.cc $(MARBLES)/src/tables_fx.cc
+MARBLES_HDR := $(wildcard $(MARBLES)/op1/*.h $(MARBLES)/src/*.h)
+$(BUILD)/op1_marbles.elf: $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(OP1_HDR) $(CLOUDS_HDR) $(MARBLES_HDR) op1/link.ld $(PORT_HDR) | $(BUILD)
+	$(BFIN_CXX) $(OP1_CXXFLAGS) -I$(CLOUDS) -I$(MARBLES) -I.. -Wno-class-memaccess -DOP1_CLOUDS -DOP1CLOUDS_SAMPLE_RATE=22050 	  -DOP1_MARBLES $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
+	$(BFIN_BIN)/bfin-elf-size -A $@
+
+op1-marbles: $(BUILD)/op1_marbles.elf
 
 # Checks of the images' code off the device:
 #   make sim-engine   the engine's entry points in bfin-elf-run: CPU cost, and

@@ -99,6 +99,12 @@ void TGenerator::Init(RandomStream* random_stream, Float24 one_hertz) {
   jitter_multiplier_ = RatioToFloat(1, 1);
   phase_difference_ = 0;
 
+  synced_period_ = 0;
+  cycle_count_ = 0x7ffffffe;   // the first synced sample is a master tick
+  cycle_length_ = 1;
+  grid_offset_ = 0;
+  synced_frequency_ = kQ40One;
+
   divider_pattern_length_ = 0;
   for (int i = 0; i < kMarkovHistorySize; ++i) {
     streak_counter_[i] = 0;
@@ -365,10 +371,7 @@ static Float24 JitterRatio(int32_t jitter, uint32_t u) {
   return Float24Mul(lut_pitch_ratio_high[integral], lut_pitch_ratio_low[low]);
 }
 
-void TGenerator::Process(bool* reset, Ramps ramps, bool* gate, int size) {
-  uint64_t internal_frequency = external_frequency_
-      ? external_frequency_ : InternalFrequency();
-
+void TGenerator::ResetSequence(bool* reset) {
   if (*reset) {
     for (int i = 0; i < kNumTChannels; ++i) {
       slave_ramp_[i].Reset();
@@ -382,6 +385,58 @@ void TGenerator::Process(bool* reset, Ramps ramps, bool* gate, int size) {
       ConfigureSlaveRamps(v);
     }
   }
+}
+
+void TGenerator::SyncTo(int32_t phase, int32_t period) {
+  if (period < 1) period = 1;
+  cycle_length_ = period;
+  cycle_count_ = (phase <= 0 || phase >= period ? period : phase) - 1;
+  grid_offset_ = 0;
+  synced_frequency_ = kQ40One / static_cast<uint64_t>(period);
+}
+
+void TGenerator::ProcessSynced(bool* reset, Ramps ramps, bool* gate, int size) {
+  ResetSequence(reset);
+  const int32_t period = synced_period_;
+  while (size--) {
+    if (++cycle_count_ >= cycle_length_) {   // a master tick
+      cycle_count_ = 0;
+      grid_offset_ += cycle_length_ - period;
+      uint32_t v[kVectorSize];
+      sequence_.NextVector(v, kVectorSize);
+      // The cycle's length: upstream's jitter multiplier (1 without
+      // jitter) on the period, minus half the drift from the grid.
+      const uint64_t ratio_q16 = Float24ToFixed(JitterRatio(jitter_, v[JITTER]), 16);
+      int64_t length = (static_cast<int64_t>(period) * static_cast<int64_t>(ratio_q16) + 32768) >> 16;
+      length -= grid_offset_ / 2;
+      const int64_t shortest = period >= 4 ? period / 4 : 1;
+      const int64_t longest = static_cast<int64_t>(period) * 4;
+      cycle_length_ = static_cast<int32_t>(length < shortest ? shortest : (length > longest ? longest : length));
+      synced_frequency_ = kQ40One / static_cast<uint64_t>(cycle_length_);
+      ConfigureSlaveRamps(v);
+    }
+    const uint32_t master = static_cast<uint32_t>(
+        (static_cast<uint64_t>(cycle_count_) * synced_frequency_) >> 8);   // Q32
+    *ramps.external++ = master;
+    *ramps.master++ = master;
+    const int64_t frequency = static_cast<int64_t>(synced_frequency_);
+    for (int j = 0; j < kNumTChannels; ++j) {
+      slave_ramp_[j].Process(frequency, ramps.slave[j], gate);
+      ramps.slave[j]++;
+      gate++;
+    }
+  }
+}
+
+void TGenerator::Process(bool* reset, Ramps ramps, bool* gate, int size) {
+  if (synced_period_ > 0) {
+    ProcessSynced(reset, ramps, gate, size);
+    return;
+  }
+  uint64_t internal_frequency = external_frequency_
+      ? external_frequency_ : InternalFrequency();
+
+  ResetSequence(reset);
 
   // The products below only change when the jitter multiplier does (at a
   // clock tick), so they're computed once per block and per tick.

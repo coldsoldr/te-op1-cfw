@@ -118,6 +118,17 @@ class TGenerator {
   // Q40 cycles per sample; 0 = use the internal rate. (OP-1 tempo sync.)
   inline void set_external_frequency(uint64_t f) { external_frequency_ = f; }
 
+  // Synced to a host clock (an OP-1 sequencer, op1/marbles_seq.cc): with a
+  // period > 0 every sample is one host tick and the master ramp completes
+  // exactly every `period` samples, so its ticks land on the host's grid.
+  // Jitter stretches each cycle by upstream's multiplier and the drift from
+  // the straight grid is pulled back by half each cycle. 0 = free running
+  // (upstream's float clock, as before). Not part of upstream.
+  inline void set_synced_period(int32_t period) { synced_period_ = period; }
+  // Places the synced clock on the host's grid: `phase` samples into a
+  // cycle of `period` (0 = the next sample is a master tick).
+  void SyncTo(int32_t phase, int32_t period);
+
  private:
   // pulse_width[2], u[2], p, jitter (upstream's RandomVector layout).
   enum { PW0 = 0, PW1 = 1, U0 = 2, U1 = 3, P = 4, JITTER = 5, kVectorSize = 6 };
@@ -131,6 +142,8 @@ class TGenerator {
   void ScheduleOutputPulses(const uint32_t* v, int bitmask);
   uint32_t RandomPulseWidth(int i, uint32_t u);
   uint64_t InternalFrequency();
+  void ResetSequence(bool* reset);
+  void ProcessSynced(bool* reset, Ramps ramps, bool* gate, int size);
 
   Float24 one_hertz_;
   TGeneratorModel model_;
@@ -148,6 +161,13 @@ class TGenerator {
   int64_t master_phase_;        // Q40 (a float value)
   Float24 jitter_multiplier_;
   int64_t phase_difference_;    // Q40 (a float value)
+
+  // Synced clock.
+  int32_t synced_period_;
+  int32_t cycle_count_;         // samples since the last master tick
+  int32_t cycle_length_;        // samples in the current cycle
+  int32_t grid_offset_;         // samples the ticks are late (+) on the grid
+  uint64_t synced_frequency_;   // Q40 cycles per sample of the current cycle
 
   int32_t divider_pattern_length_;
   int32_t streak_counter_[kMarkovHistorySize];

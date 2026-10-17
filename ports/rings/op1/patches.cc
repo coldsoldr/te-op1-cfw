@@ -11,6 +11,12 @@
 #ifdef OP1_CLOUDS
 #include "op1/clouds_fx.h"
 #endif
+#ifdef OP1_SEQ_PROBE
+#include "op1/seq_probe.h"
+#endif
+#ifdef OP1_MARBLES
+#include "op1/marbles_op1.h"
+#endif
 #include "op1/input.h"
 #include "op1/screen.h"
 
@@ -76,6 +82,33 @@ const Patch kPatches[kNumPatches] = {
   { 0x0190fa78, kWord32, 0x01978008, reinterpret_cast<const void*>(&CloudsDrumKeyDown) },
   { 0x0190fa80, kWord32, 0x019777dc, reinterpret_cast<const void*>(&CloudsDrumShiftKeyDown) },
   { 0x0190fa88, kWord32, 0x019773e4, reinterpret_cast<const void*>(&CloudsDrumKeyUp) },
+#endif
+#ifdef OP1_MARBLES
+  // Marbles on the tombola sequencer (../marbles/op1/marbles_op1.cc): its
+  // player (vtable 0x1911e04), controller (0x1911ce4) and screen (0x1911ec4).
+  { op1marbles::kKeyDownSlot, kWord32, op1marbles::kStockKeyDown, reinterpret_cast<const void*>(&MarblesKeyDown) },
+  { op1marbles::kKeyUpSlot, kWord32, op1marbles::kStockKeyUp, reinterpret_cast<const void*>(&MarblesKeyUp) },
+  { op1marbles::kTickSlot, kWord32, op1marbles::kStockTick, reinterpret_cast<const void*>(&MarblesTick) },
+  { op1marbles::kUiFrameSlot, kWord32, op1marbles::kStockUiFrame, reinterpret_cast<const void*>(&MarblesUiFrame) },
+  { op1marbles::kAllNotesOffSlot, kWord32, op1marbles::kStockAllNotesOff, reinterpret_cast<const void*>(&MarblesAllNotesOff) },
+  { op1marbles::kCtlKeyDownSlot, kWord32, op1marbles::kStockCtlKeyDown, reinterpret_cast<const void*>(&MarblesCtlKeyDown) },
+  { op1marbles::kCtlShiftKeyDownSlot, kWord32, op1marbles::kStockCtlShiftKeyDown, reinterpret_cast<const void*>(&MarblesCtlShiftKeyDown) },
+  { op1marbles::kCtlKnobSlot, kWord32, op1marbles::kStockCtlKnob, reinterpret_cast<const void*>(&MarblesCtlKnob) },
+  { op1marbles::kScreenUpdateSlot, kWord32, op1marbles::kStockScreenUpdate, reinterpret_cast<const void*>(&MarblesScreenUpdate) },
+  { op1marbles::kScreenInitSlot, kWord32, op1marbles::kStockScreenInit, reinterpret_cast<const void*>(&MarblesScreenInit) },
+#endif
+#ifdef OP1_SEQ_PROBE
+  // Sequencer probe (op1/seq_probe.cc): tombola's player (vtable 0x1911e04),
+  // controller key down (vtable 0x1911ce4) and screen (vtable 0x1911ec4).
+  { op1seq::kKeyDownSlot, kWord32, op1seq::kStockKeyDown, reinterpret_cast<const void*>(&SeqProbeKeyDown) },
+  { op1seq::kKeyUpSlot, kWord32, op1seq::kStockKeyUp, reinterpret_cast<const void*>(&SeqProbeKeyUp) },
+  { op1seq::kOnLeaveSlot, kWord32, op1seq::kStockOnLeave, reinterpret_cast<const void*>(&SeqProbeOnLeave) },
+  { op1seq::kTickSlot, kWord32, op1seq::kStockTick, reinterpret_cast<const void*>(&SeqProbeTick) },
+  { op1seq::kUiFrameSlot, kWord32, op1seq::kStockUiFrame, reinterpret_cast<const void*>(&SeqProbeUiFrame) },
+  { op1seq::kAllNotesOffSlot, kWord32, op1seq::kStockAllNotesOff, reinterpret_cast<const void*>(&SeqProbeAllNotesOff) },
+  { op1seq::kCtlKeyDownSlot, kWord32, op1seq::kStockCtlKeyDown, reinterpret_cast<const void*>(&SeqProbeCtlKeyDown) },
+  { op1seq::kScreenUpdateSlot, kWord32, op1seq::kStockScreenUpdate, reinterpret_cast<const void*>(&SeqProbeScreenUpdate) },
+  { op1seq::kScreenInitSlot, kWord32, op1seq::kStockScreenInit, reinterpret_cast<const void*>(&SeqProbeScreenInit) },
 #endif
 };
 
