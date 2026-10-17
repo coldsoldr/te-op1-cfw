@@ -884,3 +884,33 @@ Shift + white = scale ↔ keys mode. Shift + encoder = fine (if the OP-1 passes 
 10. Anything else.
 
 **If something is wrong:** power off; recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1`.
+
+**Results, marbles2 (2026-10-17):**
+1. Plays in time. 2. Root and keys mode work nicely. 3. Every encoder works; the speed is good (about three full turns for a whole range). 4. Model and deja vu clicks move through the screen, but it's hard to tell what they do. 5. Jitter good. 6. Shift + key good. 7. No stuck notes, **but Marbles also plays on the drum instrument** (tombola's player is shared). 8. Orange swap good. 9. Shift + turn gives fine steps.
+- **Screen bug:** the four encoder indicators sat at the top of the screen, not in the orbit. The parser folds a group's `translate` into its children, so setting an element's transform dropped its wrapper's offset.
+- The screen is hard to read without the description: to be reworked with the designer.
+
+**marbles3** (`op1_246_rings_marbles3.op1`, not flashed yet): the indicators carry their wrappers' offsets; Marbles steps aside on the drum instrument (stock tombola there, Marbles on synth).
+
+**marbles4** (`op1_246_rings_marbles4.op1`, not flashed yet): marbles3 plus the **steps** encoder remapped to Marbles' musical half only (left = all 12 notes, right = the root only; the old left half glided a voltage, which as notes repeated one pitch). The screen is still Orbit (with the offsets fixed); a v2 brief went to the designer (`docs/marbles-screen-brief.md`).
+
+## Test 22: Marbles with the "Dots" screen (`op1_246_rings_marbles5.op1`)
+
+**Not flashed yet.** marbles4 (steps remapped; indicators fixed; no Marbles on drums) plus the designer's v2 screen (`ports/marbles/op1/marbles.svg`, mappings `marbles-screen.md`, brief `docs/marbles-screen-brief.md`). The core now keeps a 16-step history (`MarblesSeq::history_gates/height`; `make sim-seq` checks it).
+
+**What the screen shows:**
+- **History** (top left): the last 16 clock steps, newest on the right; three lanes, T3 top, T2 middle (the steady clock: every step), T1 bottom. A dot = that gate played a note on that step; its height in the lane = the note (scale mode: over the two octaves; keys mode: over the held chord).
+- **Loop brackets:** above the lanes = rhythm deja vu, below = pitch deja vu. Hidden = off, dim = on, bright = locked. They span the last *length* steps.
+- **Legend** (bottom): four icons in encoder colours (they change with the page: that's the page indicator) and a level bar under each.
+- **Chips** (right): the T model (page T, marker under 7 dots) or scale (page X, under 6 bars); scale/keys source.
+
+**Procedure** (numbered points; a photo or two helps):
+1. Do the dots scroll in time, one column per clock step, with T2's lane full?
+2. Turn rate, bias, jitter: does the history change as you'd expect (speed, which outer lane is busier, irregular gaps)?
+3. Page X: spread and steps: do the dot heights spread out / settle onto fewer heights?
+4. Green click on each page: does the bracket appear (dim), turn bright (locked), and vanish (off)? With locked and a short length, do you see the pattern repeat under it?
+5. Are the legend icons and bars in the right places, and do the bars follow the encoders? Do the chips move with the blue click and the source toggle with shift + white?
+6. Does the screen now make sense without the description? What's still unclear?
+7. Anything else, in numbered points.
+
+**If something is wrong:** power off; recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1`.

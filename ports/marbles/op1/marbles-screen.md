@@ -1,24 +1,25 @@
-# Marbles for OP-1: screen SVG handover (Orbit)
+# Marbles for OP-1: screen SVG handover (v2, "Dots")
 
 Files:
 - `marbles.svg`: the asset. Ships showing page T.
-- `preview/marbles-pageX-example.svg`: the same file with page X shown and example values. For reference only, don't ship it.
+- `preview/marbles-pageX-example.svg`: the same file with page X shown. For reference only, don't ship it.
 
-The values baked into `marbles.svg` (indicator transforms, lit gates, selected model) are only example values. The code overwrites them all on load.
+The marks, brackets, bars and chip positions baked into `marbles.svg` are an example (an 8-step locked loop). The code overwrites them on load. The **colours** are drawn in the default states the brief asked for:
+- `h00` shown;
+- `loop_t` bright (locked) and `loop_x` dim (on);
+- `src_scale` selected and `src_keys` not.
 
 ## Conventions
 
 - `viewBox="0 0 320 160"`, black background supplied by the device.
 - Every stroke is `stroke-width="1.5"`, `stroke-linecap="square"`.
 - `<g id="static">` is never touched. Everything else the code drives has an `id`.
-- Draw order = file order: `static` → `pageT` → `pageX` → indicators → gates → right column. The gates come after the blue core so they are never covered.
-- No text, gradients, rounded rects or arcs. The three frame outlines are `path`s with cubic corners (same as `rings.svg`).
-- Totals: 19 driven ids, about 60 elements.
-
-### Transforms
-Each encoder indicator sits inside an un-id'd wrapper `<g transform="translate(ox,oy)">`. The indicator itself is drawn around local `0,0`. The code only sets the `transform` on the **indicator element**; the wrapper stays fixed. All mappings below are in local units.
-
-If your renderer can't nest transforms, add the wrapper offset to the indicator's coordinates once at load. For scaled shapes, also scale about that point.
+- **No driven element sits inside a translated or scaled group.** All coordinates below are real screen coordinates.
+  - The only groups outside `static` are the legend icons and the two chip rows. They have no transform; the code only shows and hides them.
+- A driven element's `transform` attribute is set directly on the element; the code replaces it.
+  - Scaling about an anchor point `a` is written `matrix(s,0,0,1,a·(1-s),0)`, which is the same as `translate(a,0) scale(s,1) translate(-a,0)`.
+- No text, gradients, rounded rects or arcs. The frame outlines are `path`s with cubic corners.
+- Driven ids: 48 marks + 2 brackets + 8 icons + 4 bars + 2 chip markers + 2 chip rows + 2 source icons = **68**.
 
 ## Palette
 
@@ -29,78 +30,100 @@ If your renderer can't nest transforms, add the wrapper offset to the indicator'
 | Green encoder | `#00EE92` |
 | White encoder | `#DED7FF` |
 | Orange encoder | `#FF395A` |
-| Active icon / lit gate | `#DED7FF` |
-| Inactive icon / unlit gate stroke | `#514959` |
-| Orbit rings, column-centre tick, white track | `#38354D` |
-| Unlit gate fill | `#010101` |
+| Marks, bright bracket, selected icon, chip markers | `#DED7FF` |
+| Dim bracket, unselected icon, chip dots/bars, bar centre ticks | `#514959` |
+| Lane guide lines, bar tracks | `#38354D` |
 
 ## Layout
 
-- **Left panel** (x 4.5–186.5): the orbit, centred at **70,74**. Three rings, r 22 / 36 / 50, are the lanes for T1 / T2 / T3, with crosshair axes through the centre.
-  - The white indicator track is at x=138 (y 24–124).
-  - The orange column is at x 146–164, y 20–128, with a centre tick at y=74.
-- **Right top box:** model or scale row (y≈18), deja vu icons (y≈52), pitch source icons (y≈80).
-- **Right bottom box:** page indicator.
+| Area | Box |
+|---|---|
+| History | x 4.5–252.5, y 2.5–102.5 |
+| Chip (model / scale) | x 258.5–316.5, y 2.5–50.5 |
+| Pitch source | x 258.5–316.5, y 56.5–102.5 |
+| Legend | x 4.5–316.5, y 108.5–156.5 |
 
-## Pages
+## 1. History marks `h<lane><col>`
+
+- `lane` 0 = T1 (bottom), 1 = T2 (middle), 2 = T3 (top).
+- `col` 0..15; **15 is the newest** (right). Ids: `h00`..`h015`, `h10`..`h115`, `h20`..`h215`.
+- Every mark is a `circle` r=2.5, `fill` and `stroke` `#DED7FF`.
+- **Column x:** `x = 22 + 14·col` (22, 36, … 232).
+- **Lanes** (each mark is drawn at its lane's baseline; 18 px of travel):
+
+| Lane | Baseline y (lowest note) | Top y (highest note) | Guide line |
+|---|---|---|---|
+| T1 (`h0*`) | 88 | 70 | y 92.5 |
+| T2 (`h1*`) | 62 | 44 | y 66.5 |
+| T3 (`h2*`) | 36 | 18 | y 40.5 |
+
+- **Pitch:** normalise the note to `p` 0..1 within the current spread range. Set `transform="translate(0, -p·18)"`.
+- **Gate:** show the mark when that gate fired on that step; otherwise `display="none"`.
+- **Scrolling:** on each clock step (T2), shift every lane's state one column left and write the new step into col 15. Only visibility and translate-y change; x never moves.
+
+## 2. Loop brackets
+
+| id | Points (full width) | Position |
+|---|---|---|
+| `loop_t` | `15,11 15,6 239,6 239,11` | above the lanes (rhythm deja vu) |
+| `loop_x` | `15,95 15,100 239,100 239,95` | below the lanes (pitch deja vu) |
+
+- Full width = 16 columns (224 px, 14 px per column). **Anchor = right end, x = 239.**
+- Length `n` 1..16: `s = n/16`, `transform="matrix(s,0,0,1,239·(1-s),0)"`. The left end lands at `239 − 14·n`, so the bracket covers the last `n` columns.
+- State (per bracket, from that page's deja vu click):
+  - off: `display="none"`;
+  - on: `stroke="#514959"`;
+  - locked: `stroke="#DED7FF"`.
+
+## 3. Legend (4 slots)
+
+Slot `i` = 0..3 in encoder order (blue, green, white, orange). Slot left edge `x0 = 4.5 + 78·i`, so x0 = 4.5, 82.5, 160.5, 238.5.
+
+**Icons:** groups `leg<i>_t` (page T) and `leg<i>_x` (page X), centred at `x0+39, 124`. Show the current page's group and hide the other. This is also the page indicator.
+
+| Slot | Colour | `leg<i>_t` | `leg<i>_x` |
+|---|---|---|---|
+| 0 | `#638BFF` | rate: metronome | spread: arrows apart |
+| 1 | `#00EE92` | bias: seesaw | bias: up/down arrows |
+| 2 | `#DED7FF` | jitter: wobbly line | steps: staircase |
+| 3 | `#FF395A` | deja vu: loop arrow | length: bracket |
+
+**Bars:** `bar<i>` is a `rect` at `x = x0+14`, y 140, 50 × 4, filled with the slot colour. **Anchor = left end, x = x0+14** (18.5, 96.5, 174.5, 252.5).
+- Value `u` 0..1: `transform="matrix(u,0,0,1,ax·(1-u),0)"`, where `ax` is the anchor.
+- A static track (`#38354D`, same rect) sits underneath.
+- Slots 1 and 3 have a centre tick at `x0+39` (y 147–149). On page T it marks bias = even and deja vu = locked loop. On page X it marks bias = middle; for length it has no special meaning.
+- Value mapping:
+  - Page T:
+    - blue: rate step `k` 0..9, `u = k/9`
+    - green: bias
+    - white: jitter
+    - orange: deja vu
+  - Page X:
+    - blue: spread
+    - green: bias
+    - white: steps
+    - orange: length `n`, `u = (n−1)/15`
+
+## 4. Chips
 
 | id | Contents | Show when |
 |---|---|---|
-| `pageT` | 8 white clock ticks around the orbit (r 55–60) + the model row | page T |
-| `pageX` | 12 white dots around the orbit (r 58, one per semitone) + the scale row | page X |
+| `chipT` | 7 dim dots at `x = 268 + 6.67·i`, y=20, plus the marker `chip_model` | page T |
+| `chipX` | 6 dim bars of rising height at `x = 268 + 8·i` (bottoms at y=23), plus the marker `chip_scale` | page X |
 
-Toggle them with `display="none"`. Everything else is shared by both pages.
-
-## Encoder indicators (same shapes on both pages)
-
-First normalise each parameter to `u` in 0..1:
-
-| Encoder | Page T | Page X |
-|---|---|---|
-| blue | rate step `k` 0..9 (1 bar … 1/32), `u = k/9` | spread, `u = spread` |
-| green | bias, `u = bias` (0.5 = even) | bias, `u = bias` (0.5 = middle) |
-| white | jitter, `u = jitter` | steps, `u = steps` |
-| orange | deja vu, `u = dejavu` (0.5 = locked loop) | length `n` 1..16, `u = (n-1)/15` |
-
-Then:
-
-| id | Shape | Wrapper | Transform | Range |
-|---|---|---|---|---|
-| `ind0` | blue filled circle r12 (the core) | translate(70,74) | `scale(s)`, `s = 0.15 + 0.85·u` | radius 1.8 → 12 px |
-| `ind1` | green filled diamond (±4.5) | translate(70,74) | `translate((u-0.5)·100, 0)` | x 20 → 120 along the horizontal axis; centre x=70 |
-| `ind2` | white filled triangle | translate(138,124) | `translate(0, -u·100)` | y 124 (0) → 24 (1) on the white track |
-| `ind3` | orange filled rect, 14 × 104, drawn from y −104 to 0 | translate(148,126) | `scale(1, max(u, 0.02))` | fills upward from y 126; full at y 22; the centre tick (y 74) = 0.5 |
-
-For rate and length, either snap to the steps or move continuously. Steps: blue gives 10 core sizes; orange gives 16 heights of 6.5 px each.
-
-## Gates (live)
-
-| id | Position | Lane |
-|---|---|---|
-| `gate1` | circle r3.5 at 70,52 | inner ring, T1 |
-| `gate2` | circle r3.5 at 70,38 | middle ring, T2 (clock) |
-| `gate3` | circle r3.5 at 70,24 | outer ring, T3 |
-
-- High: `stroke` and `fill` `#DED7FF`.
-- Low: `stroke="#514959"`, `fill="#010101"`.
-
-They're the only animated elements; overlapping gates simply light together. (The optional "gates follow X1–X3" isn't used here: they sit on fixed lanes.)
-
-## State indicators (right column)
-
-All of these are stroke-only. To select one, set its `stroke` to `#DED7FF`; for the others in its group, set `#514959`.
-
-| ids | Meaning | Driven by |
-|---|---|---|
-| `model_mk` | white triangle under 7 dim dots (x 205 + 17·i). `translate(17·m, 0)`, m = 0..6: coin toss, clusters, drums, independent, divider, three states, Markov. Inside `pageT`. Its fill is already white; it moves, it doesn't recolour. | blue click / shift + click |
-| `scale_mk` | same triangle under 6 dim bars of rising height (x 205 + 20.4·i). `translate(20.4·s, 0)`, s = 0..5 = Marbles' preset scales in firmware order. Inside `pageX`. | blue click / shift + click |
-| `dv_off`, `dv_on`, `dv_locked` | zigzag = off, open octagon = on, closed octagon with a square = locked. They show the **current page's** deja vu state: T state on page T, X state on page X. | green click |
-| `src_scale`, `src_keys` | staircase = scale, keyboard = held keys | shift + white |
-| `pageTind`, `pageXind` | pulse train = T, bell = X | white click |
+- `chip_model`: a white triangle (264.5,34 271.5,34 268,29). `transform="translate(6.67·m, 0)"`. The order of m 0..6: coin toss, clusters, drums, independent, divider, three states, Markov.
+- `chip_scale`: same triangle. `transform="translate(8·s, 0)"`. The order of s 0..5: major, minor, pentatonic, pelog, raag Bhairav, raag Shri.
+- `src_scale` (staircase) / `src_keys` (keyboard), stroke-only. Selected: `stroke="#DED7FF"`; other: `stroke="#514959"`. Toggled with shift + white.
 
 ## Full id list
 
-`static`, `pageT`, `pageX`, `ind0`, `ind1`, `ind2`, `ind3`, `gate1`, `gate2`, `gate3`, `model_mk`, `scale_mk`, `dv_off`, `dv_on`, `dv_locked`, `src_scale`, `src_keys`, `pageTind`, `pageXind`
+`static`;
+`h00`..`h015`, `h10`..`h115`, `h20`..`h215`;
+`loop_t`, `loop_x`;
+`leg0_t`, `leg0_x`, `leg1_t`, `leg1_x`, `leg2_t`, `leg2_x`, `leg3_t`, `leg3_x`;
+`bar0`, `bar1`, `bar2`, `bar3`;
+`chipT`, `chipX`, `chip_model`, `chip_scale`;
+`src_scale`, `src_keys`.
 
 ## Not on screen
 

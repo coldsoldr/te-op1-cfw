@@ -115,6 +115,17 @@ int main() {
   Check(off == 0 && on > 0, "T2 on the 1/8 grid");
   Check(sink.min_pitch >= 7 && sink.max_pitch <= 7 + 24, "scale mode within root + 2 octaves");
   Check(sink.double_ons == 0 && sink.stray_offs == 0, "no double note-ons or stray note-offs");
+  // The history: T2 plays on every clock step, so its lane is full; T1/T3
+  // marks appear only where those gates played.
+  {
+    int heights_ok = 1;
+    for (int c = 0; c < kHistory; ++c) heights_ok &= seq.history_height(1, c) <= 255;
+    printf("history: T1 %04x T2 %04x T3 %04x\n", seq.history_gates(0), seq.history_gates(1),
+           seq.history_gates(2));
+    Check(seq.history_gates(1) == 0xffff && heights_ok, "history: T2's lane is full");
+    Check((seq.history_gates(0) | seq.history_gates(2)) != 0 && (seq.history_gates(0) & seq.history_gates(2)) == 0,
+          "history: coin toss marks T1 or T3, never both");
+  }
 
   // Rate change to 1/16, then 1/4 triplet.
   seq.mutable_settings()->rate = 7 * 65536 / kNumDivisions + 100;   // index 7 = 24 ticks

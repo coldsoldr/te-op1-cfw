@@ -41,6 +41,7 @@ const int32_t kNumScales = 6;
 const int32_t kNumDivisions = 10;
 const int32_t kMaxLength = 16;
 const int32_t kNumKeys = 24;
+const int kHistory = 16;
 
 // The beat divisions the T rate encoder picks, in ticks (96 per beat):
 // 1 bar, 1/2, 1/2 triplet, 1/4, 1/4 T, 1/8, 1/8 T, 1/16, 1/16 T, 1/32.
@@ -60,7 +61,7 @@ struct Settings {
   int32_t deja_vu;        // the amount, shared by T and X
   int32_t spread;
   int32_t x_bias;
-  int32_t steps;
+  int32_t steps;          // all 12 notes (0) -> the root only (max)
   int32_t length;         // 1..16 steps (index from the top)
 };
 
@@ -94,11 +95,19 @@ class MarblesSeq {
   uint8_t gates() const { return gates_; }
   const int32_t* voltages() const { return voltages_; }
   uint32_t held_mask() const { return pool_mask_; }
+  // The history the screen draws: the last kHistory clock (T2) steps, the
+  // newest at kHistory - 1. Bit c of history_gates(lane) = that lane's
+  // gate played a note on step c; history_height(lane, c) = its height
+  // (0..255).
+  uint16_t history_gates(int lane) const { return history_gates_[lane]; }
+  uint8_t history_height(int lane, int c) const { return history_height_[lane][c]; }
   int32_t root() const { return root_; }
 
  private:
   int32_t DivisionIndex() const;
-  int32_t Pitch(int voice, int32_t voltage) const;
+  // The voice's pitch, or kNone; *height = where it sits in the range
+  // (0..255: scale mode over the two octaves, keys mode over the chord).
+  int32_t Pitch(int32_t voltage, int32_t* height) const;
   void Release(int voice, NoteSink* sink);
 
   Settings settings_;
@@ -126,6 +135,8 @@ class MarblesSeq {
   int32_t voltages_[fx::kNumChannels];
   int32_t sounding_[3];           // pitch per voice, or kNone
   uint8_t owners_[256];           // per pitch + 64: voices holding it (bits)
+  volatile uint16_t history_gates_[3];
+  volatile uint8_t history_height_[3][kHistory];
 };
 
 }  // namespace op1marbles

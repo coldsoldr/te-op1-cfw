@@ -48,7 +48,7 @@ void MarblesSeq::Init(uint32_t seed) {
   settings_.deja_vu = 0x8000;
   settings_.spread = 0x8000;
   settings_.x_bias = 0x8000;
-  settings_.steps = 0xc000;     // quantized to the scale
+  settings_.steps = 0x8000;     // Marbles' 0.75: the scale's main notes
   settings_.length = 0x7800;    // 8 steps
 
   random_generator_.Init(seed);
@@ -68,6 +68,10 @@ void MarblesSeq::Init(uint32_t seed) {
   for (int i = 0; i < fx::kNumChannels; ++i) voltages_[i] = 0;
   for (int i = 0; i < 3; ++i) sounding_[i] = kNone;
   for (int i = 0; i < 256; ++i) owners_[i] = 0;
+  for (int lane = 0; lane < 3; ++lane) {
+    history_gates_[lane] = 0;
+    for (int c = 0; c < kHistory; ++c) history_height_[lane][c] = 0;
+  }
 }
 
 int32_t MarblesSeq::DivisionIndex() const {
@@ -100,17 +104,19 @@ void MarblesSeq::KeyUp(int32_t key) {
   if ((through_sounding_ | through_on_) & bit) through_off_ = through_off_ | bit;
 }
 
-int32_t MarblesSeq::Pitch(int voice, int32_t voltage) const {
-  (void)voice;
+int32_t MarblesSeq::Pitch(int32_t voltage, int32_t* height) const {
   int32_t v = voltage < 0 ? 0 : (voltage > kRange ? kRange : voltage);
   if (settings_.pitch_source == PITCH_SCALE) {
-    return root_ + ((v * 12 + 32768) >> 16);
+    const int32_t semitones = (v * 12 + 32768) >> 16;   // 0..24
+    *height = semitones * 255 / 24;
+    return root_ + semitones;
   }
   const uint32_t pool = pool_mask_;
   const int32_t count = PopCount(pool);
   if (!count) return kNone;
   int32_t index = v * count / kRange;   // v <= 2^17, count <= 24: 32 bits
   if (index > count - 1) index = count - 1;
+  *height = count > 1 ? index * 255 / (count - 1) : 0;
   for (int32_t k = 0; k < kNumKeys; ++k) {
     if ((pool >> k) & 1) {
       if (index-- == 0) return k;
@@ -157,7 +163,10 @@ void MarblesSeq::Tick(int32_t t, NoteSink* sink) {
   x_.voltage_range = fx::VOLTAGE_RANGE_NARROW;
   x_.spread = s.spread;
   x_.bias = s.x_bias;
-  x_.steps = s.steps;
+  // The encoder covers Marbles' quantized half only (0.5..1: all 12 notes
+  // -> the scale -> its main notes -> the root): the smooth half glides
+  // a voltage, which as notes only repeats one pitch.
+  x_.steps = fx::kQ16One / 2 + (s.steps >> 1);
   x_.deja_vu = DejaVu(s.x_deja_vu, s.deja_vu);
   x_.scale_index = s.scale;
   x_.length = length;
@@ -219,10 +228,21 @@ void MarblesSeq::Tick(int32_t t, NoteSink* sink) {
   }
   int32_t y = voltages_[3] < 0 ? 0 : (voltages_[3] > kRange ? kRange : voltages_[3]);
   const int32_t velocity = kVelocityMin + y * (127 - kVelocityMin) / kRange;
+  // The history: a new column on each clock (T2) step; this step's notes
+  // (and the T1/T3 notes until the next one) are marked in it.
+  if (rising & 2) {
+    for (int lane = 0; lane < 3; ++lane) {
+      history_gates_[lane] = static_cast<uint16_t>(history_gates_[lane] >> 1);
+      for (int c = 0; c < kHistory - 1; ++c) history_height_[lane][c] = history_height_[lane][c + 1];
+    }
+  }
   for (int voice = 0; voice < 3; ++voice) {
     if (!(rising >> voice & 1)) continue;
-    const int32_t pitch = Pitch(voice, voltages_[voice]);
+    int32_t height = 0;
+    const int32_t pitch = Pitch(voltages_[voice], &height);
     if (pitch == kNone || pitch < -kPitchOffset || pitch > 255 - kPitchOffset) continue;
+    history_height_[voice][kHistory - 1] = static_cast<uint8_t>(height);
+    history_gates_[voice] = static_cast<uint16_t>(history_gates_[voice] | (1u << (kHistory - 1)));
     uint8_t& owners = owners_[pitch + kPitchOffset];
     if (!owners) sink->NoteOn(pitch, velocity);
     owners |= 1 << voice;

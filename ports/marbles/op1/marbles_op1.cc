@@ -10,8 +10,8 @@
 // flushes its notes there). The note sink is built on the stack in each
 // call: the image runs no static constructors, and NoteSink has a vtable.
 //
-// Screen: the user's Orbit design (marbles.svg) in place of tombola's while
-// Marbles is on.
+// Screen: the user's "Dots" design (marbles.svg) in place of tombola's
+// while Marbles plays the synth.
 
 #include "op1/marbles_op1.h"
 
@@ -26,6 +26,7 @@ const uint32_t kMakeMidiNote = 0x01a85014;    // (MidiNote*, key, velocity)
 const uint32_t kNoteOn = 0x01a85750;          // (MidiNote*, 0)
 const uint32_t kNoteOff = 0x01a85840;         // (MidiNote*)
 const uint32_t kTombolaPlayer = 0x01dfc254;
+const uint32_t kInstrument = 0x01de4c40;      // 0 synth, 1 drum
 const uint32_t kRandomState = 0xff802bc8;     // the OP-1's LCG
 const uint32_t kNodeFind = 0x019eb8ac;
 const uint32_t kScreenDraw = 0x01a3b4c8;
@@ -71,6 +72,10 @@ bool seq_ready;
 volatile bool marbles_on = true;
 int16_t midi_note[256];       // per pitch + 64: the MIDI note it started as
 
+// Marbles plays the synth only: synth and drum share tombola's player
+// object (docs/sequencer-interface.md §2), so on drums it stays stock.
+bool Active() { return marbles_on && Read<int32_t>(kInstrument) == 0; }
+
 MarblesSeq* Seq() {
   if (!seq_ready) {
     seq.Init(Read<uint32_t>(kRandomState) | 1);
@@ -106,6 +111,7 @@ class OpSink : public op1marbles::NoteSink {
 };
 
 int32_t Click(int32_t key, int32_t direction) {
+  if (Read<int32_t>(kInstrument) != 0) return 0;   // drums: stock tombola
   switch (key & 0xff) {
     case kClickOrange: {
       if (!marbles_on) {
@@ -138,14 +144,14 @@ int32_t Click(int32_t key, int32_t direction) {
 }  // namespace
 
 extern "C" int32_t MarblesKeyDown(void* player, int32_t key, int32_t flag) {
-  if (!marbles_on) return reinterpret_cast<KeyDownFn>(op1marbles::kStockKeyDown)(player, key, flag);
+  if (!Active()) return reinterpret_cast<KeyDownFn>(op1marbles::kStockKeyDown)(player, key, flag);
   // flag = 1 with shift held (Test 20): played through, as tombola does.
   Seq()->KeyDown(key, flag != 0);
   return 1;
 }
 
 extern "C" void MarblesKeyUp(void* player, int32_t key) {
-  if (!marbles_on) {
+  if (!Active()) {
     reinterpret_cast<KeyUpFn>(op1marbles::kStockKeyUp)(player, key);
     return;
   }
@@ -153,7 +159,7 @@ extern "C" void MarblesKeyUp(void* player, int32_t key) {
 }
 
 extern "C" void MarblesTick(void* player, int32_t t) {
-  if (!marbles_on) {
+  if (!Active()) {
     reinterpret_cast<TickFn>(op1marbles::kStockTick)(player, t);
     return;
   }
@@ -162,7 +168,7 @@ extern "C" void MarblesTick(void* player, int32_t t) {
 }
 
 extern "C" void MarblesUiFrame(void* player, int32_t ticks) {
-  if (!marbles_on) reinterpret_cast<TickFn>(op1marbles::kStockUiFrame)(player, ticks);
+  if (!Active()) reinterpret_cast<TickFn>(op1marbles::kStockUiFrame)(player, ticks);
 }
 
 extern "C" void MarblesAllNotesOff(void* player) {
@@ -184,7 +190,7 @@ extern "C" int32_t MarblesCtlShiftKeyDown(void* controller, int32_t key) {
 }
 
 extern "C" void MarblesCtlKnob(void* controller, int32_t k, int16_t* delta) {
-  if (!marbles_on) {
+  if (!Active()) {
     reinterpret_cast<CtlKnobFn>(op1marbles::kStockCtlKnob)(controller, k, delta);
     return;
   }
@@ -193,11 +199,14 @@ extern "C" void MarblesCtlKnob(void* controller, int32_t k, int16_t* delta) {
   Seq()->Knob(k & 3, k >= 4 ? raw >> kFineShift : raw);
 }
 
-// The screen: stock tombola, or Marbles' (marbles.svg, the user's Orbit
-// design, docs/marbles-screen-brief.md; mappings in its handover README,
-// kept as ports/marbles/op1/marbles-screen.md). Colours are read from the
-// file's example state (gen_marbles_svg.py checks it): gate1 lit, gate3
-// unlit, pageTind selected, pageXind not.
+// The screen: stock tombola, or Marbles' (marbles.svg, the user's "Dots"
+// design, docs/marbles-screen-brief.md v2; mappings in its handover README,
+// kept as ports/marbles/op1/marbles-screen.md): the last 16 clock steps as
+// marks in three lanes (raised by pitch), the deja vu loop brackets, the
+// legend (icons per page, level bars) and the chips. No driven element is
+// inside a moved group, so transforms are in screen coordinates. Colours
+// are read from the file's example state (gen_marbles_svg.py checks it):
+// loop_t bright, loop_x dim.
 namespace {
 
 typedef void* (*NodeFindFn)(void* document, const char* id, int32_t assert_missing);
@@ -214,14 +223,17 @@ const uint32_t kGetLineStyle = 0x01a3b854;    // (screen, id) -> RGBA bytes
 const uint32_t kGetFillStyle = 0x01a3b96c;
 const uint32_t kSetTransform = 0x019ead58;    // (node, const int32 m[9]), Q10
 
+// The Dots design's elements (ports/marbles/op1/marbles-screen.md).
 const char* const kNodeIds[] = {
-  "pageT", "pageX", "ind0", "ind1", "ind2", "ind3", "model_mk", "scale_mk" };
-enum { N_PAGE_T, N_PAGE_X, N_IND0, N_IND1, N_IND2, N_IND3, N_MODEL, N_SCALE, N_COUNT };
+  "loop_t", "loop_x", "bar0", "bar1", "bar2", "bar3", "chipT", "chipX", "chip_model", "chip_scale",
+  "leg0_t", "leg1_t", "leg2_t", "leg3_t", "leg0_x", "leg1_x", "leg2_x", "leg3_x" };
+enum {
+  N_LOOP_T, N_LOOP_X, N_BAR0, N_CHIP_T = N_BAR0 + 4, N_CHIP_X, N_CHIP_MODEL, N_CHIP_SCALE,
+  N_LEG_T, N_LEG_X = N_LEG_T + 4, N_COUNT = N_LEG_X + 4 };
 static_assert(sizeof(kNodeIds) / sizeof(kNodeIds[0]) == N_COUNT, "node ids");
-const char* const kGateIds[3] = { "gate1", "gate2", "gate3" };
-const char* const kDejaVuIds[3] = { "dv_off", "dv_on", "dv_locked" };   // DejaVuMode order
-const char* const kSourceIds[2] = { "src_scale", "src_keys" };          // PitchSource order
-const char* const kPageIds[2] = { "pageTind", "pageXind" };             // Page order
+const char* const kSourceIds[2] = { "src_scale", "src_keys" };   // PitchSource order
+const int32_t kLanes = 3;
+const int32_t kColumns = op1marbles::kHistory;
 
 struct Colour {
   uint8_t rgba[4];
@@ -232,12 +244,10 @@ void* marbles_document;
 void* shown_document;
 bool screen_ready;
 void* nodes[N_COUNT];
-uint8_t* gate_line[3];
-uint8_t* gate_fill[3];
-uint8_t* dv_line[3];
+void* marks[kLanes][kColumns];
+uint8_t* loop_line[2];
 uint8_t* source_line[2];
-uint8_t* page_line[2];
-Colour gate_line_on, gate_fill_on, gate_line_off, gate_fill_off, selected, dim;
+Colour bright, dim;
 
 void*& DocumentOf(void* screen) { return *reinterpret_cast<void**>(screen); }
 
@@ -274,8 +284,10 @@ void SetVisible(void* node, bool visible) {
       visible ? 1 : 0;
 }
 
-// The element's own transform (its wrapper group's stays): scale about the
-// local origin, then translate; Q10.
+// An element's transform: scale about the local origin, then translate;
+// Q10. The parser folds a group's transform into its children (the Orbit
+// indicators sat at the top-left on the device until their wrappers'
+// offsets were added here), so the caller passes the wrapper's offset too.
 void SetTransform(void* node, int32_t sx, int32_t sy, int32_t tx, int32_t ty) {
   const int32_t m[9] = { sx, 0, 0, 0, sy, 0, tx, ty, 0x400 };
   reinterpret_cast<SetTransformFn>(kSetTransform)(node, m);
@@ -292,41 +304,73 @@ void Write(uint8_t* style, const Colour& c) {
 void MarblesInit(void* self) {
   void* document = DocumentOf(self);
   // GetLineStyle asserts on a missing id: check them all first.
-  if (!AllPresent(document, kNodeIds, N_COUNT) || !AllPresent(document, kGateIds, 3) ||
-      !AllPresent(document, kDejaVuIds, 3) || !AllPresent(document, kSourceIds, 2) ||
-      !AllPresent(document, kPageIds, 2)) {
-    return;
+  if (!AllPresent(document, kNodeIds, N_COUNT) || !AllPresent(document, kSourceIds, 2)) return;
+  char id[5] = { 'h', '0', '0', 0, 0 };   // h<lane><col>, col 0..15
+  for (int32_t lane = 0; lane < kLanes; ++lane) {
+    for (int32_t c = 0; c < kColumns; ++c) {
+      id[1] = static_cast<char>('0' + lane);
+      if (c < 10) {
+        id[2] = static_cast<char>('0' + c);
+        id[3] = 0;
+      } else {
+        id[2] = '1';
+        id[3] = static_cast<char>('0' + c - 10);
+      }
+      marks[lane][c] = Find(document, id);
+      if (!marks[lane][c]) return;
+    }
   }
   for (int32_t i = 0; i < N_COUNT; ++i) nodes[i] = Find(document, kNodeIds[i]);
   StyleFn line = reinterpret_cast<StyleFn>(kGetLineStyle);
-  StyleFn fill = reinterpret_cast<StyleFn>(kGetFillStyle);
-  for (int32_t i = 0; i < 3; ++i) {
-    gate_line[i] = line(self, kGateIds[i]);
-    gate_fill[i] = fill(self, kGateIds[i]);
-    dv_line[i] = line(self, kDejaVuIds[i]);
-  }
-  for (int32_t i = 0; i < 2; ++i) {
-    source_line[i] = line(self, kSourceIds[i]);
-    page_line[i] = line(self, kPageIds[i]);
-  }
-  Read(&gate_line_on, gate_line[0]);
-  Read(&gate_fill_on, gate_fill[0]);
-  Read(&gate_line_off, gate_line[2]);
-  Read(&gate_fill_off, gate_fill[2]);
-  Read(&selected, page_line[0]);
-  Read(&dim, page_line[1]);
+  loop_line[0] = line(self, "loop_t");
+  loop_line[1] = line(self, "loop_x");
+  for (int32_t i = 0; i < 2; ++i) source_line[i] = line(self, kSourceIds[i]);
+  // The file's default state: loop_t bright (locked), loop_x dim (on).
+  Read(&bright, loop_line[0]);
+  Read(&dim, loop_line[1]);
   screen_ready = true;
 }
 
-// Q16 (0..65535) -> the README's u in Q16.
+// index / (steps - 1) in Q16.
 int32_t StepU(int32_t index, int32_t steps) { return index * 65535 / (steps - 1); }
+
+// Scale x by u (Q16) about the anchor x (Q10): matrix(s,0,0,1,a(1-s),0).
+void ScaleX(void* node, int32_t u_q16, int32_t anchor_q10) {
+  const int32_t s = u_q16 >> 6;   // Q10
+  SetTransform(node, s, 0x400, (anchor_q10 * (0x400 - s)) >> 10, 0);   // <= 2^28: 32 bits
+}
 
 void MarblesDraw(void* self, const MarblesSeq* m) {
   const op1marbles::Settings& s = m->settings();
   const bool page_t = s.page == op1marbles::PAGE_T;
-  SetVisible(nodes[N_PAGE_T], page_t);
-  SetVisible(nodes[N_PAGE_X], !page_t);
 
+  // History: show the marks of the steps that played, raised by their
+  // height (18 px of travel).
+  for (int32_t lane = 0; lane < kLanes; ++lane) {
+    const uint16_t gates = m->history_gates(lane);
+    for (int32_t c = 0; c < kColumns; ++c) {
+      const bool on = (gates >> c) & 1;
+      SetVisible(marks[lane][c], on);
+      if (on) SetTransform(marks[lane][c], 0x400, 0x400, 0, -(m->history_height(lane, c) * 18 * 1024 / 255));
+    }
+  }
+
+  // Loop brackets: the last `length` columns (anchor x = 239), hidden when
+  // off, dim when on, bright when locked.
+  const int32_t n = m->length_steps();
+  const int32_t modes[2] = { s.t_deja_vu, s.x_deja_vu };
+  for (int32_t i = 0; i < 2; ++i) {
+    void* bracket = nodes[N_LOOP_T + i];
+    SetVisible(bracket, modes[i] != op1marbles::DEJA_VU_OFF);
+    Write(loop_line[i], modes[i] == op1marbles::DEJA_VU_LOCKED ? bright : dim);
+    SetTransform(bracket, n * 64, 0x400, 239 * (0x400 - n * 64), 0);
+  }
+
+  // Legend: the page's icons and the four bars (anchors x0 + 14).
+  for (int32_t i = 0; i < 4; ++i) {
+    SetVisible(nodes[N_LEG_T + i], page_t);
+    SetVisible(nodes[N_LEG_X + i], !page_t);
+  }
   int32_t u[4];
   if (page_t) {
     int32_t k = 0;
@@ -339,33 +383,18 @@ void MarblesDraw(void* self, const MarblesSeq* m) {
     u[0] = s.spread;
     u[1] = s.x_bias;
     u[2] = s.steps;
-    u[3] = StepU(m->length_steps() - 1, op1marbles::kMaxLength);
+    u[3] = StepU(n - 1, op1marbles::kMaxLength);
   }
-  // ind0: scale 0.15 + 0.85 u; ind1: x (u - 0.5) x 100; ind2: y -u x 100;
-  // ind3: scale y max(u, 0.02). Q10 (1024 = 1.0 or 1 px).
-  const int32_t s0 = 154 + ((870 * u[0]) >> 16);
-  SetTransform(nodes[N_IND0], s0, s0, 0, 0);
-  SetTransform(nodes[N_IND1], 0x400, 0x400, ((u[1] - 32768) * 25) >> 4, 0);
-  SetTransform(nodes[N_IND2], 0x400, 0x400, 0, -((u[2] * 25) >> 4));
-  const int32_t sy = u[3] >> 6;
-  SetTransform(nodes[N_IND3], 0x400, sy < 20 ? 20 : sy, 0, 0);
+  static const int32_t kBarAnchor[4] = { 18944, 98816, 178688, 258560 };   // 18.5 .. 252.5 px, Q10
+  for (int32_t i = 0; i < 4; ++i) ScaleX(nodes[N_BAR0 + i], u[i], kBarAnchor[i]);
 
-  // model_mk: x + 17 per model; scale_mk: x + 20.4 per scale.
-  SetTransform(nodes[N_MODEL], 0x400, 0x400, s.t_model * 17 * 1024, 0);
-  SetTransform(nodes[N_SCALE], 0x400, 0x400, (s.scale * 20890), 0);   // 20.4 x 1024
+  // Chips: the model (page T) or scale (page X) marker; the pitch source.
+  SetVisible(nodes[N_CHIP_T], page_t);
+  SetVisible(nodes[N_CHIP_X], !page_t);
+  SetTransform(nodes[N_CHIP_MODEL], 0x400, 0x400, s.t_model * 6827, 0);   // 6.67 px, Q10
+  SetTransform(nodes[N_CHIP_SCALE], 0x400, 0x400, s.scale * 8192, 0);     // 8 px
+  for (int32_t i = 0; i < 2; ++i) Write(source_line[i], i == s.pitch_source ? bright : dim);
 
-  const uint8_t gates = m->gates();
-  for (int32_t i = 0; i < 3; ++i) {
-    const bool on = (gates >> i) & 1;
-    Write(gate_line[i], on ? gate_line_on : gate_line_off);
-    Write(gate_fill[i], on ? gate_fill_on : gate_fill_off);
-  }
-  const int32_t dv = page_t ? s.t_deja_vu : s.x_deja_vu;
-  for (int32_t i = 0; i < 3; ++i) Write(dv_line[i], i == dv ? selected : dim);
-  for (int32_t i = 0; i < 2; ++i) {
-    Write(source_line[i], i == s.pitch_source ? selected : dim);
-    Write(page_line[i], i == s.page ? selected : dim);
-  }
   reinterpret_cast<DrawFn>(kScreenDraw)(self);
 }
 
@@ -384,7 +413,7 @@ extern "C" void MarblesScreenInit(void* self) {
 }
 
 extern "C" void MarblesScreenUpdate(void* self, int32_t ticks) {
-  const bool marbles = marbles_on && screen_ready;
+  const bool marbles = Active() && screen_ready;
   void* document = marbles ? marbles_document : stock_document;
   if (document != shown_document) {
     DocumentOf(self) = document;
