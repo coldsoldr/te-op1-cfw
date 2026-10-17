@@ -24,13 +24,15 @@ class RecordBuffer {
  public:
   // tail: kCrossFadeSize + 1 words (upstream reads one past its 256-word
   // tail, with a zero gain).
-  void Init(int16_t* buffer, int32_t words, int16_t* tail) {
+  // clear_buffers: false when the memory is zero already.
+  void Init(int16_t* buffer, int32_t words, int16_t* tail, bool clear_buffers = true) {
     s16_ = buffer;
     size_ = words - kInterpolationTail;
     write_head_ = 0;
     crossfade_counter_ = 0;
-    for (int32_t i = 0; i < words; ++i) s16_[i] = 0;
     tail_ = tail;
+    if (!clear_buffers) return;
+    for (int32_t i = 0; i < words; ++i) s16_[i] = 0;
     for (int32_t i = 0; i <= kCrossFadeSize; ++i) tail_[i] = 0;
   }
 

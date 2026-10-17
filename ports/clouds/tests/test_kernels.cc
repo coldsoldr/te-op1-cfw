@@ -16,6 +16,7 @@
 #include "src/core/diffuser_fixed.h"
 #include "src/core/dsp_fixed.h"
 #include "src/core/grain_kernel.h"
+#include "src/core/halfband.h"
 #include "src/core/reverb_stereo.h"
 
 namespace {
@@ -255,6 +256,67 @@ void TestDiffuser(const char* name, bool mono) {
   failures += run_failures;
 }
 
+// The half-rate kernels (src/core/halfband.h): random runs with extreme
+// samples, n over the whole range, random fades.
+int16_t RandomSample() {
+  const uint32_t r = Next();
+  if ((r & 15) == 0) return (r & 16) ? 32767 : -32768;
+  return static_cast<int16_t>(r >> 16);
+}
+
+void TestHalfband() {
+  using namespace op1clouds;
+  static SoftLimitTable table;
+  InitSoftLimitTable(&table);
+  int run_failures = 0;
+  for (int32_t run = 0; run < 300; ++run) {
+    const int32_t kind = run % 3;
+    const int32_t n = kind == 2 ? Range(1, 64) : Range(1, 32);
+    int16_t x[18 + 64], c[128], a[128];
+    for (int32_t i = 0; i < 18 + 64; ++i) x[i] = RandomSample();
+    int16_t wet[64];
+    for (int32_t i = 0; i < 64; ++i) wet[i] = RandomSample();
+    const int32_t fade_out = Range(0, 32767);
+    const int32_t wet_gain = Range(0, 19661);
+    for (int32_t i = 0; i < 128; ++i) c[i] = a[i] = static_cast<int16_t>(i);
+    int32_t outputs;
+    if (kind == 0) {
+      HalfbandDecimateC(x, c, n);
+      outputs = n;
+    } else if (kind == 1) {
+      HalfbandInterpolateC(x, c, n);
+      outputs = 2 * n;
+    } else {
+      for (int32_t i = 0; i < n; ++i) c[i] = a[i] = x[i];
+      MixSoftLimitC(c, wet, n, fade_out, wet_gain, &table);
+      outputs = n;
+    }
+#ifdef __bfin__
+    if (kind == 0) {
+      HalfbandDecimateAsm(x, a, n);
+    } else if (kind == 1) {
+      HalfbandInterpolateAsm(x, a, n);
+    } else {
+      MixSoftLimitAsm(a, wet, n, fade_out | (wet_gain << 16), &table);
+    }
+    bool ok = true;
+    for (int32_t i = 0; i < 128 && ok; ++i) ok = c[i] == a[i];
+    if (!ok) {
+      if (run_failures < 5) {
+        printf("halfband kind %ld n %ld: MISMATCH\n", static_cast<long>(kind), static_cast<long>(n));
+        for (int32_t i = 0; i < outputs && i < 4; ++i) {
+          printf("  [%ld] c %d asm %d\n", static_cast<long>(i), c[i], a[i]);
+        }
+      }
+      ++run_failures;
+    }
+#endif
+    for (int32_t i = 0; i < outputs; ++i) Hash(static_cast<uint32_t>(c[i]));
+  }
+  printf("%-24s %s\n", "halfband + mix", run_failures ? "FAIL" : "ok");
+  failures += run_failures;
+}
+
 #ifndef __bfin__
 // The assembly isn't built on the host.
 void NoStereo(op1clouds::GrainKernel*, int32_t*, int32_t*, int32_t) { }
@@ -283,6 +345,7 @@ int main() {
   TestReverb("reverb mono", true);
   TestDiffuser("diffuser stereo", false);
   TestDiffuser("diffuser mono", true);
+  TestHalfband();
   printf("checksum %08lx\n", static_cast<unsigned long>(checksum));
   return failures ? 1 : 0;
 }

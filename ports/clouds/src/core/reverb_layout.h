@@ -34,6 +34,33 @@
 #define RV_SMEAR_WRITE 100
 #define RV_DEL2_OFFSET 4680
 #define RV_DEL2_DEPTH 100
+#elif OP1CLOUDS_SAMPLE_RATE == 22050
+#define RV_SIZE 16384
+#define RV_AP1 0
+#define RV_AP1_LEN 78
+#define RV_AP2 79
+#define RV_AP2_LEN 112
+#define RV_AP3 192
+#define RV_AP3_LEN 166
+#define RV_AP4 359
+#define RV_AP4_LEN 275
+#define RV_DAP1A 635
+#define RV_DAP1A_LEN 1139
+#define RV_DAP1B 1775
+#define RV_DAP1B_LEN 1404
+#define RV_DEL1 3180
+#define RV_DEL1_LEN 2350
+#define RV_DAP2A 5531
+#define RV_DAP2A_LEN 1318
+#define RV_DAP2B 6850
+#define RV_DAP2B_LEN 1146
+#define RV_DEL2 7997
+#define RV_DEL2_LEN 3295
+#define RV_SMEAR_OFFSET 7
+#define RV_SMEAR_DEPTH 41
+#define RV_SMEAR_WRITE 69
+#define RV_DEL2_OFFSET 3224   /* Scaled(4680) - 1: the tap must end inside del2 */
+#define RV_DEL2_DEPTH 69
 #else
 #define RV_SIZE 32768
 #define RV_AP1 0

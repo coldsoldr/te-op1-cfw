@@ -110,10 +110,10 @@ $(BUILD)/op1_fxprobe.elf: $(OP1_ENGINE_SRC) op1/fx_probe.cc $(OP1_HDR) op1/link.
 #   make op1-clouds   the engine plus Clouds on the phone effect
 #                     (../clouds/op1/clouds_fx.cc) -> build/op1_clouds.elf
 CLOUDS := ../clouds
-CLOUDS_SRC := $(CLOUDS)/op1/clouds_fx.cc $(CLOUDS)/src/core/clouds_core.cc               $(CLOUDS)/src/core/granular_player.cc $(CLOUDS)/src/core/reverb_stereo.cc               $(CLOUDS)/src/core/diffuser_fixed.cc $(CLOUDS)/src/core/clouds_tables.cc               $(CLOUDS)/src/core/grain_kernels_bfin.S $(CLOUDS)/src/core/reverb_stereo_bfin.S               $(CLOUDS)/src/core/diffuser_bfin.S
+CLOUDS_SRC := $(CLOUDS)/op1/clouds_fx.cc $(CLOUDS)/op1/clouds_screen.cc $(CLOUDS)/src/core/clouds_core.cc               $(CLOUDS)/src/core/granular_player.cc $(CLOUDS)/src/core/reverb_stereo.cc               $(CLOUDS)/src/core/diffuser_fixed.cc $(CLOUDS)/src/core/clouds_tables.cc $(CLOUDS)/src/core/halfband.cc               $(CLOUDS)/src/core/grain_kernels_bfin.S $(CLOUDS)/src/core/reverb_stereo_bfin.S               $(CLOUDS)/src/core/diffuser_bfin.S $(CLOUDS)/src/core/halfband_bfin.S
 CLOUDS_HDR := $(wildcard $(CLOUDS)/op1/*.h $(CLOUDS)/src/core/*.h)
 $(BUILD)/op1_clouds.elf: $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(OP1_HDR) $(CLOUDS_HDR) op1/link.ld $(PORT_HDR) | $(BUILD)
-	$(BFIN_CXX) $(OP1_CXXFLAGS) -I$(CLOUDS) -I.. -Wno-class-memaccess -DOP1_CLOUDS 	  $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
+	$(BFIN_CXX) $(OP1_CXXFLAGS) -I$(CLOUDS) -I.. -Wno-class-memaccess -DOP1_CLOUDS -DOP1CLOUDS_SAMPLE_RATE=22050 	  $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
 	$(BFIN_BIN)/bfin-elf-size -A $@
 
 op1-probe: $(BUILD)/op1_probe.elf

@@ -15,7 +15,7 @@ inline int32_t Q16ToQ31(int32_t x) {
 
 }  // namespace
 
-void CloudsCore::Init(int32_t num_channels) {
+void CloudsCore::Init(int32_t num_channels, bool clear_buffers) {
   num_channels_ = num_channels;
   mode_ = MODE_LOOPING_DELAY;
   previous_mode_ = -1;   // the first block adopts the mode (upstream: LAST)
@@ -23,6 +23,7 @@ void CloudsCore::Init(int32_t num_channels) {
   freeze_lp_ = 0;
   dry_wet_ = 0;
   fb_on_ = diffuser_on_ = reverb_on_ = false;
+  external_mix_ = false;
   for (int32_t c = 0; c < 2; ++c) {
     for (int32_t i = 0; i < kBlockSize; ++i) {
       in_[c][i] = out_[c][i] = fb_[c][i] = 0;
@@ -31,14 +32,14 @@ void CloudsCore::Init(int32_t num_channels) {
   ResetFilters();
   // Upstream's Prepare after a buffer reset.
   if (num_channels_ == 1) {
-    buffer_[0].Init(record_, kMonoRecordWords, tail_[0]);
+    buffer_[0].Init(record_, kMonoRecordWords, tail_[0], clear_buffers);
   } else {
-    buffer_[0].Init(record_, kStereoRecordWords, tail_[0]);
-    buffer_[1].Init(record_ + kStereoRecordWords, kStereoRecordWords, tail_[1]);
+    buffer_[0].Init(record_, kStereoRecordWords, tail_[0], clear_buffers);
+    buffer_[1].Init(record_ + kStereoRecordWords, kStereoRecordWords, tail_[1], clear_buffers);
   }
-  diffuser_.Init();
-  reverb_.Init();
-  pitch_shifter_.Init(pitch_shifter_buffer_);
+  diffuser_.Init(clear_buffers);
+  reverb_.Init(clear_buffers);
+  pitch_shifter_.Init(pitch_shifter_buffer_, clear_buffers);
   looper_.Init(num_channels_);
   // Upstream's grain count for 16-bit quality.
   granular_.Init(num_channels_, num_channels_ == 1 ? 40 : 32);
@@ -72,6 +73,7 @@ void CloudsCore::ProcessBlock(int16_t* l, int16_t* r) {
     for (int32_t i = 0; i < n; ++i) {
       l[i] = 0;
       if (r) r[i] = 0;
+      out_[0][i] = out_[1][i] = 0;
     }
     ResetFilters();
     pitch_shifter_.Clear();
@@ -217,6 +219,8 @@ void CloudsCore::ProcessBlock(int16_t* l, int16_t* r) {
       reverb_on_ = false;
     }
   }
+
+  if (external_mix_) return;
 
   // Dry/wet: upstream's equal-power crossfade, the wet side x 1.2, then
   // SoftConvert (soft limit of x / 2, to 16 bits).

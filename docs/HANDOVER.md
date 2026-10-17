@@ -4,7 +4,7 @@ Last updated 2026-10-16 (end of session). Read this first in a fresh session; it
 
 **Current project: Mutable Instruments Clouds as an OP-1 effect (§3).**
 - **Done:** the DSP port, verified against upstream; assembly kernels; a CPU governor. All are host- and simulator-tested.
-- **Integrated (2026-10-16, later session):** Rings + Clouds in one image (`make op1-clouds` in `ports/rings`), Clouds on phone in both positions, the click hooks on the synth and master FX pages. Package **`op1_246_rings_clouds1.op1` is built and verified, not yet flashed: Test 17** in `docs/device-tests.md`.
+- **Integrated (2026-10-16, later session):** Rings + Clouds in one image (`make op1-clouds` in `ports/rings`), Clouds on phone in both positions, the click hooks on the synth and master FX pages. Test 17 (clouds1 hung at boot: one-call buffer clear > 5 ms; clouds2 fixed it and works, but overloads next to Rings, drums followed the synth, master clicks dead). **2026-10-17: `op1_246_rings_clouds3.op1` built and verified, not yet flashed: Test 18** in `docs/device-tests.md` (core at 22.05 kHz between halfband filters, ~40% less CPU; drums via mode word `0xff801038`; master subscreen `0x1aad5f0`; drum click hooks; the weather screen).
 - **Next:** the user flashes and runs Test 17; then the screen (waits for `clouds.svg`), device CPU numbers, governor tuning (§3, "Next steps"). **All integration happens in this (the main) session.** Other agents only port modules (§5).
 - **On the device:** `op1_246_rings_fxprobe1.op1` (MULTI/Rings plus an FX probe on phone).
 - **Nothing from 2026-10-16 is committed** (§6).

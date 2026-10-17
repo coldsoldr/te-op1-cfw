@@ -44,8 +44,8 @@ class DiffuserFixed {
  public:
   static const int32_t kSize = DF_SIZE;
 
-  void Init();
-  void Clear();
+  void Init(bool clear_buffers = true);
+  void Clear(bool clear_buffer = true);
 
   // Q31.
   void set_amount(int32_t amount) { amount_ = amount; }

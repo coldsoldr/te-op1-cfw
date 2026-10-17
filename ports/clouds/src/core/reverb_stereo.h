@@ -58,8 +58,8 @@ class ReverbStereo {
  public:
   static const int32_t kSize = RV_SIZE;
 
-  void Init();
-  void Clear();
+  void Init(bool clear_buffers = true);
+  void Clear(bool clear_buffer = true);
 
   // Upstream's parameters, Q31 in [0, 1).
   void set_amount(int32_t amount) { amount_ = amount; }

@@ -10,6 +10,9 @@
 //   record buffers (same seconds), grain sizes, the pitch shifter's window,
 //   the diffuser's delays, the looper's delay smoothing and crossfade, the
 //   grain gain smoothing and the freeze/feedback smoothing.
+// OP1CLOUDS_SAMPLE_RATE = 22050 (the OP-1 image, op1/clouds_fx.cc): the
+// same scaling, for a core run at half the effect rate between a 2:1
+// decimator and interpolator (src/core/halfband.h), to halve its CPU.
 // Not scaled: the texture filters' cutoffs (normalised frequencies, so
 // their knob-to-Hz map moves up 5.5 semitones), per-block (32-sample)
 // smoothing of control values, and Rings' reverb, whose delay lengths are

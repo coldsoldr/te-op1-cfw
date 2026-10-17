@@ -38,7 +38,9 @@ class CloudsCore {
   static const int32_t kRecordPoolWords =
       kMonoRecordWords > 2 * kStereoRecordWords ? kMonoRecordWords : 2 * kStereoRecordWords;
 
-  void Init(int32_t num_channels);
+  // clear_buffers: false when the object's memory is zero already (the
+  // buffers are ~350 KB: op1/clouds_fx.cc zeroes them over several calls).
+  void Init(int32_t num_channels, bool clear_buffers = true);
 
   CloudsParams* mutable_parameters() { return &params_; }
   const CloudsParams& parameters() const { return params_; }
@@ -46,6 +48,12 @@ class CloudsCore {
   int32_t playback_mode() const { return mode_; }
   int32_t num_channels() const { return num_channels_; }
   GranularPlayer* granular() { return &granular_; }
+  // External mix: the dry/wet stage is skipped, the input is left as it
+  // is and wet(channel) holds the block's wet signal (Q27, before
+  // upstream's x 1.2 and soft limit). op1/clouds_fx.cc mixes it at the
+  // OP-1's rate.
+  void set_external_mix(bool external) { external_mix_ = external; }
+  const int32_t* wet(int32_t channel) const { return out_[channel]; }
 
   // size: a multiple of kBlockSize.
   void ProcessStereo(int16_t* l, int16_t* r, int32_t size);
@@ -66,6 +74,7 @@ class CloudsCore {
   bool fb_on_;
   bool diffuser_on_;
   bool reverb_on_;
+  bool external_mix_;
 
   int32_t in_[2][kBlockSize];
   int32_t out_[2][kBlockSize];

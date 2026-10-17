@@ -56,6 +56,9 @@ const uint32_t kSetKnobs = 0x01a00d14;        // Patch::SetKnobs(patch, knobs)
 const uint32_t kStockMasterKeyDown = 0x019db7c4;
 const uint32_t kStockMasterShiftKeyDown = 0x019d987e;
 const uint32_t kStockMasterKeyUp = 0x019db708;
+const uint32_t kStockDrumKeyDown = 0x01978008;
+const uint32_t kStockDrumShiftKeyDown = 0x019777dc;
+const uint32_t kStockDrumKeyUp = 0x019773e4;
 #endif
 
 typedef int32_t (*KeyFn)(void* controller, int32_t key);
@@ -177,5 +180,30 @@ extern "C" int32_t CloudsMasterKeyUp(void* controller, int32_t key) {
   const int32_t code = key & 0xff;
   if (code >= kClickBlue && code <= kClickOrange && op1fx::MasterFxPageIsPhone()) return 1;
   return reinterpret_cast<KeyFn>(kStockMasterKeyUp)(controller, key);
+}
+
+// The drum FX page, likewise (drum controller vtable 0x190fa64).
+extern "C" int32_t CloudsDrumKeyDown(void* controller, int32_t key) {
+  const int32_t code = key & 0xff;
+  if (code >= kClickBlue && code <= kClickOrange &&
+      op1fx::DrumFxClick(static_cast<op1fx::Click>(code - kClickBlue), 1)) {
+    return 1;
+  }
+  return reinterpret_cast<KeyFn>(kStockDrumKeyDown)(controller, key);
+}
+
+extern "C" int32_t CloudsDrumShiftKeyDown(void* controller, int32_t key) {
+  const int32_t code = key & 0xff;
+  if (code >= kClickBlue && code <= kClickOrange &&
+      op1fx::DrumFxClick(static_cast<op1fx::Click>(code - kClickBlue), -1)) {
+    return 1;
+  }
+  return reinterpret_cast<KeyFn>(kStockDrumShiftKeyDown)(controller, key);
+}
+
+extern "C" int32_t CloudsDrumKeyUp(void* controller, int32_t key) {
+  const int32_t code = key & 0xff;
+  if (code >= kClickBlue && code <= kClickOrange && op1fx::DrumFxPageIsPhone()) return 1;
+  return reinterpret_cast<KeyFn>(kStockDrumKeyUp)(controller, key);
 }
 #endif

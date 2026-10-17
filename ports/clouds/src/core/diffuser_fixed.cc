@@ -73,18 +73,20 @@ void DiffuserRunC(const DiffuserKernel* k, int32_t* l, int32_t* r, int16_t* p, i
   }
 }
 
-void DiffuserFixed::Init() {
+void DiffuserFixed::Init(bool clear_buffers) {
   amount_ = 0;
 #if defined(__bfin__) && !defined(OP1CLOUDS_NO_ASM)
   use_asm_ = true;
 #else
   use_asm_ = false;
 #endif
-  Clear();
+  Clear(clear_buffers);
 }
 
-void DiffuserFixed::Clear() {
-  for (int32_t i = 0; i < DF_BUFFER_WORDS; ++i) buffer_[i] = 0;
+void DiffuserFixed::Clear(bool clear_buffer) {
+  if (clear_buffer) {
+    for (int32_t i = 0; i < DF_BUFFER_WORDS; ++i) buffer_[i] = 0;
+  }
   write_ptr_ = kSize;
 }
 

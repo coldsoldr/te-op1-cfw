@@ -27,16 +27,18 @@ class PitchShifterFixed {
   static const int32_t kRightBase = kLineLength + 1;
   static_assert(kRightBase + kLineLength <= kSize, "pitch shifter memory full");
 
-  void Init(int16_t* buffer) {
+  void Init(int16_t* buffer, bool clear_buffers = true) {
     buffer_ = buffer;
-    Clear();
+    Clear(clear_buffers);
     phase_ = 0;
     size_ = kPitchShifterMaxSize << 16;
     increment_ = 0;
   }
 
-  void Clear() {
-    for (int32_t i = 0; i < kSize; ++i) buffer_[i] = 0;
+  void Clear(bool clear_buffer = true) {
+    if (clear_buffer) {
+      for (int32_t i = 0; i < kSize; ++i) buffer_[i] = 0;
+    }
     write_ptr_ = 0;
   }
 

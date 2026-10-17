@@ -24,6 +24,24 @@
 #define DF_R3_LEN 245
 #define DF_R4 1627
 #define DF_R4_LEN 405
+#elif OP1CLOUDS_SAMPLE_RATE == 22050
+#define DF_SIZE 2048
+#define DF_L1 0
+#define DF_L1_LEN 87
+#define DF_L2 88
+#define DF_L2_LEN 124
+#define DF_L3 213
+#define DF_L3_LEN 185
+#define DF_L4 399
+#define DF_L4_LEN 306
+#define DF_R1 706
+#define DF_R1_LEN 104
+#define DF_R2 811
+#define DF_R2_LEN 141
+#define DF_R3 953
+#define DF_R3_LEN 169
+#define DF_R4 1123
+#define DF_R4_LEN 279
 #else
 #define DF_SIZE 4096
 #define DF_L1 0

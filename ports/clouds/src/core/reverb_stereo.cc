@@ -21,7 +21,8 @@ static_assert(RV_AP2 == RV_AP1 + RV_AP1_LEN + 1 && RV_AP3 == RV_AP2 + RV_AP2_LEN
               RV_DEL2 == RV_DAP2B + RV_DAP2B_LEN + 1, "reverb bases");
 static_assert(RV_MAX_REACH <= RV_SIZE, "reverb memory full");
 static_assert(RV_SMEAR_OFFSET == Scaled(10) && RV_SMEAR_DEPTH == Scaled(60) &&
-              RV_SMEAR_WRITE == Scaled(100) && RV_DEL2_OFFSET == Scaled(4680) &&
+              RV_SMEAR_WRITE == Scaled(100) &&
+              RV_DEL2_OFFSET == Scaled(4680) - (OP1CLOUDS_SAMPLE_RATE == 22050 ? 1 : 0) &&
               RV_DEL2_DEPTH == Scaled(100), "reverb taps");
 static_assert(RV_SMEAR_OFFSET + RV_SMEAR_DEPTH + 1 < RV_AP1_LEN && RV_SMEAR_WRITE < RV_AP1_LEN, "ap1 smear");
 static_assert(RV_DEL2_OFFSET + RV_DEL2_DEPTH + 1 < RV_DEL2_LEN, "del2 tap");
@@ -137,7 +138,7 @@ void ReverbRunC(ReverbKernel* k, int32_t* l, int32_t* r, int16_t* p, int32_t n,
   k->lp = (lp_1 & 0xffff) | (lp_2 << 16);
 }
 
-void ReverbStereo::Init() {
+void ReverbStereo::Init(bool clear_buffers) {
   amount_ = 0;
   input_gain_ = Q(0.2, 31);
   time_ = Q(0.5, 31);
@@ -148,11 +149,13 @@ void ReverbStereo::Init() {
 #else
   use_asm_ = false;
 #endif
-  Clear();
+  Clear(clear_buffers);
 }
 
-void ReverbStereo::Clear() {
-  for (int32_t i = 0; i < RV_BUFFER_WORDS; ++i) buffer_[i] = 0;
+void ReverbStereo::Clear(bool clear_buffer) {
+  if (clear_buffer) {
+    for (int32_t i = 0; i < RV_BUFFER_WORDS; ++i) buffer_[i] = 0;
+  }
   lp_state_ = 0;
   write_ptr_ = kSize;
   // Upstream's oscillators start at their peak (value() = 1 before the

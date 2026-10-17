@@ -35,8 +35,9 @@ COPY_SRC   := src/dsp/granular_processor.cc src/dsp/correlator.cc src/dsp/mu_law
               src/dsp/pvoc/frame_transformation.cc src/dsp/pvoc/phase_vocoder.cc \
               src/dsp/pvoc/stft.cc src/resources.cc $(STMLIB_SRC)
 CORE_SRC   := src/core/clouds_core.cc src/core/granular_player.cc src/core/reverb_stereo.cc src/core/diffuser_fixed.cc \
-              src/core/clouds_tables.cc $(RINGS)/src/fixed_tables.cc
-CORE_ASM   := src/core/grain_kernels_bfin.S src/core/reverb_stereo_bfin.S src/core/diffuser_bfin.S
+              src/core/clouds_tables.cc src/core/halfband.cc $(RINGS)/src/fixed_tables.cc
+CORE_ASM   := src/core/grain_kernels_bfin.S src/core/reverb_stereo_bfin.S src/core/diffuser_bfin.S \
+              src/core/halfband_bfin.S
 CORE_HDR   := $(wildcard src/core/*.h) $(RINGS)/src/fixed.h $(RINGS)/src/ffloat.h
 HARNESS    := harness/render.cc $(wildcard harness/*.h)
 
@@ -56,6 +57,8 @@ SIM_CXXFLAGS  := -O2 -std=c++17 -mcpu=bf524 -msim -fno-exceptions -fno-rtti -DOP
 # profile scales the time constants to 44.1 kHz (src/core/config.h).
 RATE32 := -DOP1CLOUDS_SAMPLE_RATE=32000 -DOP1RINGS_SAMPLE_RATE=32000
 RATE44 := -DOP1CLOUDS_SAMPLE_RATE=44100 -DOP1RINGS_SAMPLE_RATE=44100
+# The OP-1 image's core rate (op1/clouds_fx.cc: half the effect rate).
+RATE22 := -DOP1CLOUDS_SAMPLE_RATE=22050 -DOP1RINGS_SAMPLE_RATE=44100
 
 .PHONY: all ref copy copy-check copyd port port44 compare spec test test-governor profile bench bench-ref sim-fx clean
 
@@ -138,7 +141,7 @@ bench-ref: $(BUILD)/bench_ref.elf
 
 #   make test         kernel and ring-buffer checks: host build, Blackfin
 #                     build (assembly), and the checksums compared
-TEST_SRC := tests/test_kernels.cc src/core/reverb_stereo.cc src/core/diffuser_fixed.cc src/core/clouds_tables.cc $(RINGS)/src/fixed_tables.cc
+TEST_SRC := tests/test_kernels.cc src/core/reverb_stereo.cc src/core/diffuser_fixed.cc src/core/clouds_tables.cc src/core/halfband.cc $(RINGS)/src/fixed_tables.cc
 $(BUILD)/test_kernels.elf: $(TEST_SRC) $(CORE_ASM) $(CORE_HDR) | $(BUILD)
 	$(BFIN_CXX) $(SIM_CXXFLAGS) $(RATE44) $(TEST_SRC) $(CORE_ASM) -o $@
 
@@ -170,7 +173,7 @@ profile: $(BUILD)/profile_core.elf
 #                     simulator, at the OP-1's call rate (64 samples, 44.1 kHz)
 SIM_FX_SRC := tests/sim_fx.cc op1/clouds_fx.cc $(CORE_SRC) $(CORE_ASM)
 $(BUILD)/sim_fx.elf: $(SIM_FX_SRC) $(CORE_HDR) $(wildcard op1/*.h) | $(BUILD)
-	$(BFIN_CXX) $(SIM_CXXFLAGS) $(RATE44) $(SIM_FX_SRC) -o $@
+	$(BFIN_CXX) $(SIM_CXXFLAGS) $(RATE22) $(SIM_FX_SRC) -o $@
 
 sim-fx: $(BUILD)/sim_fx.elf
 	$(BFIN_RUN) $<

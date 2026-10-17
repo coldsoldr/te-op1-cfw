@@ -21,6 +21,12 @@ const uint32_t kPhoneMonoProcessSlot = 0x01911308;
 const uint32_t kPhoneStereoProcessSlot = 0x01911328;
 const int32_t kFxBlockSize = 64;
 
+// The phone effect's screen (PhoneScreen vtable: Update +0x1c, Init +0x24).
+const uint32_t kStockPhoneScreenUpdate = 0x01a1cfac;
+const uint32_t kStockPhoneScreenInit = 0x01a1c65c;
+const uint32_t kPhoneScreenUpdateSlot = 0x01911350;
+const uint32_t kPhoneScreenInitSlot = 0x01911358;
+
 // Cycles of the work the image measures (the synth engines' render and
 // note-on, every Clouds instance), a running total: the governor of each
 // instance reads what the others took since its previous call.
@@ -38,14 +44,37 @@ bool SynthFxPageIsPhone();
 // while the slot's effect is Clouds.
 bool SynthFxClick(Click click, int32_t direction);
 
+// The same on the drum FX page (drum controller page 2) while the edited
+// drum kit's effect is phone.
+bool DrumFxPageIsPhone();
+bool DrumFxClick(Click click, int32_t direction);
+
 // The same on the master FX page (MasterController subscreen 2) while the
 // master effect is phone.
 bool MasterFxPageIsPhone();
 bool MasterFxClick(Click click, int32_t direction);
 
+// The Clouds state of an FX position, for the screen (op1/clouds_screen.cc).
+struct ScreenInfo {
+  int32_t page;           // 0 or 1
+  int32_t mode;           // MODE_GRANULAR .. MODE_SPECTRAL (the SVG's mode index)
+  bool freeze;
+  int32_t values[8];      // 0..32767: position, size, pitch (16384 = centre),
+                          // density, texture, dry/wet, feedback, reverb
+  int32_t pitch_q16;      // semitones
+  int32_t load_percent;   // Clouds' share of the call period, smoothed
+};
+
+// Position as the phone screen has it (0 synth, 1 drum, 3 master) and the
+// slot or kit; false if that position plays phone (or isn't known).
+bool GetScreenInfo(int32_t position, int32_t index, ScreenInfo* info);
+
 }  // namespace op1fx
 
 extern "C" void CloudsFxMono(void* self, int16_t* buf, const int16_t* params);
 extern "C" void CloudsFxStereo(void* self, int16_t* l, int16_t* r, const int16_t* params);
+// The phone screen's Init and Update (op1/clouds_screen.cc).
+extern "C" void CloudsScreenInit(void* self);
+extern "C" void CloudsScreenUpdate(void* self, int32_t ticks);
 
 #endif  // OP1CLOUDS_OP1_CLOUDS_FX_H_

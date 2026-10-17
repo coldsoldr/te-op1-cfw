@@ -13,8 +13,8 @@ namespace op1 {
 #if defined(OP1_FX_PROBE)
 const uint32_t kNumPatches = 9;   // + the phone effect's process (op1/fx_probe.cc)
 #elif defined(OP1_CLOUDS)
-const uint32_t kNumPatches = 12;  // + the phone effect's process (Clouds, ../clouds/op1/clouds_fx.cc)
-                                  //   and the master page's key handlers
+const uint32_t kNumPatches = 17;  // + the phone effect's process and screen (Clouds,
+                                  //   ../clouds/op1/) and the master and drum pages' key handlers
 #else
 const uint32_t kNumPatches = 7;
 #endif

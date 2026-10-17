@@ -723,7 +723,9 @@ If no beeps come after turning blue: no window had completed yet (wait 2 s and t
 
 **What the numbers decide:** the CPU budget for Clouds next to Rings (grain counts, quality, internal rate); whether Clouds must handle being called while switched off; 64 samples at 44.1 kHz for both positions; the left/right order.
 
-## Test 17: Clouds on phone (`op1_246_rings_clouds1.op1`)
+## Test 17: Clouds on phone (`op1_246_rings_clouds2.op1`)
+
+**clouds1 (2026-10-17): hung at boot** (TE logo and version, then nothing; recovered with multi4). Likely cause: a restart cleared the whole ~360 KB CloudsCore in one call. In SDRAM that probably takes longer than the 5 ms gap check, so every call restarted again and the audio thread starved the app. A drum call on phone also stopped the synth's Clouds, so phone on both synth and drums restarted it every block. **clouds2** zeroes the core 8 KB per call (~45 calls of dry pass-through, ~2.2k simulated cycles each), then initialises it without clearing again; drum calls no longer touch the synth instance.
 
 **Not flashed yet.** The first Clouds build: multi4 (MULTI engine: phase or Rings) plus **Clouds in place of the phone effect**, as the synth effect (mono) and the master effect (stereo). Only looping delay and granular are implemented. The screen is still phone's stock screen (the Clouds screen waits for `clouds.svg`). Code: `ports/clouds/op1/clouds_fx.cc`, `clouds_settings.h`; hooks in `ports/rings/op1/{patches,input,engine}.cc` under `-DOP1_CLOUDS` (`make op1-clouds`).
 
@@ -735,7 +737,7 @@ If no beeps come after turning blue: no window had completed yet (wait 2 s and t
   - **white click:** page 1 ↔ page 2. The encoders jump to the other page's values.
 - **Page 1:** blue = position, green = size, white = pitch (centre = none, ±2 octaves), orange = density (granular: centre = no grains, left = regular, right = random grains; looping delay: diffusion).
 - **Page 2:** blue = texture, green = dry/wet (50% by default), white = feedback, orange = reverb.
-- Stereo spread is fixed at 50%. Clouds restarts (buffer cleared) when the effect is switched on, swapped from phone, or the synth slot changes. The restarting call takes ~20% of an audio period in the simulator, so one click at that moment is possible next to heavy Rings.
+- Stereo spread is fixed at 50%. Clouds restarts (buffer cleared) when the effect is switched on, swapped from phone, or the synth slot changes: ~65 ms of dry sound while it clears 8 KB per call.
 - **The grain count is governed:** when CPU runs short, granular plays fewer grains instead of crackling. Looping delay has a fixed cost (~31 MHz simulated stereo, maybe ~50 on the device).
 
 **Checks (off the device):**
@@ -743,7 +745,7 @@ If no beeps come after turning blue: no window had completed yet (wait 2 s and t
   - Master looping delay ~31 MHz;
   - granular ~31 MHz (~7 grains), dense ~55 MHz;
   - synth looping delay ~20 MHz, granular ~29 MHz;
-  - restart ~115k cycles.
+  - restart steps ~2.2k cycles each (8 KB of the core zeroed per call).
 - `make op1-engine` still builds multi4 byte-identical.
 - **Package:** against multi4 only `OP1_vdk.ldr` changes. Against stock: `OP1_vdk.ldr` and `content/op1_factory.db` change, `content/display/rings.svg` is added, `te-boot.ldr` is absent.
 - **LDR byte-diff against stock:** only the FIRST header, the 12 vtable/patch words, the type-list immediates and the appended blocks differ; the stock tail is intact. The 5 new words were each checked against their stock value: phone mono/stereo process `0x01a1bb74`/`0x01a1c25c`, MasterController key down/shift key down/key up `0x019db7c4`/`0x019d987e`/`0x019db708`.
@@ -766,3 +768,41 @@ If no beeps come after turning blue: no window had completed yet (wait 2 s and t
 9. Anything else you notice (clicks when switching, stuck sound, the screen), in numbered points as usual.
 
 **If something is wrong:** a hang or a stuck loud tone means power off. Recovery as always: hold COM at power-on and flash `op1_246_rings_multi4.op1`.
+
+**Results, clouds2 (2026-10-17):**
+1. It boots. Clouds works on the synth effect (mono) and the master effect (stereo). The synth slot settings survive a power cycle.
+2. With Rings, Clouds glitches badly (overload); with the sampler it's great. Clouds on synth + Clouds on master crackles; Rings with no FX + Clouds on the master glitches.
+3. The drum effect follows the synth slot's Clouds/phone setting (the drum's call was taken for the synth's).
+4. Page and engine clicks work on the synth FX page, not on the master or drum FX pages.
+
+## Test 18: Clouds at half rate, drums, master clicks, screen (`op1_246_rings_clouds3.op1`)
+
+**Not flashed yet.** clouds2 plus:
+- **Half the CPU:** the core runs at 22.05 kHz between a 2:1 halfband decimator and interpolator; the dry signal and the mix stay at 44.1 kHz (`src/core/halfband.*`, assembly kernels bit-exact with C). Simulator: master looping delay 18.7 MHz (was 30.7), granular 18.8 (31), dense 31 (55); synth 11.8 / 16.5 (19.8 / 29.3). The wet signal's band now ends at ~10 kHz; delays, grains and reverb keep their durations.
+- **Drums:** the live instrument comes from the firmware's mode word `[0xff801038]` (0 synth, 1 drum): the drum kit's own values (`0xff8015c4 + kit × 16`) and engine bit, saved with its Patch (`0x1ddd9a8 + kit × 0x38`). Clicks on the drum FX page: drum controller vtable `0x190fa64` words `0x190fa78/80/88`.
+- **Master clicks:** the FX page test now reads MasterController's subscreen at `0x1aad5f0` (clouds2 read `0x1aad5d8`, a history index).
+- **Screen:** the weather design (`ports/clouds/op1/clouds.svg`, built by `ports/clouds/op1/gen_clouds_svg.py`: arcs to Béziers, metadata stripped) in place of phone's screen while the shown position plays Clouds (PhoneScreen Init/Update words `0x1911358/0x1911350`). The CPU row shows Clouds' own share of the audio period (one segment per ~17%).
+
+**Checks (off the device):** `make sim-fx` and `make test` (kernels: Blackfin = host) pass; the 32 kHz comparison is unchanged; every patch target checked against `bfin-elf-nm` (17 patches, each stock value checked by `inject_app.py`); `verify_bootloader.py` passes; against clouds2 only `OP1_vdk.ldr` changes and `content/display/clouds.svg` is added.
+
+**Procedure:**
+1. **Screen:** put phone on a synth's effect, open its FX page. The cloud screen should show. Turn each encoder (cloud moves, resizes, rises/sinks, rain changes); white click: page 2 (wind, puddle, rainbow, thunder arcs); blue click: the mode box moves (granular ↔ looping delay); green: frozen face and snowflake. Orange: phone's stock screen comes back.
+2. **Drums:** put phone on the drum kit's effect. With the synth slot on phone (stock) and the drums on Clouds, and the other way round: does each keep its own setting? Do the drum FX page clicks work and survive a power cycle?
+3. **Master:** clicks on the master FX page (mode, page, freeze, orange swap). Does the master keep them across a power cycle?
+4. **CPU:** the cases that glitched in clouds2: Rings (say model 6, polyphony 4) + Clouds on the master; Clouds on synth + master with the sampler. Note what the CPU row shows and whether it glitches; try looping delay and granular.
+5. **Sound:** anything odd from the half rate (dull or gritty wet sound, aliasing on high notes)?
+6. Anything else, in numbered points.
+
+**If something is wrong:** power off; recovery: hold COM at power-on and flash `op1_246_rings_multi4.op1`.
+
+**Results, clouds3 (2026-10-17):** sounds great; Rings + Clouds on synth and master together still strains the CPU (accepted for now). Clouds was ~6 dB quieter than the dry signal, even fully dry (recordings in `incoming/`, both normalised on export, so only the noise floor shows it).
+
+## Test 19: unity gain, "multi" in the FX list (`op1_246_rings_clouds4.op1`)
+
+**Not flashed yet.** clouds3 plus:
+- **Level:** upstream's output stage soft-limits half the mix (`SoftConvert`: `SoftLimit(x * 0.5)`; the module's hardware makes up the 6 dB), and the port copied it. The OP-1 mix now uses 2 × SoftLimit(x / 2), clipped at full scale: unity for normal levels (−0.16 dB at half scale, −0.5 dB at 0.9 of full scale).
+- **Name:** the FX browser shows phone as "multi" (the type-list query also maps `'phone'`; only `fx_types` has that row). Presets still store `phone`.
+
+**Procedure:** a note with the effect off, then Clouds fully dry: the same level? Then the effect list: "multi" where phone was, and choosing it still gives Clouds/phone.
+
+**Results, clouds4 (2026-10-17):** the level with Clouds on now matches; "multi" shows in the FX list. **clouds4 is the current device firmware.**

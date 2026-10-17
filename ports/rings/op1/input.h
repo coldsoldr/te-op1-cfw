@@ -15,6 +15,10 @@ extern "C" int32_t RingsKeyUp(void* controller, int32_t key);
 extern "C" int32_t CloudsMasterKeyDown(void* controller, int32_t key);
 extern "C" int32_t CloudsMasterShiftKeyDown(void* controller, int32_t key);
 extern "C" int32_t CloudsMasterKeyUp(void* controller, int32_t key);
+// The drum controller's (Clouds on the drum FX page).
+extern "C" int32_t CloudsDrumKeyDown(void* controller, int32_t key);
+extern "C" int32_t CloudsDrumShiftKeyDown(void* controller, int32_t key);
+extern "C" int32_t CloudsDrumKeyUp(void* controller, int32_t key);
 #endif
 
 #endif  // OP1RINGS_OP1_INPUT_H_
