@@ -90,7 +90,7 @@ OP1_ENGINE_SRC := op1/engine.cc op1/screen.cc op1/input.cc op1/patches.cc op1/su
                   src/mode_bank_bfin.S src/string_kernel_bfin.S src/limiter_bfin.S src/reverb_bfin.S
 OP1_HDR := $(wildcard op1/*.h)
 
-.PHONY: op1-probe op1-engine sim-engine sim-engine-fm host-probe step-params test-fm test-screen test-alloc \
+.PHONY: op1-probe op1-engine op1-fxprobe op1-clouds sim-engine sim-engine-fm host-probe step-params test-fm test-screen test-alloc \
         test-string sim-model bench-string test-reverb test-reverb-bus bench-mode-bank
 
 $(BUILD)/op1_probe.elf: op1/probe.cc op1/support.cc op1/op1.h op1/link.ld | $(BUILD)
@@ -101,8 +101,25 @@ $(BUILD)/op1_engine.elf: $(OP1_ENGINE_SRC) $(OP1_HDR) op1/link.ld $(PORT_HDR) | 
 	$(BFIN_CXX) $(OP1_CXXFLAGS) $(OP1_ENGINE_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
 	$(BFIN_BIN)/bfin-elf-size -A $@
 
+#   make op1-fxprobe  the engine plus the FX probe (op1/fx_probe.cc) on the
+#                     phone effect -> build/op1_fxprobe.elf
+$(BUILD)/op1_fxprobe.elf: $(OP1_ENGINE_SRC) op1/fx_probe.cc $(OP1_HDR) op1/link.ld $(PORT_HDR) | $(BUILD)
+	$(BFIN_CXX) $(OP1_CXXFLAGS) -DOP1_FX_PROBE $(OP1_ENGINE_SRC) op1/fx_probe.cc $(OP1_LDFLAGS) -o $@ -lgcc
+	$(BFIN_BIN)/bfin-elf-size -A $@
+
+#   make op1-clouds   the engine plus Clouds on the phone effect
+#                     (../clouds/op1/clouds_fx.cc) -> build/op1_clouds.elf
+CLOUDS := ../clouds
+CLOUDS_SRC := $(CLOUDS)/op1/clouds_fx.cc $(CLOUDS)/src/core/clouds_core.cc               $(CLOUDS)/src/core/granular_player.cc $(CLOUDS)/src/core/reverb_stereo.cc               $(CLOUDS)/src/core/diffuser_fixed.cc $(CLOUDS)/src/core/clouds_tables.cc               $(CLOUDS)/src/core/grain_kernels_bfin.S $(CLOUDS)/src/core/reverb_stereo_bfin.S               $(CLOUDS)/src/core/diffuser_bfin.S
+CLOUDS_HDR := $(wildcard $(CLOUDS)/op1/*.h $(CLOUDS)/src/core/*.h)
+$(BUILD)/op1_clouds.elf: $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(OP1_HDR) $(CLOUDS_HDR) op1/link.ld $(PORT_HDR) | $(BUILD)
+	$(BFIN_CXX) $(OP1_CXXFLAGS) -I$(CLOUDS) -I.. -Wno-class-memaccess -DOP1_CLOUDS 	  $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
+	$(BFIN_BIN)/bfin-elf-size -A $@
+
 op1-probe: $(BUILD)/op1_probe.elf
 op1-engine: $(BUILD)/op1_engine.elf
+op1-fxprobe: $(BUILD)/op1_fxprobe.elf
+op1-clouds: $(BUILD)/op1_clouds.elf
 
 # Checks of the images' code off the device:
 #   make sim-engine   the engine's entry points in bfin-elf-run: CPU cost, and
@@ -250,6 +267,16 @@ test-reverb-bus: $(BUILD)/test_reverb_bus
 HOST_PROBE_ARGS ?= 400 40 1 0
 host-probe: $(BUILD)/host_probe
 	$(BUILD)/host_probe $(BUILD)/host_probe.wav $(HOST_PROBE_ARGS)
+
+#   make host-fx-probe  the FX probe against a simulated OP-1
+#                       -> build/host_fx_probe.wav (decode_probe_beeps.py)
+#   args: CLOCK_MHZ FREE_PERCENT PHONE_CYCLES VOICES STEREO
+HOST_FX_PROBE_ARGS ?= 400 50 20000 6 1
+$(BUILD)/host_fx_probe: tests/host_fx_probe.cc op1/fx_probe.cc $(OP1_HDR) | $(BUILD)
+	$(HOST_CXX) -O2 -std=c++17 -DOP1_HOST_SIM -DOP1_SIM -I. $(WARN) tests/host_fx_probe.cc op1/fx_probe.cc -o $@
+
+host-fx-probe: $(BUILD)/host_fx_probe
+	$(BUILD)/host_fx_probe $(BUILD)/host_fx_probe.wav $(HOST_FX_PROBE_ARGS)
 
 clean:
 	rm -rf $(BUILD) $(OUT)

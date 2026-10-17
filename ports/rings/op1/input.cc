@@ -14,11 +14,21 @@
 // in the same thread. Our clicks are consumed (return 1: no global
 // handler); every other key, page and engine goes to the stock handler
 // (stock phase ignores encoder clicks).
+//
+// In the Clouds image (-DOP1_CLOUDS) the same handlers take the clicks on
+// the synth FX page of a slot whose effect is phone: orange swaps Clouds
+// and phone, and while Clouds plays blue = next mode, green = freeze,
+// white = page (../clouds/op1/clouds_fx.cc, op1fx::SynthFxClick); and the
+// master controller's handlers (vtable 0x1910aac, same offsets) take them
+// on the master FX page when the master effect is phone.
 
 #include "op1/input.h"
 
 #include <cstdint>
 
+#ifdef OP1_CLOUDS
+#include "op1/clouds_fx.h"
+#endif
 #include "op1/cpu_meter.h"
 #include "op1/op1.h"
 #include "op1/settings.h"
@@ -42,6 +52,11 @@ const int32_t kPhaseType = 7;
 const uint32_t kPatches = 0x01ddd7e8;         // Patch objects, one per slot
 const uint32_t kPatchSize = 0x38;
 const uint32_t kSetKnobs = 0x01a00d14;        // Patch::SetKnobs(patch, knobs)
+#ifdef OP1_CLOUDS
+const uint32_t kStockMasterKeyDown = 0x019db7c4;
+const uint32_t kStockMasterShiftKeyDown = 0x019d987e;
+const uint32_t kStockMasterKeyUp = 0x019db708;
+#endif
 
 typedef int32_t (*KeyFn)(void* controller, int32_t key);
 typedef void (*SetKnobsFn)(void* patch, const int16_t* knobs);
@@ -90,6 +105,16 @@ void Step(int32_t slot, int32_t key, int32_t direction) {
                                           knobs);
 }
 
+#ifdef OP1_CLOUDS
+// A click on the synth FX page, for Clouds: whether it was consumed.
+bool FxClick(int32_t key, int32_t direction) {
+  if (key < kClickBlue || key > kClickOrange) return false;
+  return op1fx::SynthFxClick(static_cast<op1fx::Click>(key - kClickBlue), direction);
+}
+#else
+bool FxClick(int32_t, int32_t) { return false; }
+#endif
+
 }  // namespace
 
 // KeyDispatch passes the key as a byte; stock handlers get it as received.
@@ -100,6 +125,7 @@ extern "C" int32_t RingsKeyDown(void* controller, int32_t key) {
     Step(slot, code, 1);
     return 1;
   }
+  if (FxClick(code, 1)) return 1;
   return reinterpret_cast<KeyFn>(kStockKeyDown)(controller, key);
 }
 
@@ -110,6 +136,7 @@ extern "C" int32_t RingsShiftKeyDown(void* controller, int32_t key) {
     Step(slot, code, -1);
     return 1;
   }
+  if (FxClick(code, -1)) return 1;
   return reinterpret_cast<KeyFn>(kStockShiftKeyDown)(controller, key);
 }
 
@@ -118,5 +145,37 @@ extern "C" int32_t RingsShiftKeyDown(void* controller, int32_t key) {
 extern "C" int32_t RingsKeyUp(void* controller, int32_t key) {
   const int32_t code = key & 0xff;
   if (code >= kClickBlue && code <= kClickOrange && MultiSlot() >= 0) return 1;
+#ifdef OP1_CLOUDS
+  // Likewise on the FX page of a phone slot.
+  if (code >= kClickBlue && code <= kClickOrange && op1fx::SynthFxPageIsPhone()) return 1;
+#endif
   return reinterpret_cast<KeyFn>(kStockKeyUp)(controller, key);
 }
+
+#ifdef OP1_CLOUDS
+// The master FX page. Stock handles no encoder click here (its key cases
+// are 0x05..0x14 and 0x2d..0x2f): ours are consumed, the rest go to stock.
+extern "C" int32_t CloudsMasterKeyDown(void* controller, int32_t key) {
+  const int32_t code = key & 0xff;
+  if (code >= kClickBlue && code <= kClickOrange &&
+      op1fx::MasterFxClick(static_cast<op1fx::Click>(code - kClickBlue), 1)) {
+    return 1;
+  }
+  return reinterpret_cast<KeyFn>(kStockMasterKeyDown)(controller, key);
+}
+
+extern "C" int32_t CloudsMasterShiftKeyDown(void* controller, int32_t key) {
+  const int32_t code = key & 0xff;
+  if (code >= kClickBlue && code <= kClickOrange &&
+      op1fx::MasterFxClick(static_cast<op1fx::Click>(code - kClickBlue), -1)) {
+    return 1;
+  }
+  return reinterpret_cast<KeyFn>(kStockMasterShiftKeyDown)(controller, key);
+}
+
+extern "C" int32_t CloudsMasterKeyUp(void* controller, int32_t key) {
+  const int32_t code = key & 0xff;
+  if (code >= kClickBlue && code <= kClickOrange && op1fx::MasterFxPageIsPhone()) return 1;
+  return reinterpret_cast<KeyFn>(kStockMasterKeyUp)(controller, key);
+}
+#endif

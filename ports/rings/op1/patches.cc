@@ -5,6 +5,12 @@
 
 #include "op1/patches.h"
 
+#ifdef OP1_FX_PROBE
+#include "op1/fx_probe.h"
+#endif
+#ifdef OP1_CLOUDS
+#include "op1/clouds_fx.h"
+#endif
 #include "op1/input.h"
 #include "op1/screen.h"
 
@@ -37,6 +43,24 @@ const Patch kPatches[kNumPatches] = {
   { 0x019119a8, kWord32, 0x01a51058, reinterpret_cast<const void*>(&RingsKeyDown) },
   { 0x019119b0, kWord32, 0x01a50904, reinterpret_cast<const void*>(&RingsShiftKeyDown) },
   { 0x019119b8, kWord32, 0x01a5056c, reinterpret_cast<const void*>(&RingsKeyUp) },
+#ifdef OP1_FX_PROBE
+  // FX probe (op1/fx_probe.cc): the phone effect's process, mono vtable
+  // 0x19112f4 and stereo vtable 0x1911314 (+0x14).
+  { kPhoneMonoProcessSlot, kWord32, kPhoneMonoProcess, reinterpret_cast<const void*>(&FxProbeMono) },
+  { kPhoneStereoProcessSlot, kWord32, kPhoneStereoProcess, reinterpret_cast<const void*>(&FxProbeStereo) },
+#endif
+#ifdef OP1_CLOUDS
+  // Clouds (../clouds/op1/clouds_fx.cc) in place of the phone effect's
+  // process, mono vtable 0x19112f4 and stereo vtable 0x1911314 (+0x14).
+  { op1fx::kPhoneMonoProcessSlot, kWord32, op1fx::kPhoneMonoProcess, reinterpret_cast<const void*>(&CloudsFxMono) },
+  { op1fx::kPhoneStereoProcessSlot, kWord32, op1fx::kPhoneStereoProcess, reinterpret_cast<const void*>(&CloudsFxStereo) },
+  // Encoder clicks on the master FX page (op1/input.cc). MasterController
+  // vtable 0x1910aac: key down (+0x14), shifted key down (+0x1c), key up
+  // (+0x24).
+  { 0x01910ac0, kWord32, 0x019db7c4, reinterpret_cast<const void*>(&CloudsMasterKeyDown) },
+  { 0x01910ac8, kWord32, 0x019d987e, reinterpret_cast<const void*>(&CloudsMasterShiftKeyDown) },
+  { 0x01910ad0, kWord32, 0x019db708, reinterpret_cast<const void*>(&CloudsMasterKeyUp) },
+#endif
 };
 
 }  // namespace op1

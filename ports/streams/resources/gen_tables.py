@@ -1,0 +1,199 @@
+# Generates Streams' sample-rate-dependent lookup tables for another rate
+# (stdlib only: no numpy on this machine). The formulas are upstream's
+# resources/lookup_tables.py; the values are truncated to int as upstream's
+# resource compiler does ('%6d' % float).
+#
+#   python3 resources/gen_tables.py check  [upstream resources.cc]
+#       regenerate the tables at 31089 Hz and compare them with upstream's
+#   python3 resources/gen_tables.py write  src/dsp/resources_44k.cc [rate]
+#       write the 44.1 kHz tables (plus the retimed plucked-vactrol attack
+#       table and the retimed constants, printed for src/dsp/retime.h)
+
+import math
+import re
+import sys
+
+UPSTREAM_RATE = 31089
+TARGET_RATE = 44100
+
+
+def linspace(start, stop, num):
+    step = (stop - start) / (num - 1)
+    y = [i * step + start for i in range(num)]
+    y[-1] = stop
+    return y
+
+
+def env_increments(sr):
+    excursion = float(1 << 32)
+    max_time, min_time, gamma = 12.0, 0.0005, 0.25
+    min_increment = excursion / (max_time * sr)
+    max_increment = excursion / (min_time * sr)
+    rates = linspace(math.pow(max_increment, -gamma),
+                     math.pow(min_increment, -gamma), 257)
+    return [int(math.pow(r, -1 / gamma)) for r in rates]
+
+
+def svf_f(sr):
+    out = []
+    for i in range(257):
+        cutoff = 440.0 * 2 ** ((i - 69) / 12.0)
+        f = cutoff / sr
+        if f > 1 / 8.0:
+            f = 1 / 8.0
+        out.append(2 * math.sin(math.pi * f))
+    return out
+
+
+def svf_cutoff(sr):
+    return [int(f * 32767.0) for f in svf_f(sr)]
+
+
+def svf_damp(sr):
+    out = []
+    for i, f in enumerate(svf_f(sr)):
+        resonance = i / 257.0
+        damp = min(2 * (1 - resonance ** 0.25), min(2, 2 / f - f * 0.5))
+        out.append(int(damp * 32767.0))
+    return out
+
+
+def lp_coefficient_floats(sr):
+    t = [0.001 * 10 ** (i / 128.0) for i in range(128 * 5)]
+    t[0], t[1], t[2], t[3] = 0.0001, 0.0002, 0.0005, 0.001
+    return [1.0 - math.exp(-1 / (x * sr)) for x in t]
+
+
+def lp_coefficients(sr):
+    return [int((1 << 31) * c) for c in lp_coefficient_floats(sr)]
+
+
+def lorenz_rate(sr):
+    t = [i / 256.0 for i in range(257)]
+    t = [x / (20 / 100.0 / 3.3) for x in t]
+    f = [2.0 ** x for x in t]
+    last = f[-1]
+    scale = UPSTREAM_RATE / float(sr)  # Euler step per sample, retimed
+    return [int(x / last * 0.02 * (1 << 24) * scale) for x in f]
+
+
+def retime_coefficient(c, sr):
+    """A one-pole coefficient (fraction per sample) at 31089 Hz, for sr."""
+    if c <= 0.0:
+        return c
+    if c >= 1.0:
+        return 1.0
+    return 1.0 - math.pow(1.0 - c, UPSTREAM_RATE / float(sr))
+
+
+def pluck_fast_attack(sr):
+    # Vactrol::Configure in plucked mode: fast_attack_coefficient_ <<= 4 on
+    # lut_lp_coefficients[attack_time - 128], an int32. At 31089 Hz entries 0
+    # and 1 (0.1 and 0.2 ms) overflow and wrap to 0.406 and 0.379; at 44.1 kHz
+    # entry 0 would wrap negative. This table holds upstream's effective
+    # coefficient (wrap included), retimed.
+    up = lp_coefficients(UPSTREAM_RATE)
+    out = []
+    for i in range(256):
+        v = (up[i] << 4) & 0xffffffff
+        if v >= 1 << 31:
+            v -= 1 << 32
+        c = retime_coefficient(v / float(1 << 31), sr)
+        out.append(int(c * (1 << 31)))
+    return out
+
+
+TABLES = [
+    ('uint16_t', 'lut_svf_cutoff', svf_cutoff),
+    ('uint16_t', 'lut_svf_damp', svf_damp),
+    ('uint32_t', 'lut_env_increments', env_increments),
+    ('uint32_t', 'lut_lp_coefficients', lp_coefficients),
+    ('uint32_t', 'lut_lorenz_rate', lorenz_rate),
+]
+
+
+def parse_upstream(path):
+    text = open(path).read()
+    tables = {}
+    for m in re.finditer(r'const u?int(?:16|32)_t (\w+)\[\] = \{([^}]*)\};', text):
+        values = [int(v.strip().rstrip('UL')) for v in m.group(2).split(',') if v.strip()]
+        tables[m.group(1)] = values
+    return tables
+
+
+def check(path):
+    up = parse_upstream(path)
+    bad = 0
+    for _, name, fn in TABLES:
+        mine = fn(UPSTREAM_RATE)
+        theirs = up[name]
+        diffs = [(i, a, b) for i, (a, b) in enumerate(zip(mine, theirs)) if a != b]
+        status = 'identical' if not diffs and len(mine) == len(theirs) else \
+            '%d of %d differ, max |d| = %d' % (len(diffs), len(theirs),
+                                               max(abs(a - b) for _, a, b in diffs) if diffs else 0)
+        print('%-22s %4d entries: %s' % (name, len(theirs), status))
+        for i, a, b in diffs[:4]:
+            print('    [%d] mine %d upstream %d' % (i, a, b))
+        bad += len(diffs)
+    return bad
+
+
+def fmt(values):
+    lines = []
+    for i in range(0, len(values), 4):
+        chunk = values[i:i + 4]
+        lines.append('  ' + ', '.join(
+            ('%6d' % v) if v < (1 << 31) else ('%6dUL' % v) for v in chunk) + ',')
+    return '\n'.join(lines)
+
+
+def write(path, sr=TARGET_RATE):
+    out = []
+    out.append('// Streams\' sample-rate-dependent tables at %d Hz, generated by' % sr)
+    out.append('// resources/gen_tables.py from upstream\'s formulas (lookup_tables.py).')
+    out.append('// Upstream\'s values for 31089 Hz stay in resources.cc. MIT, as upstream.')
+    out.append('')
+    out.append('#include "src/dsp/resources.h"')
+    out.append('#include "src/dsp/retime.h"')
+    out.append('')
+    out.append('#if OP1STREAMS_SAMPLE_RATE == %d' % sr)
+    out.append('')
+    out.append('namespace op1streams {')
+    out.append('')
+    for ctype, name, fn in TABLES:
+        values = fn(sr)
+        out.append('const %s %s[] = {' % (ctype, name))
+        out.append(fmt(values))
+        out.append('};')
+    out.append('const int32_t lut_vactrol_pluck_attack[] = {')
+    out.append(fmt(pluck_fast_attack(sr)))
+    out.append('};')
+    out.append('')
+    out.append('}  // namespace op1streams')
+    out.append('')
+    out.append('#endif  // OP1STREAMS_SAMPLE_RATE')
+    open(path, 'w', newline='\n').write('\n'.join(out) + '\n')
+    print('wrote', path)
+    # Constants hard-coded in upstream's .cc files (one-pole coefficients per
+    # sample at 31089 Hz), retimed for src/dsp/retime.h.
+    for name, c in [('compressor sidechain decay', 14174),
+                    ('vactrol overshoot lp', 67976239),
+                    ('vactrol sensitize', 138132),
+                    ('vactrol desensitize', 1151)]:
+        r = retime_coefficient(c / float(1 << 31), sr)
+        print('%-28s %10d -> %10d' % (name, c, int(round(r * (1 << 31)))))
+
+
+def main(argv):
+    if len(argv) >= 2 and argv[1] == 'check':
+        path = argv[2] if len(argv) > 2 else '../../mutableinstruments/streams/resources.cc'
+        return 1 if check(path) else 0
+    if len(argv) in (3, 4) and argv[1] == 'write':
+        write(argv[2], int(argv[3]) if len(argv) == 4 else TARGET_RATE)
+        return 0
+    print(__doc__ if __doc__ else 'usage: gen_tables.py check|write PATH')
+    return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))

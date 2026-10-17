@@ -29,6 +29,12 @@
 
 #include "op1/coefficient_budget.h"
 #include "op1/cpu_meter.h"
+#ifdef OP1_FX_PROBE
+#include "op1/fx_probe.h"
+#endif
+#ifdef OP1_CLOUDS
+#include "op1/clouds_fx.h"
+#endif
 #include "op1/op1.h"
 #include "op1/param_smoother.h"
 #include "op1/patches.h"
@@ -275,14 +281,29 @@ void NoteOn(void* self, const int16_t* knobs) {
 
 // The entry points, timed for the CPU meter (op1/cpu_meter.h).
 extern "C" void RingsRender(void* self, int16_t* out, const int16_t* params) {
+#ifdef OP1_FX_PROBE
+  ++op1::render_calls;
+#endif
   op1::cpu_meter.Begin();
+#ifdef OP1_CLOUDS
+  const uint32_t start = op1::Cycles();
   Render(self, out, params);
+  op1fx::measured_cycles += op1::Cycles() - start;   // for Clouds' governor
+#else
+  Render(self, out, params);
+#endif
   op1::cpu_meter.End();
 }
 
 extern "C" void RingsNoteOn(void* self, const int16_t* knobs) {
   op1::cpu_meter.Begin();
+#ifdef OP1_CLOUDS
+  const uint32_t start = op1::Cycles();
   NoteOn(self, knobs);
+  op1fx::measured_cycles += op1::Cycles() - start;
+#else
+  NoteOn(self, knobs);
+#endif
   op1::cpu_meter.End();
 }
 

@@ -47,10 +47,10 @@ Addresses are runtime addresses in `OP1_vdk.ldr`. The hard rules in `docs/brick-
   - mono: `process(this, int16* buf, const int16* params)`, **in place, 64 samples**;
   - stereo: `process(this, int16* L, int16* R, [SP+12] params)`.
   - **44.1 kHz:** delay lengths are `44100 >> n`, and its buffer is 1 s at 44.1 kHz. 64 samples at 44.1 kHz match one 128-sample voice block at 88.2 kHz [I].
-- **Parameters:** 8 int16 per position (synth `0xff801444 + slot × 16`, drum `0xff8015c4 + inst × 16`, master `0xff8016c4`), clamped by the FX Ranges table `0x1de5c50` (48 bytes per type). Saved in presets as `fx_type` (by name), `fx_params[8]` and `fx_active`; master FX in op1.db's `master` table. **`fx_params[4..7]` are stored but unused by stock effects:** room for Clouds' mode and settings [I].
+- **Parameters:** 8 int16 per position (synth `0xff801444 + slot × 16`, though the synth effect's process call gets a pointer elsewhere (Test 16), drum `0xff8015c4 + inst × 16`, master `0xff8016c4`), clamped by the FX Ranges table `0x1de5c50` (48 bytes per type). Saved in presets as `fx_type` (by name), `fx_params[8]` and `fx_active`; master FX in op1.db's `master` table. **`fx_params[4..7]` are stored but unused by stock effects:** room for Clouds' mode and settings [I].
 - **All 16 process functions are plain SDRAM** and none calls into L1: every effect can be redirected with vtable word patches, like phase.
 - **Buffers:** 3 × 176 KB per-position buffers (`0x1ab8bb0` synth, `0x1ae3cfc` drum, `0x1b0ee48` master), plus phone's private 187 KB array at `0x27d1fe0`. Our own region at `0x02c00000` has more room and is safer.
-- **CPU:** unmeasured. The engine's 81% free (probe v3) excludes FX.
+- **CPU:** measured in `docs/device-tests.md` Test 16: 64 samples at 44.1 kHz in both positions; stock phone ~35 MHz (master) / ~16 MHz (synth); ~300 MHz free with nothing playing; a switched-off effect isn't called.
 
 ### Clouds' cost (estimates from the code, not measured)
 Clouds runs at 32 kHz in 32-sample blocks; its correlator and FFT frames run in the idle loop (`clouds.cc:133`). On the OP-1 that work has to be split into slices in each call.

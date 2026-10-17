@@ -1,0 +1,18 @@
+// The converted engines (X-macro list, included by fixed/engines.cc with X
+// defined): X(index, member of EngineHost's union).
+X(0, va)
+X(1, waveshaping)
+X(2, fm)
+X(4, additive)
+X(5, wavetable)
+X(6, chords)
+X(9, noise)
+X(10, particle)
+X(13, bass_drum)
+X(14, snare)
+X(15, hi_hat)
+X(3, grain)
+X(8, swarm)
+X(11, string_engine)
+X(12, modal)
+X(7, speech)

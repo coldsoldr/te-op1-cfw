@@ -1,8 +1,13 @@
 # Handover: OP-1 custom firmware
 
-Last updated 2026-10-16. Read this first in a fresh session; it's self-contained, and the docs it links to have the detail.
+Last updated 2026-10-16 (end of session). Read this first in a fresh session; it's self-contained, and the docs it links to have the detail.
 
-**Next project: Mutable Instruments Clouds as an OP-1 effect (§3).** Start with step 0: settle the open decisions with the user, then the device probe (step 1). Rings / MULTI is done for now (§2); its technical reference is `docs/rings-op1-reference.md`.
+**Current project: Mutable Instruments Clouds as an OP-1 effect (§3).**
+- **Done:** the DSP port, verified against upstream; assembly kernels; a CPU governor. All are host- and simulator-tested.
+- **Integrated (2026-10-16, later session):** Rings + Clouds in one image (`make op1-clouds` in `ports/rings`), Clouds on phone in both positions, the click hooks on the synth and master FX pages. Package **`op1_246_rings_clouds1.op1` is built and verified, not yet flashed: Test 17** in `docs/device-tests.md`.
+- **Next:** the user flashes and runs Test 17; then the screen (waits for `clouds.svg`), device CPU numbers, governor tuning (§3, "Next steps"). **All integration happens in this (the main) session.** Other agents only port modules (§5).
+- **On the device:** `op1_246_rings_fxprobe1.op1` (MULTI/Rings plus an FX probe on phone).
+- **Nothing from 2026-10-16 is committed** (§6).
 
 ## 1. Goal and hard rules
 
@@ -22,73 +27,182 @@ How the user works:
 - They test on the device and report back in numbered points; device tests are logged in `docs/device-tests.md` (procedure before the flash, result after).
 - They stay on branch `firmware-analysis-tooling`.
 - Commit and push only when they ask.
-- Decisions they've made are recorded (§2, and per project); don't re-ask them.
+- Decisions they've made are recorded (§2, §3); don't re-ask them.
 
 ## 2. Where things stand
 
-**On the device: `op1 firmware/op1_246_rings_multi4.op1`** (Test 15: "everything sounds great, everything is working a treat").
+**On the device: `op1 firmware/op1_246_rings_fxprobe1.op1`.** This is multi4 (Test 15: "everything sounds great, everything is working a treat") plus the FX probe on phone (Test 16). Phone sounds normal, but turning its blue encoder starts a CPU measurement (stutter, then beeps); white resets it. Reflash `op1_246_rings_multi4.op1` for plain phone.
 
 **The phase slot is the "MULTI" engine:** each slot plays **stock phase** or **Mutable Instruments Rings** (all six models), switched by an orange encoder click on the engine page. The lists show "multi" for "phase" (display only). Everything about it (controls, architecture, hooks, CPU, tests, package recipe): `docs/rings-op1-reference.md`. Design and validation history: `docs/rings-port.md`.
 
-**Known issues, to revisit at the end** (the user is happy as it is for now):
-- **Model 2 (sympathetic strings) and model 6 (string + reverb) crackle somewhat in polyphony "all"; in polyphony 4 both are good** (Test 15). Read as CPU: sympathetic "all" is 6 voices × 2 strings (1.5× polyphony 4's load). **Puzzle for model 6:** the code plays "all" exactly as polyphony 4 (`op1/engine.cc` NoteOn maps it), so check whether the difference is in how it was played (more notes ringing) before optimising. Levers: the string kernel keeping state in registers (117 cycles per sample), the stiff string's general C loop, the reverb's C loop after a restart, or fewer voices in "all" (ask the user).
-- Free CPU under real load (FX, other tracks) is unmeasured; the ~324 MHz free figure is one stock voice and nothing else. **This matters for Clouds** (§3).
+**Known Rings issues, to revisit at the end** (the user is happy as it is):
+- **Model 2 and model 6 crackle somewhat in polyphony "all"; polyphony 4 is fine** (Test 15).
+- **Rings model 6 × 4 voices costs ~255–290 MHz on the device** (Test 16): ~2× the simulator estimate, most likely the data cache, since its reverb and strings live in SDRAM. That's the main lever if Rings needs to be lighter.
 
-**Decided with the user — don't re-ask:**
+**Decided with the user (Rings), don't re-ask:**
 - sympathetic strings tune around the played note; the string models' mono mix is upstream's per-voice `out − aux`;
 - model 6 plays at most 4 voices in "all";
-- polyphony "all" has 14 modes per modal voice (16 crackled while turning); polyphony 1, 2 and 4 are upstream's;
-- the modal and FM output must otherwise stay bit-identical (checksums: modal `ef8618dd`, FM `567afc0c`, model 6 `7d5e0bee`);
-- the brightness handle spans the green encoder's range 0..29491 (display only);
+- "all" has 14 modes per modal voice; polyphony 1, 2 and 4 are upstream's;
+- the modal and FM output stay bit-identical (checksums: modal `ef8618dd`, FM `567afc0c`, model 6 `7d5e0bee`);
+- the brightness handle spans 0..29491 (display only);
 - PORTAMENTO → PORTA is dropped: don't propose it.
 
 **Proven on the device** (detail in `docs/device-tests.md`, `docs/engine-interface.md`):
-- Synth voices render at 88.2 kHz, 128 samples per call (~689 calls/s per sounding voice), one call per sounding voice per block, apparently in index order. Only sounding voices are rendered.
-- CPU ~400 MHz, ~324 MHz free with one stock voice. **The device runs ~1.5–1.8× the simulator's cycle counts.** Keep simulated totals well under ~200 MHz.
-- Injected code at `0x02c00000` runs; the app has no integrity check. Audio overload is survivable (crackle); a memory-corrupting bug is not (power cycle; no lasting harm so far).
-- Patching works through data only: vtable words, imm16 immediates, content files (SVG, `op1_factory.db`). Calling firmware functions from our C++ works.
+- **Synth voices:** rendered at 88.2 kHz, 128 samples per call, one call per sounding voice per block.
+- **Effects:** called at 44.1 kHz, 64 samples per call, ~690 calls/s (Test 16).
+- **CPU:**
+  - ~300 MHz free with nothing playing;
+  - the OP-1's own audio work is ~15% of the period;
+  - **the device runs ~1.5–1.8× the simulator's cycle counts** (Rings; Clouds is unmeasured).
+- **Injected code at `0x02c00000` runs;** the app has no integrity check. An audio overload is survivable (crackle); a memory-corrupting bug is not (power cycle).
+- **Patching works through data only:** vtable words, imm16 immediates, content files. Calling firmware functions from our C++ works.
 
-## 3. Next project: Clouds as an effect
+## 3. Clouds as an effect
 
-The spec is `docs/next-projects.md` §1 (from static analysis of firmware 246 and the Clouds source; nothing tried on the device yet). In short:
+The detailed design, validation and numbers are in **`docs/clouds-port.md`**. The effect interface (static analysis) is in `docs/next-projects.md` §1, and the device measurements in `docs/device-tests.md` Test 16. The screen brief for the user's designer is `docs/clouds-screen-brief.md`.
 
-**The OP-1's effects** [C = confirmed from code]:
-- 8 types (`fx_types.cpp`, table `0x18dd810`): delay, grid, punch, phone, spring, filter (hidden: no `fx_types` row in the factory db), nitro, cwo.
-- Positions: synth (mono), drum (mono), master (stereo). Factories `0x1a1b5f0` (stereo, `type < 8`) and `0x1a1b6d0` (mono). Objects in the L1 scratchpad (`0xffb00600` mono, `0xffb00790` stereo): keep only a pointer there, state in our SDRAM.
-- Vtable: `+0x14` process, `+0x1c` init(this, pos). **Process:** mono `(this, int16* buf, const int16* params)`, in place, **64 samples**; stereo `(this, int16* L, int16* R, [SP+12] params)`. **44.1 kHz** (inferred: delay lengths `44100 >> n`).
-- Parameters: 8 int16 per position (master `0xff8016c4`), clamped by the FX Ranges table `0x1de5c50`. Saved as `fx_type` (name), `fx_params[8]`, `fx_active`; **`fx_params[4..7]` are unused by stock effects** (room for Clouds' mode and settings).
-- **All effect process functions are plain SDRAM**: hookable with vtable word patches, like phase was.
+**Decided with the user (2026-10-16), don't re-ask:**
+1. **Host: phone.** **The orange click on the FX page swaps each effect between Clouds and stock phone** (as MULTI does for phase/Rings). "Filter" stays free for op1repacker's filter mod.
+2. **Both positions:** the master effect (stereo) and the synth effect (mono). One core class, an instance per position.
+3. **Modes in order:** looping delay → granular → time stretch → spectral (last, or never).
+4. **Controls:**
+   - page 1 encoders: position, size, pitch, density;
+   - page 2 encoders: texture, dry/wet, feedback, reverb;
+   - **stereo spread fixed for now**;
+   - clicks: **blue = next mode** (shift = back), **green = freeze**, **white = page**, **orange = Clouds/phone**;
+   - shift + turn = fine adjustment;
+   - mode and page are saved in `fx_params[4..7]`.
+5. **CPU trade-offs are left to us** (quality limits, the governor).
+6. The user is drawing **`clouds.svg`** (two pages; brief in `docs/clouds-screen-brief.md`). Until it arrives, Clouds can run with phone's stock screen.
 
-**Recommended host: the master effect (stereo, as Clouds is), replacing "phone"** (visible, unused in factory presets, with its own screen):
-- mono process/init words `0x1911308` / `0x1911310`; stereo `0x1911328` (stock `0x01a1c25c`) / `0x1911330` (stock `0x01a1c294`);
-- screen: "ptch.svg" immediates `0x1a1c7cc` / `0x1a1c7d0`; PhoneScreen Init/Update words `0x1911358` / `0x1911350` (the PdScreen pattern we already hooked).
-- "filter" (`0x1910ca8`/`0x1910cb0`, stereo `0x1910cc8`/`0x1910cd0`) only if op1repacker's filter mod isn't wanted.
+**State of `ports/clouds/`:**
+- **Looping delay and granular are done and verified** against upstream (21 scenarios: 52–65 dB SNR, spectra within ~0.5 dB). The remaining gaps are upstream's own float rounding, proven with a double-precision diagnostic copy, or the harness's parameter quantisation. Time stretch and spectral output silence.
+- **Assembly kernels**, each bit-exact with a C reference (`make test`; the reverb and diffuser are tested over more than a trip round their buffers, with guard words):
+  - grain overlap-add (linear/Hermite × mono/stereo, 16-bit dual-MAC);
+  - the stereo reverb;
+  - the diffuser.
+- **CPU (simulator, one stereo instance):**
 
-**Clouds' cost** (estimates from the code): at 44.1 kHz stereo on the device, the shared chain (feedback filters, diffuser, reverb, mix) ~25 MHz; + looping delay ~35 MHz in all; granular with 32 grains ~70 MHz (16 grains ~45); time stretch (WSOLA) 45–70 MHz; spectral (phase vocoder) ~70 MHz only with an assembly FFT (>120 in C). Memory is no issue (~3.3 MB free above our image); the 16 KB data cache is (32 grains = 64 scattered streams). Upstream runs at 32 kHz: running near it saves ~30%.
+  | Config | MHz |
+  |---|---|
+  | granular, ~7 grains | ~28–30 |
+  | granular, ~20 grains | ~51 |
+  | granular with reverb, feedback and diffusion | ~49 |
+  | looping delay, plain | ~31 |
+  | looping delay with diffusion, feedback and reverb | ~49 |
+  | mono, roughly | ~0.6× stereo |
 
-**Step 0: decisions to settle with the user first:**
-1. Host effect: phone (recommended) or filter? And whether op1repacker's filter mod is wanted (it decides which is free).
-2. Master effect (stereo, recommended) or the synth's own effect (mono)?
-3. Modes, in order: looping delay → granular → time stretch → spectral (last, or never)?
-4. Controls: Clouds has 9 parameters plus freeze and trigger (`clouds/dsp/parameters.h`) for 4 encoders; mode and quality in `fx_params[4..7]`; encoder clicks on the FX page (the key hooks for that page are still to find).
-5. CPU together with Rings: Rings at its heaviest (~120 MHz on the device) plus Clouds (~35–70) must fit ~324 MHz minus the OP-1's own work; expect grain and quality limits.
+  Still in C: the pitch shifter, the texture SVFs, the looper's Hermite reads, dry/wet with the soft limiter.
+- **Governor** (`src/core/governor.h`, `make test-governor`): sets the grain cap per call.
+  - It takes the call interval, Clouds' own cycles and our engines' cycles.
+  - Feed-forward: 0.75 of the period minus the engines.
+  - Feedback: overload is detected by the mean interval or a late call. It learns a ceiling on Clouds' cycles for load it can't see.
+  - Simulated: no late calls under measured load, settles under hidden load, recovers. The looping delay has no grains, so its fixed cost (~50 MHz on the device, estimated) can still overload next to heavy Rings.
 
-**Step 1: a device probe, no Clouds code yet.** A pass-through effect on the phone (master) slot that measures and reports:
-- calls per second and block size (confirm 64 samples at 44.1 kHz), mono/stereo argument order;
-- whether process runs while `fx_active` = 0, and pre/post the drum mix;
-- its own cycles and the free headroom with 6 Rings voices plus the effect.
-- Earlier probes reported numbers as audio (`tools/decode_probe_beeps.py`, `decode_probe_tones.py`; `docs/device-tests.md` Test 1–1c) or, since strings2, on the screen's rings (the CPU meter). The FX screen (PhoneScreen) can be hooked the same way to show readings.
+**Firmware facts found for the hookup** (detail in `docs/clouds-port.md` §5):
+- **Phone's process vtable words:**
+  - mono `0x1911308` (stock `0x01a1bb74`);
+  - stereo `0x1911328` (stock `0x01a1c25c`);
+  - the stereo process runs the mono one on two sub-objects;
+  - the stereo params arrive at `[SP+12]`;
+  - a switched-off effect isn't called (treat a gap > 5 ms as a restart).
+- **Phone's encoder ranges** (the FX Ranges table, built at boot; obtained by running its initialiser `0x1a1e914` in `bfin-elf-gdb`'s simulator; entries `{min, max, x}` at `0x1de5c50 + type × 48 + knob × 6`, phone = type 3):
 
-**Then the port, Rings-style** (`docs/rings-port.md` is the model):
-1. `ports/clouds/`: upstream `clouds/dsp` plus a host harness rendering float reference WAVs (from `clouds/test/clouds_test.cc`), and SNR/spectral comparison (`ports/rings/harness/compare.py`).
-2. Fixed-point chassis: int16 buffers, the soft limit (Rings' table), SVFs, the diffuser, **Rings' `reverb_fixed` reused** (Rings' delay lengths are ~1.32× Clouds', i.e. already right for ~42–44 kHz), dry/wet.
-3. Looping delay + pitch shifter; then granular (assembly overlap-add kernels, FFloat per-grain setup); then WSOLA (correlator in assembly with `ONES`, a search budget per call); spectral last.
-4. OP-1 hookup: the FX vtable words in the patch table, a Clouds screen (`clouds.svg`), the CPU meter, device tests.
+  | Encoder | Range |
+  |---|---|
+  | blue | 204..20480 |
+  | green | 3072..17408 |
+  | white | 1536..16896 |
+  | orange | 0..32767 |
+  | knobs 4..7 | 0..32767 |
 
-**Integration notes:**
-- Everything we inject is one image (`tools/inject_app.py`: one header, one patch table, one LDR block at `0x02c00000`). Clouds goes into the same image as Rings: the build needs restructuring (e.g. a top-level image target linking `ports/rings` and `ports/clouds`, shared code such as `fixed.h`, `ffloat.h`, `reverb_fixed.*`, `cpu_meter.h` moved to a common place).
-- Effects run at 44.1 kHz on 64-sample blocks: the same block size as Rings' internal rate, so Rings' fixed-point blocks and helpers fit directly.
-- Every assembly kernel gets a C reference and a bit-exact check against a host build; any ring buffer driven from assembly gets a test across its wraps with guard words (the model 6 hang taught that: the simulator doesn't fault on stray writes).
+  Normalise from the table at run time.
+- **Synth FX page:** sub-page 2 of `[0x1b4ee88]` in the synth controller (vtable `0x1911994`, whose key words Rings already hooks: `op1/input.cc`).
+  - Knob case `0x1a50690`;
+  - FX type `[0xff801734 + slot × 4]`;
+  - values `0xff801444 + slot × 16`;
+  - saved by **`0x19ff664(patch, values)`** (like `SetKnobs` `0x1a00d14`; patches `0x1ddd7e8 + slot × 0x38`).
+- **Master FX page:** `MasterController`, primary vtable **`0x1910aac`**:
+  - `+0x0c` destructor `0x19d99a0`;
+  - `+0x14` key down `0x19db7c4` (cases `0x2d–0x2f`);
+  - `+0x1c` shift key down `0x19d987e`;
+  - `+0x24` key up `0x19db708`;
+  - `+0x2c` knob `0x19da2bc` (uses `0xff8016c4`).
+  - **Still to find:** which master subscreen is showing (asserts `subscreen_ <= kCompressor`, state near `0x1aad5d8`), the master FX type variable, and how master FX params are saved (op1.db's `master` table).
+- **Phone's screen:** `ptch.svg` immediates `0x1a1c7cc` / `0x1a1c7d0`; PhoneScreen Init/Update words `0x1911358` / `0x1911350` (the PdScreen swap pattern Rings uses).
+
+**Integration done (2026-10-16), awaiting Test 17:**
+- **Build:** `ports/rings/Makefile` target `op1-clouds` (`-DOP1_CLOUDS`, `-I../clouds -I..`): the engine sources plus `ports/clouds/op1/clouds_fx.cc` and the Clouds core. `op1-engine` still builds multi4 byte-identical.
+- **Glue:** `ports/clouds/op1/clouds_fx.cc`.
+  - The mono and stereo process entries replace phone's two words. Each position plays Clouds or calls stock phone.
+  - Position: master = the stereo call (values at the passed pointer, `0xff8016c4`). Synth = a mono call whose `self` is the synth effect object (`[0x1aaad60]`; producers per position at `0x1aaad60/64/68`); the drum effect stays phone.
+  - The synth's values are read from `0xff801444 + [0x1aaac0c] × 16`, not the passed pointer (Test 16: that is elsewhere).
+  - Restart on a gap > 5 ms, after phone, or on a slot change. `Init` clears ~350 KB, ~115k cycles in the simulator; the restarting call passes the input through.
+  - The governor is fed with `op1fx::measured_cycles`, a running total that `RingsRender`/`RingsNoteOn` and both Clouds instances add to. Its first 16 calls after a restart are skipped.
+- **Settings** (`ports/clouds/op1/clouds_settings.h`):
+  - `values[0..3]` are the shown page (the encoders);
+  - `values[4]` holds the engine bit (**0 = Clouds: phone is Clouds by default**), the mode index (2 bits, in the user's order), the page bit and the hidden page's first value (11 bits);
+  - `values[5..7]` hold the hidden page's other values;
+  - hidden values are stored as offsets from defaults: dry/wet 50%, texture 50%, feedback/reverb 0;
+  - the white click swaps the encoders' values with the hidden page's, so both pages persist.
+  - **Verified in the firmware:** the synth FX knob case (`0x1a50690`) writes `0xff801444 + slot × 16`; shift + turn writes `[k − 4]` with delta / 16, so it never touches `[4..7]`.
+- **Clicks:**
+  - synth FX page through `op1/input.cc` (sub-page `[0x1b4ee88] == 2`, slot FX type `[0xff801734 + slot × 4] == 3`), saved with `0x19ff664`;
+  - **master FX page through MasterController's key words** `0x1910ac0/ac8/ad0` (stock `0x19db7c4/0x19d987e/0x19db708`; stock handles no encoder click there). The page is active when `subscreen_ [0x1aad5d8] == 2`; the knob case's subscreen 2 copies `0xff8016c4`. The master effect counts as phone when the master producer's vtable is `0x1911314`.
+  - **No master save call is known.** Clicks write the live `0xff8016c4` values; whether they persist is a Test 17 question.
+- **Simulator** (`ports/clouds`: `make sim-fx`, `tests/sim_fx.cc`):
+
+  | Case | MHz |
+  |---|---|
+  | master looping delay | ~31 |
+  | master granular, ~7 grains | ~31 |
+  | master granular, dense | ~55 |
+  | synth looping delay | ~20 |
+  | synth granular | ~29 |
+
+  The settings and click round trips are checked too.
+- **Choices made here** (the user may revisit):
+  - phone = Clouds by default;
+  - stereo spread fixed at 50%;
+  - pitch ±24 semitones with a small centre dead zone;
+  - freeze isn't saved;
+  - the blue click cycles only the implemented modes (looping delay, granular).
+
+**Next steps:**
+1. **Test 17 on the device** (the user flashes `op1_246_rings_clouds1.op1`). From its results:
+   - Clouds' device/simulator ratio, and the governor's share;
+   - whether master settings persist (if not, find the master save: op1.db's `master` table);
+   - whether synth/drum detection via the producers holds.
+2. **The screen:** the user's `clouds.svg` in place of `ptch.svg`, swapped by the setting (as `pd.svg`/`rings.svg`). Show the mode, page, freeze and governor state. Phone's screen words: §3 facts above.
+3. **Later:**
+   - the pitch shifter in assembly (~4 MHz);
+   - kernel scheduling into parallel slots (~30% of grain cost);
+   - `GranularPlayer::OverlapAdd`'s 64-bit division per grain and block (`__divdi3`);
+   - time stretch (WSOLA);
+   - the screen polish.
+
+**The original plan, for reference (steps 1–3 are done above):**
+1. **One image with Rings and Clouds.**
+   - Today `ports/rings/Makefile` builds the image (`op1-engine`; the FX probe variant `op1-fxprobe` with `-DOP1_FX_PROBE`).
+   - Add Clouds' `src/core/*.cc` and `*.S` with `-I../clouds`. The include roots work: `src/core/...` exists only in clouds, `src/...` in rings.
+   - Or make a top-level image target; restructuring the build is in scope.
+   - Mind the image size: each `CloudsCore` holds ~0.5 MB at 44.1 kHz (record buffers, reverb 142 KB, diffuser, pitch shifter). Two instances fit region A `0x02c00000–0x02ffffff` with Rings (check `bfin-elf-size`; regions B/C in `docs/memory-map.md` are rated good but untested).
+   - No static constructors; no soft-float.
+2. **The glue, `ports/clouds/op1/clouds_fx.cc`:**
+   - mono and stereo process entries in place of phone's two words;
+   - per position: Clouds or stock phone (the orange-click setting), with a call-through to stock phone's process;
+   - restart on a > 5 ms gap;
+   - encoders normalised from phone's ranges;
+   - the governor fed with `Cycles()` around the core and our engines' render cycles (add a counter to `RingsRender`, as the FX probe's `render_calls`);
+   - mode and page from `fx_params[4..7]`;
+   - a simulator check (`make sim-fx`, Makefile target already named).
+3. **Click hooks:**
+   - synth FX page: extend `op1/input.cc` (sub-page 2, the slot's FX type = phone 3);
+   - master page: hook `MasterController`'s key words. Find the subscreen state first, or start with the synth position only.
+   - Persist with `0x19ff664` on the synth side; find the master equivalent.
+4. **The screen:** the user's `clouds.svg` in place of `ptch.svg`, swapped by the setting (as `pd.svg`/`rings.svg`). Show the mode, page, freeze and governor state.
+5. **Package and device test** (Test 17): the recipe and checks as in `docs/rings-op1-reference.md` §5, plus `ports/clouds` in the image. Measure Clouds' device/simulator ratio (its large buffers may cache worse than Rings') and tune the governor's share.
+6. **Later:** the pitch shifter in assembly (~4 MHz), kernel scheduling into parallel slots (~30% of grain cost), time stretch (WSOLA), the screen polish.
 
 ## 4. Environment
 
@@ -97,50 +211,85 @@ The spec is `docs/next-projects.md` §1 (from static analysis of firmware 246 an
 - `ffmpeg` is on PATH.
 
 **WSL Ubuntu 20.04:**
-- Toolchain in `~/op1-toolchain/bfin/bin/`: binutils 2.43, gdb 15.2, GCC 14.2 C/C++ with newlib (`tools/build_bfin_toolchain.sh`, `tools/build_bfin_gcc.sh`).
-- Run make like this: `wsl -e bash -lc 'cd /mnt/i/GitHub/PersonalProjects/OP1.CustomFirmware/ports/rings && make …'`.
-- Simulator: `bfin-elf-run` (default environment only; L1 isn't mapped, so simulator builds use `-DOP1_SIM`). `--trace-insn=on` gives an instruction trace for profiling.
+- Toolchain in `~/op1-toolchain/bfin/bin/`: binutils 2.43, gdb 15.2, GCC 14.2 C/C++ with newlib.
+- Run make like this: `wsl -e bash -lc 'cd /mnt/i/GitHub/PersonalProjects/OP1.CustomFirmware/ports/clouds && make …'`.
+- `ports/clouds` targets:
+  - comparing with upstream: `ref`, `copy`, `copy-check`, `copyd` (double-precision diagnostic), `port`, `port44`, `compare`, `spec`;
+  - checks: `test` (kernels: assembly = C), `test-governor`;
+  - cost: `profile [S=prefix PROFILE_BLOCKS=n]` (MHz per configuration on Blackfin).
+  - `bench` works but is very slow: the harness's float input generator runs as soft-float on Blackfin.
+- Simulator: `bfin-elf-run` (L1 isn't mapped; simulator builds use `-DOP1_SIM`). `--trace-insn=on` gives an instruction trace; `ports/clouds/harness/profile.py` / `profile_lines.py` turn it into instructions per function / per source line.
+- **Running firmware code in the simulator** (how the FX ranges were obtained):
+  1. wrap `op1 firmware/analysis/ldr/OP1_vdk_dxe0_01000000.bin` as an ELF: `bfin-elf-objcopy -I binary -O elf32-bfin -B bfin --change-section-address .data=0x01000000 --rename-section .data=.text,alloc,load,code,contents --set-start ADDR`;
+  2. in `bfin-elf-gdb`: `target sim --environment operating`, `load`, break at ADDR, `run`;
+  3. set SP, FP and RETS (to a breakpoint), `continue`, `dump binary memory`.
 
 **Gotchas:**
-- **Shell heredocs mangle `\n`, `\\` and quotes** inside the scripts they carry (it happened many times). Write edit scripts with the Write tool, then run them; heredocs only for text without backslashes.
-- **libgcc divisions are hundreds of instructions on Blackfin** (no divide instruction): keep `/` and `%` by non-constants out of audio loops.
-- **GCC 14 on Blackfin** turns selects and saturating shifts into taken branches (~5 cycles each) and spills when many values are live; `__builtin_bfin_shl_fr1x32` miscompiles constant shifts (`ShlSat` uses inline `<< n (S)`). Hot loops go to assembly with C references; check with `bfin-elf-objdump -d -C`.
-- **Assembly conventions:** `MUL(d, a, b)` is the 4-instruction `MulQ31Fast`; loads/stores via P (offset ≤ 60 bytes) or I registers ride in a multiply's parallel slots (`|| … || NOP`); keep `L` registers at 0; Blackfin symbols get a leading underscore.
+- **Shell heredocs mangle `\n`, `\\` and line continuations** (it happened again this session). Write edit scripts with the Write tool (e.g. into `%TEMP%\clouds_tools\`), then run them; heredocs only for text without backslashes.
+- **libgcc divisions are hundreds of instructions on Blackfin**: keep `/` and `%` by non-constants out of audio loops. **`FFloat(double)` at run time is soft-float**: make such constants `static constexpr`.
+- **GCC 14 on Blackfin:** selects and saturating shifts become taken branches; hot loops go to assembly with C references.
+- **Blackfin assembly rules learnt with the Clouds kernels:**
+  - half-register loads (`R0.L = W[..]`) only through **I registers**;
+  - a dual MAC's two halves must use **the same two source registers** (pack operands accordingly);
+  - `R3.H = R4.L` isn't a move: use `R3 = PACK (R4.L, R3.L)`;
+  - only a low half zero-extends (`R4 = R2.L (Z)`; the high: `R5 = R2 >> 16`);
+  - a 32-bit extraction from A0 goes to an **even** register (`R2 = A0`), from A1 to an odd one;
+  - the `LSETUP` end label must sit on the loop's **last** instruction;
+  - immediate load/store offsets up to 65534 bytes are fine outside parallel slots.
+  - Keep the `L` registers at 0 (no circular buffers: use Rings' no-wrap buffer with mirrored writes).
+- **Use the cycle-accurate profile driver, not guesses**: the first Clouds C build was 2× slower than estimated.
 - **The simulator doesn't fault on stray writes and doesn't model the cache.**
-- **The image has no startup code or run-time initialisers:** tables of addresses must be link-time constants; no `.init_array` / `.ctors`.
+- **The image has no startup code or run-time initialisers:** link-time constants only; no `.init_array` / `.ctors`.
 - **objdump's `/* R0=… */` annotations can be stale;** trust the `.L`/`.H` pairs. Patch-table imm16 addresses are the instruction address + 2.
 
 **Reverse-engineering material** (outside the repo):
-- `op1 firmware/analysis/`: the app's ELF and disassembly (`OP1_vdk.dis`, 11M lines; grep it).
-- `%TEMP%\op1re\`: indexes `compact.txt`, `calls.txt`, `consts.txt`, `srctags.txt`, `vcalls.txt`; helpers `op1lib.py`, `show.py START END`, `vt.py BASE N`.
-- `%TEMP%\op1inject\`: `check.py` (byte-diffs an injected LDR against stock), `pkgdiff.py` (diffs packages), and our built LDRs.
+- `op1 firmware/analysis/`: the app's ELF, disassembly (`OP1_vdk.dis`) and the extracted LDR memory (`ldr/`).
+- `%TEMP%\op1re\`: indexes `compact.txt`, `calls.txt`, `consts.txt`, `srctags.txt`, `vcalls.txt`; helpers `op1lib.py` (`rd`, `u32`, `cstr`), `show.py START END` (annotated disassembly). The L1 code at `0xffa0xxxx` doesn't disassemble cleanly.
+- `%TEMP%\op1inject\`: `check.py` (byte-diffs an injected LDR against stock), `pkgdiff.py` (diffs packages), built LDRs.
+- `%TEMP%\clouds_tools\`: this session's scratch scripts (`segsnr.py`: SNR per time segment; `ranges.gdb`). Disposable.
 
-## 5. Other projects (specced in `docs/next-projects.md`)
+## 5. Other ports (parallel agents) and projects
 
-- **op1repacker mods** (§5 there): tape at the top, iter and filter enabled, iter presets, CWO animals. All content-only (db rows, SVG edits): re-implement as `tools/mods.py`. **Interacts with Clouds' host choice** (filter) and with the preset budget.
-- **Rings factory presets** (§6): rows in `content/op1_factory.db` as `"type":"phase"` with `knobs[4..6]`; at most 176 non-sampler factory presets (stock 160; op1repacker's iter presets would take 11).
-- **More engines on the MULTI slot** (§2–§3): more engines selected by `knobs[6]`, each with its own SVG (the swap is proven); Plaits is the obvious candidate.
-- **A builder app** (§4): feature manifests and a resolver over our tools, later a GUI or an on-device menu.
-- **Smaller:** CWO → COW in the effect menu (display-only, patch table); the CPU meter in a "release" build (ask); green encoder's sound range (stock caps at ~0.9; ask); FM costs ~17 MHz per voice (could be optimised); the limiter's per-sub-block gain zipper (−66 to −80 dB).
+**Other agents port modules; this session integrates them** (user, 2026-10-16). Their folders and docs, untracked:
+- `ports/braids` (MULTI engine; `docs/braids-port.md` when written);
+- `ports/plaits` (MULTI engine);
+- `ports/streams` (**an effect**: it will need its own slot or a place in the orange-click cycle; settle with the user);
+- `ports/marbles` (an LFO; `docs/lfo-interface.md` maps the OP-1's LFO interface);
+- `docs/streams-port.md`, `docs/marbles-port.md`.
+
+The announced default, **not yet confirmed by the user:** with 3+ engines, the orange click cycles phase → Rings → Braids → Plaits. Every module shares the CPU budget (§2).
+
+Specced earlier (`docs/next-projects.md`):
+- op1repacker mods as `tools/mods.py` (content only; interacts with the preset budget);
+- Rings factory presets;
+- a builder app;
+- small items: CWO → COW display rename, the CPU meter in release builds, the green encoder's range, FM optimisation.
 
 ## 6. Git
 
-- Branch `firmware-analysis-tooling`, remote `origin` (`<public repo URL>`). Run `git status` first; commit only when the user asks.
-- **Never commit TE firmware:** `op1 firmware/` and `mutableinstruments/` are gitignored; so is `ports/rings/build/` (scratch scripts there can be deleted).
-- `incoming/` belongs to the user and stays out of git.
+- Branch `firmware-analysis-tooling`, remote `origin` (`<public repo URL>`). Commit only when the user asks.
+- **Uncommitted from 2026-10-16 (this session's work):**
+  - modified: `docs/HANDOVER.md`, `docs/device-tests.md` (Test 16), `docs/next-projects.md`, `tools/decode_probe_beeps.py` (v4), `ports/rings/Makefile`, `ports/rings/op1/{engine.cc, patches.cc, patches.h}` (FX probe, under `OP1_FX_PROBE`; `make op1-engine` still builds multi4 byte-identical);
+  - new: `ports/rings/op1/fx_probe.*`, `ports/rings/tests/host_fx_probe.cc`, `ports/clouds/`, `docs/clouds-port.md`, `docs/clouds-handover.md` (superseded), `docs/clouds-screen-brief.md`;
+  - integration (later session): `ports/clouds/op1/`, `ports/clouds/tests/sim_fx.cc`, `ports/rings/{Makefile, op1/input.cc, op1/input.h}` and more `OP1_CLOUDS` blocks in `ports/rings/op1/{engine,patches}.*`, Test 17 in `docs/device-tests.md`;
+  - **other agents' folders:** `ports/braids`, `plaits`, `streams`, `marbles` and their docs.
+- **Before committing:** gitignore `ports/clouds/build/` and `ports/clouds/out/` (renders); check the other ports likewise.
+- **Never commit TE firmware:** `op1 firmware/` and `mutableinstruments/` are gitignored. `incoming/` belongs to the user and stays out of git.
 
 ## 7. Docs and memory
 
 | Doc | Content |
 |---|---|
-| `docs/rings-op1-reference.md` | Rings / MULTI on the device: controls, architecture, hooks, CPU, tests, package recipe and checks |
+| `docs/clouds-port.md` | **Clouds:** state, layout, validation, CPU, governor, OP-1 hookup facts |
+| `docs/clouds-screen-brief.md` | The Clouds screen brief (two pages, controls, SVG constraints) |
+| `docs/rings-op1-reference.md` | Rings / MULTI on the device: controls, architecture, hooks, CPU, tests, **package recipe and checks** |
 | `docs/rings-port.md` | The Rings port's design, validation and measurements |
-| `docs/next-projects.md` | Specs: Clouds as an effect (the OP-1's effect interface), engines, a builder app, op1repacker mods, factory presets |
-| `docs/device-tests.md` | Every device test (probes v1–v3, Tests 2–15): procedure and result |
+| `docs/next-projects.md` | Specs: the OP-1's effect interface (§1), engines, builder app, op1repacker mods, presets |
+| `docs/device-tests.md` | Every device test (probes v1–v4, Tests 2–16): procedure and result |
 | `docs/engine-interface.md` | Synth engine types, factory, voice vtables, render ABI, pitch |
-| `docs/screen-interface.md` | Screen class, SVG API, frame loop, input path, presets, encoder clicks |
+| `docs/screen-interface.md` | Screen class, SVG API (what can change at run time), input path, presets, encoder clicks |
 | `docs/memory-map.md` | App load map; free regions (A `0x02c00000–0x02ffffff` in use; B and C rated good, untested) |
 | `docs/brick-safety.md`, `docs/firmware-246-baseline.md`, `docs/app-boot-chain.md` | Safety and groundwork |
-| `ports/rings/README.md` | Port layout and harness builds |
+| `ports/rings/README.md` | Rings port layout and harness builds |
 
-Persistent notes: `%USERPROFILE%\.claude\projects\I--GitHub-PersonalProjects-OP1-CustomFirmware\memory\`.
+Persistent notes: `%USERPROFILE%\.claude\projects\I--GitHub-PersonalProjects-OP1-CustomFirmware\memory\` (index `MEMORY.md`).

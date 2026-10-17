@@ -665,3 +665,104 @@ A per-function instruction profile in the simulator found these (the mode bank i
 1. 6 notes ringing (and voices ringing out plus new notes), turning each encoder, blue especially: still crackling?
 2. Engine reading (one white click) with 6 notes, still and turning: how many rings (multi3: 3-4)?
 3. Sound: does "all" still sound right with 14 modes?
+
+## Test 16: FX probe (`op1_246_rings_fxprobe1.op1`)
+
+**Result (2026-10-16, second recording; `incoming/A.wav`, `B.wav`, `C.wav`).** Rings model 6, polyphony 4, 4 notes held. Each recording has 3–4 identical complete reports; the clock reads 399.7–400.1 MHz.
+
+| Run | Report | Free CPU (stock phone running) | Stock phone | Voices per call | Longest interval | Gaps |
+|---|---|---|---|---|---|---|
+| A: master, 4 notes | `[4, 2, 3, 567, 8, 207, 40, 1040, 2]` | 1.4%, ~6 MHz | ~36 MHz | 4.0 | 179% of a block | 2 |
+| B: master, nothing playing | `[4, 2, 3, 566, 427, 197, 0, 613, 0]` | 75%, ~300 MHz | ~35 MHz | 0 | 108% | 0 |
+| C: synth effect, 4 notes | `[4, 1, 9, 566, 82, 93, 40, 826, 2]` | 14.5%, ~58 MHz | ~16 MHz | 4.0 | 146% | 2 |
+
+- **Rate:** both positions are called ~690 times/s with 64 samples at 44.1 kHz (period 566 × 1024 cycles; the report tone is 1377 Hz, i.e. written at 44.08 kHz).
+- **Switched off, an effect isn't called** (2 gaps for the 2 off/on switches in A and C). An effect costs nothing while off, and comes back to stale state when switched on again.
+- **The master effect is post-mix:** the drums go through it too (by ear). **The stereo order is (L, R):** the beeps were on the left only.
+- **Stock phone costs** ~35 MHz on the master and ~16 MHz as a synth effect (half: the stereo process is two mono ones). Its cost varies a little with its settings (28–31 MHz in the first recording). Clouds takes this time back.
+- **The OP-1's own baseline** (nothing playing, no synth) is ~15% (~60 MHz), plus the effect.
+- **Rings model 6 with 4 voices costs ~255–290 MHz on the device**, OP-1 per-voice work included: B's free time less A's (master), or less C's corrected for the mono phone (synth). That is ~2× the earlier estimate (~73 MHz simulated × 1.6). The CPU meter's 2–4 rings for this case (Test 11) agree with the higher figure. The likely cause is the data cache: the 109 KB reverb and the string delay lines live in SDRAM, and the simulator models no cache. **Expect the same for Clouds' buffers**, and measure on the device.
+- **The synth position's params pointer is not in `0xff801444 + slot × 16`** (position 9 = "other"). Clouds gets the pointer in each call, so this doesn't matter. The address in `docs/next-projects.md` §1 was wrong for the process call.
+- The longest intervals (146–179%) were recorded with notes starting inside the timing window (note-on spikes). A and C were close to the limit already.
+
+The first recording (2026-10-16, earlier) gave the same rate and baseline; its run A had 6 voices sounding and the off/on switching before the reset, so its gap count was cleared.
+
+The rest of this section is the build description from before the flash.
+
+The first step of the Clouds project (`docs/HANDOVER.md` §3): measure the effect interface on the device before any Clouds code. It is multi4 unchanged, plus a probe wrapped around the **phone** effect's two process entries (`ports/rings/op1/fx_probe.cc`): mono (the synth and drum effect, vtable word `0x1911308`) and stereo (the master effect, `0x1911328`). Both still call stock phone, so phone sounds as before until a measurement starts.
+
+**How the probe works.** Each entry (mono, stereo) runs on its own:
+1. **Idle:** stock phone plays. In the background the probe times its calls in windows of 1024 calls (~1.5 s). Each complete window records the call period, the longest interval, stock phone's cycles per call and how many synth voices rendered per effect call. A pause of over 5 ms between calls (the effect not called at all) counts as a **gap** and restarts the window.
+2. **Turning the blue encoder starts the measurement** (once a window has completed): as probe v3, the probe burns more CPU in every call until audio overloads; the last load that ran clean is the free CPU, with Rings and stock phone running.
+3. **Report:** beeps instead of the effect's output, repeating (master: left channel only, right silent). Nine numbers: version 4, mono/stereo, position (synth/drum/master), call period, free CPU, stock phone's cost, voices per call, longest interval, gaps.
+- **Turning the white encoder** in any state returns to idle (stock phone) and clears the gap count, for another run.
+- The beep tone's pitch gives the effect's sample rate (1378 Hz at 44.1 kHz).
+
+**Checks (off the device):**
+- `make host-fx-probe` simulates an OP-1 (clock, free CPU, phone cost, voices, gaps, jitter). `tools/decode_probe_beeps.py` (now with v4) recovers every value: stereo, 50% free, 20,000-cycle phone, 6 voices, 2 gaps (the gap before the white reset is cleared), 44.1 kHz from the tone; and mono, 30% free, 4 voices.
+- `make op1-engine` still builds multi4 byte-identical; the probe code and the render counter are only in `make op1-fxprobe` (`-DOP1_FX_PROBE`).
+- **Package:** against multi4 only `OP1_vdk.ldr` changes. Against stock: `OP1_vdk.ldr` and `content/op1_factory.db` change, `content/display/rings.svg` is added, `te-boot.ldr` is absent. The LDR byte-diff shows only the FIRST header, the 9 vtable/patch words (the two new ones checked against stock phone, `0x01a1bb74` and `0x01a1c25c`), the type-list immediates and the appended blocks; the stock tail is intact. `verify_bootloader.py` passes. Every patch target checked against `bfin-elf-nm`; image end `0x02ca3dfc`; no `.init_array`.
+- The stereo wrapper reads the parameters from the caller's stack (`[SP+12]` on entry) and passes them to stock phone the same way; phone's stereo process is its mono process on two sub-objects, 64 samples each (`0x1a1c25c`).
+
+**Procedure.** Rings: the heaviest case, **model 6 (string + reverb), polyphony 4**. Recordings go in `incoming/probe/`; record the OP-1's output (as the probe v3 recordings), at least 45 s of beeps each.
+
+*Run A, master effect (stereo):*
+1. Put **phone on the master effect** and switch it on. Stock phone should sound as usual.
+2. **By ear:** play some drums. Do they go through phone too (pre or post the drum mix)?
+3. On the master effect page, **turn the white encoder** a notch (resets the probe).
+4. **Switch the master effect off for ~2 s, then on again; do this twice.** (The report will show 2 gaps if the effect isn't called while off, 0 if it keeps running.)
+5. **Hold a 4-note Rings chord**, wait ~3 s, then **turn the blue encoder** a notch (if it's at the end of its range, turn it the other way). Keep holding the chord **~20 s**: stutters near the end are expected. Watch the screen: does it get sluggish before the audio stutters?
+6. Beeps start: a long tone, then groups of short beeps. **Check with headphones: beeps on the left only?** You can let go of the chord. Record ≥ 45 s → `fxprobe_master.ogg`.
+7. Turn the white encoder to go back to stock phone.
+
+*Run B, master, no notes:* steps 3 and 5 without the chord (nothing playing), → `fxprobe_master_idle.ogg`. Gives the headroom without Rings.
+
+*Run C, synth effect (mono):* switch the master effect off, put **phone on the synth's effect**, and repeat steps 3, 5 and 6 with the chord → `fxprobe_synth.ogg`. (Turning blue/white here means the synth effect's encoders.)
+
+If no beeps come after turning blue: no window had completed yet (wait 2 s and turn blue again). A beep tone that never stops, or a hang, means something is wrong: power off and report.
+
+**What the numbers decide:** the CPU budget for Clouds next to Rings (grain counts, quality, internal rate); whether Clouds must handle being called while switched off; 64 samples at 44.1 kHz for both positions; the left/right order.
+
+## Test 17: Clouds on phone (`op1_246_rings_clouds1.op1`)
+
+**Not flashed yet.** The first Clouds build: multi4 (MULTI engine: phase or Rings) plus **Clouds in place of the phone effect**, as the synth effect (mono) and the master effect (stereo). Only looping delay and granular are implemented. The screen is still phone's stock screen (the Clouds screen waits for `clouds.svg`). Code: `ports/clouds/op1/clouds_fx.cc`, `clouds_settings.h`; hooks in `ports/rings/op1/{patches,input,engine}.cc` under `-DOP1_CLOUDS` (`make op1-clouds`).
+
+**How it behaves:**
+- **Phone is Clouds by default** (every preset stores 0 in the effect's values[4..7]). **Orange click** on the FX page swaps Clouds ↔ stock phone; it's saved with the synth preset. On the master it's kept in the live master values (whether those persist across a power cycle is a question for this test).
+- While Clouds plays, on the FX page:
+  - **blue click:** next mode, looping delay ↔ granular (shift + click: back);
+  - **green click:** freeze on/off (not saved);
+  - **white click:** page 1 ↔ page 2. The encoders jump to the other page's values.
+- **Page 1:** blue = position, green = size, white = pitch (centre = none, ±2 octaves), orange = density (granular: centre = no grains, left = regular, right = random grains; looping delay: diffusion).
+- **Page 2:** blue = texture, green = dry/wet (50% by default), white = feedback, orange = reverb.
+- Stereo spread is fixed at 50%. Clouds restarts (buffer cleared) when the effect is switched on, swapped from phone, or the synth slot changes. The restarting call takes ~20% of an audio period in the simulator, so one click at that moment is possible next to heavy Rings.
+- **The grain count is governed:** when CPU runs short, granular plays fewer grains instead of crackling. Looping delay has a fixed cost (~31 MHz simulated stereo, maybe ~50 on the device).
+
+**Checks (off the device):**
+- `make sim-fx` (ports/clouds): both entries in the simulator, plus the settings and click round trips (the page swap returns the encoders to within ±2 steps).
+  - Master looping delay ~31 MHz;
+  - granular ~31 MHz (~7 grains), dense ~55 MHz;
+  - synth looping delay ~20 MHz, granular ~29 MHz;
+  - restart ~115k cycles.
+- `make op1-engine` still builds multi4 byte-identical.
+- **Package:** against multi4 only `OP1_vdk.ldr` changes. Against stock: `OP1_vdk.ldr` and `content/op1_factory.db` change, `content/display/rings.svg` is added, `te-boot.ldr` is absent.
+- **LDR byte-diff against stock:** only the FIRST header, the 12 vtable/patch words, the type-list immediates and the appended blocks differ; the stock tail is intact. The 5 new words were each checked against their stock value: phone mono/stereo process `0x01a1bb74`/`0x01a1c25c`, MasterController key down/shift key down/key up `0x019db7c4`/`0x019d987e`/`0x019db708`.
+- `verify_bootloader.py` passes. Every target was checked against `bfin-elf-nm`. The image ends at `0x02d62ac4` (1.4 MB of region A) and has no `.init_array`.
+
+**Procedure.** Record anything interesting into `incoming/clouds/`.
+1. **Synth effect.**
+   - Pick a synth (stock or MULTI), put **phone** on its effect and switch it on. It should sound like a delay (Clouds' looping delay), not like phone.
+   - Turn the four encoders: does each do something (position = delay time, size, pitch, density = diffusion)?
+   - Set pitch back to the centre.
+2. On that FX page:
+   - **click white** (page 2): turn green (dry/wet) to full wet, then white (feedback) and orange (reverb) up;
+   - **click white** again: are page 1's settings where you left them?
+3. **Click blue:** granular. With density right of centre you should hear random grains; at the centre, silence (dry only); left of centre, regular grains. Try size and pitch.
+4. **Click green:** freeze. The grains keep playing the held buffer while you play new notes; click again to release.
+5. **Click orange:** stock phone. Click orange again: back to Clouds (same mode and page).
+6. **Save/recall:** switch to another synth slot and back. Are the mode and page as you left them? Then power-cycle and check again.
+7. **Master effect:** put phone on the master and repeat steps 1–5 quickly (stereo now; the drums go through it too). After a power cycle, are the master's mode and page kept?
+8. **CPU:** a Rings chord (model 6, polyphony 4, 4 notes) with granular on the master and density far right. Does it crackle, or just thin out (fewer grains)? The same with looping delay.
+9. Anything else you notice (clicks when switching, stuck sound, the screen), in numbered points as usual.
+
+**If something is wrong:** a hang or a stuck loud tone means power off. Recovery as always: hold COM at power-on and flash `op1_246_rings_multi4.op1`.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Decode the probe's beep report (v2 or v3) from a recording
-(docs/device-tests.md).
+"""Decode the probe's beep report (v2, v3 or the FX probe's v4) from a
+recording (docs/device-tests.md).
 
 Report cycle (one unit = 2^23 CPU cycles):
   sync tone 12 units, 12 units off,
@@ -12,8 +12,15 @@ call interval / 1024.
 v2 numbers (six): block period / 1024, free cycles per block / 1024, min and
 max render calls per block, distinct voice objects (31 = anything outside the
 voice array counts once), render calls in 2^28 cycles.
+v4 numbers (nine, the first is 4; ports/rings/op1/fx_probe.cc): version,
+kind (1 mono, 2 stereo), position (1 synth, 2 drum, 3 master, 9 other), call
+period / 1024, free cycles per call / 1024, stock phone's cycles per call /
+256, synth render calls per effect call x 10, longest call interval / 1024,
+gaps (> 5 ms without a call) since idle started.
 
-The beep timing gives the CPU clock (unit duration = 2^23 cycles).
+The beep timing gives the CPU clock (unit duration = 2^23 cycles). The tone
+is a square wave with a 32-sample period, so its pitch gives the sample rate
+of the code that wrote it.
 
 Usage:
     python tools/decode_probe_beeps.py RECORDING [--ffmpeg PATH]
@@ -34,8 +41,30 @@ FRAME = 40   # 5 ms
 
 
 def expected_count(numbers):
-    """Numbers in a complete report: v3 starts with its version, 3."""
-    return 5 if numbers and numbers[0] == 3 else 6
+    """Numbers in a complete report: v3 and v4 start with their version."""
+    if numbers and numbers[0] == 3:
+        return 5
+    if numbers and numbers[0] == 4:
+        return 9
+    return 6
+
+
+def tone_hz(samples, r, unit):
+    """The tone's pitch from zero crossings in the sync tones (the middle 80%
+    of each), or None."""
+    estimates = []
+    for on, t, d in r:
+        if not on or d < 8 * unit:
+            continue
+        a, b = int((t + 0.1 * d) * RATE), int((t + 0.9 * d) * RATE)
+        seg = samples[a:b]
+        crossings = sum(1 for x, y in zip(seg, seg[1:]) if (x < 0) != (y < 0))
+        if len(seg) > 1:
+            estimates.append(crossings / 2.0 / (len(seg) / RATE))
+    if not estimates:
+        return None
+    estimates.sort()
+    return estimates[len(estimates) // 2]
 
 
 def load(path, ffmpeg):
@@ -72,7 +101,8 @@ def main():
     parser.add_argument('recording')
     parser.add_argument('--ffmpeg', default=shutil.which('ffmpeg') or 'ffmpeg')
     args = parser.parse_args()
-    r = runs(load(args.recording, args.ffmpeg))
+    samples = load(args.recording, args.ffmpeg)
+    r = runs(samples)
     beeps = sorted(d for on, _, d in r if on)
     if len(beeps) < 10:
         print('Too few beeps found ({}).'.format(len(beeps)))
@@ -128,6 +158,8 @@ def main():
         print('No complete report decoded.')
         return 1
     n = good[0]
+    if len(n) == 9:
+        return report_v4(n, clock, tone_hz(samples, r, unit))
     if len(n) == 5:
         names = ['probe version', 'block period / 1024 cycles', 'free cycles per block / 1024',
                  'held key, 0.1 Hz at 88.2 kHz', 'longest interval / 1024 cycles']
@@ -158,6 +190,35 @@ def main():
             longest / clock * 1000, 100.0 * longest / period))
     else:
         print('  render calls per second ~{:.0f}; per block {}..{}'.format(n[5] / (2 ** 28 / clock), n[2], n[3]))
+    return 0
+
+
+def report_v4(n, clock, tone):
+    """The FX probe's numbers (ports/rings/op1/fx_probe.cc)."""
+    names = ['probe version', 'kind (1 mono, 2 stereo)', 'position (1 synth, 2 drum, 3 master)',
+             'call period / 1024 cycles', 'free cycles per call / 1024',
+             'stock phone cycles per call / 256', 'synth renders per call x 10',
+             'longest interval / 1024 cycles', 'gaps since idle']
+    for name, v in zip(names, n):
+        print('  {:<40} {}'.format(name, v))
+    period, free, phone, longest = n[3] * 1024, n[4] * 1024, n[5] * 256, n[7] * 1024
+    calls = clock / period
+    print('Derived:')
+    print('  {} effect, position {}'.format(
+        {1: 'mono', 2: 'stereo'}.get(n[1], '?'),
+        {1: 'synth', 2: 'drum', 3: 'master'}.get(n[2], 'other')))
+    print('  call period {:.0f} cycles = {:.3f} ms -> {:.0f} calls/s ({:.0f} Hz at 64 samples per call)'.format(
+        period, period / clock * 1000, calls, 64 * calls))
+    if tone:
+        print('  report tone {:.0f} Hz -> the effect writes at {:.0f} Hz (32-sample period); '
+              '{:.1f} samples per call'.format(tone, 32 * tone, 32 * tone / calls))
+    print('  free CPU {:.0f}% of a call period = ~{:.0f} MHz (with stock phone running)'.format(
+        100.0 * free / period, clock / 1e6 * free / period))
+    print('  stock phone {:.0f} cycles per call = ~{:.1f} MHz'.format(phone, phone * calls / 1e6))
+    print('  synth voices rendered per effect call {:.1f}'.format(n[6] / 10.0))
+    print('  longest call interval {:.2f} ms ({:.0f}% of a period)'.format(
+        longest / clock * 1000, 100.0 * longest / period))
+    print('  gaps since idle {} (each: the effect not called for > 5 ms)'.format(n[8]))
     return 0
 
 
