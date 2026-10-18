@@ -76,6 +76,9 @@ class DrumSequencer {
   // t == 0 so the step grid stays aligned with the host clock.
   DrumSeqSettings* mutable_settings() { return &settings_; }
   const PatternGenerator& generator() const { return generator_; }
+  // A new random draw for chaos (the perturbation is drawn each bar, so it
+  // changes at the next bar).
+  void Reseed(uint16_t seed) { generator_.set_rng_state(seed ? seed : 1); }
   uint8_t step() const { return generator_.step(); }
   uint8_t last_state() const { return last_state_; }
   uint32_t step_count() const { return step_count_; }

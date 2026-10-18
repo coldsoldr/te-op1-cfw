@@ -264,10 +264,12 @@ void MarblesSeq::Knob(int32_t k, int32_t delta_q16) {
   Settings& s = settings_;
   int32_t* value;
   if (s.page == PAGE_T) {
-    int32_t* const t_values[4] = { &s.rate, &s.t_bias, &s.jitter, &s.deja_vu };
+    // Green holds the deja vu controls, orange the bias (the user's colour
+    // scheme: everything deja vu is green).
+    int32_t* const t_values[4] = { &s.rate, &s.deja_vu, &s.jitter, &s.t_bias };
     value = t_values[k & 3];
   } else {
-    int32_t* const x_values[4] = { &s.spread, &s.x_bias, &s.steps, &s.length };
+    int32_t* const x_values[4] = { &s.spread, &s.length, &s.steps, &s.x_bias };
     value = x_values[k & 3];
   }
   *value = Clamp16(*value + delta_q16);
@@ -290,9 +292,9 @@ void MarblesSeq::OnClick(Click click, int32_t direction) {
     }
     case CLICK_WHITE:
       if (direction < 0) {
-        s.pitch_source ^= 1;
-      } else {
         s.page ^= 1;
+      } else {
+        s.pitch_source ^= 1;
       }
       break;
   }

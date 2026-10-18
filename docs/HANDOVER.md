@@ -1,13 +1,25 @@
 # Handover: OP-1 custom firmware
 
-Last updated 2026-10-16 (end of session). Read this first in a fresh session; it's self-contained, and the docs it links to have the detail.
+Last updated 2026-10-17 (end of session). Read this first in a fresh session; it's self-contained, and the docs it links to have the detail.
 
-**Current project: Mutable Instruments Clouds as an OP-1 effect (§3).**
-- **Done:** the DSP port, verified against upstream; assembly kernels; a CPU governor. All are host- and simulator-tested.
-- **Integrated (2026-10-16, later session):** Rings + Clouds in one image (`make op1-clouds` in `ports/rings`), Clouds on phone in both positions, the click hooks on the synth and master FX pages. Test 17 (clouds1 hung at boot: one-call buffer clear > 5 ms; clouds2 fixed it and works, but overloads next to Rings, drums followed the synth, master clicks dead). **2026-10-17: `op1_246_rings_clouds3.op1` built and verified, not yet flashed: Test 18** in `docs/device-tests.md` (core at 22.05 kHz between halfband filters, ~40% less CPU; drums via mode word `0xff801038`; master subscreen `0x1aad5f0`; drum click hooks; the weather screen).
-- **Next:** the user flashes and runs Test 17; then the screen (waits for `clouds.svg`), device CPU numbers, governor tuning (§3, "Next steps"). **All integration happens in this (the main) session.** Other agents only port modules (§5).
-- **On the device:** `op1_246_rings_fxprobe1.op1` (MULTI/Rings plus an FX probe on phone).
-- **Nothing from 2026-10-16 is committed** (§6).
+**Where things stand (2026-10-17):**
+- **On the device:** whatever the user last flashed. Known good: `op1_246_rings_clouds4.op1` (Rings MULTI + Clouds on phone/"multi", Tests 17–19). Recovery is always COM at power-on + flash clouds4.
+- **seq3 crashed on a key press on the Grids screen** (Test 23 result: stock pattern's controller looked up pattern.svg nodes in grids.svg). Fixed in seq4 (Test 23b). seq5 (SVG subpath split) didn't boot: its split left unbalanced `</path>` tags. **seq6 (Test 23c) is the corrected split. seq7 (Test 24) adds the Marbles colour pass (green = deja vu, swapped encoders and white clicks). seq8 (Test 25) adds Rings: the screen follows the LFO, no CPU meter, no main-window frame, a green polyphony frame (Test 25 all good). seq9 (Test 26) is the first beta: Clouds' main frame white, bottom-right frame removed. Test 26 good: seq9 is the first beta. seq10 (Test 27) aims at the user's next two items (Rings tape animation choppy with more than 3 voices while recording; Clouds and Rings together): the OP-1 runs without a data cache, so Rings' per-call buffers moved to the L1 scratchpad (`src/scratch.h`), bit-identical in the simulator. Test 27: animation still choppy, Rings + Clouds unchanged, slightly better at 4 voices: not the main cost. Next: measure on the device: `op1_246_rings_cpuprobe1.op1` (Test 28: 399 MHz, data cache present, Rings ~25 MHz a voice on the device ≈ the simulator, Clouds ~81 MHz, the screen starves above ~40% load). cpuprobe2 / seq11 (Test 29): Rings mode budget of 60 in "all", tails sleep at -72 dB, Clouds' governor share 0.40.**
+- **Test 23's build: `op1_246_rings_seq3.op1` (also Test 22's Marbles steps):** clouds4 + **Marbles as the synth sequencer** (on tombola, Dots screen) + **Grids as the drum sequencer** (on pattern, "Panel + kit" screen). Build: `make op1-seq` in `ports/rings`; packaging recipe below.
+- **Committed and pushed** up to `eff35fa` (Marbles Dots screen). **Not committed yet:** the Grids glue and screen (`ports/grids/op1/`, `tests/sim_grids.cc`, Makefile), the `kCall24` patch kind (`tools/inject_app.py`, `op1.h`), the `_x`/display/transform fixes in `ports/marbles/op1/gen_marbles_svg.py` and the `loopX`/`legNX` ids in `marbles_op1.cc`, `docs/sequencer-interface.md` §12, Tests 22–23 notes, `docs/grids-port.md` §9. Commit only when the user asks.
+
+**Next steps:**
+1. The user's Test 23 results (numbered points). Fix what they find.
+2. **Show pattern as "MULTI"** (the user's decision): the chooser looks the current type up by its shown name, so the query rename alone would crash it. `GridsSeqName` exists (`-DOP1_GRIDS_RENAME`, off) but the chooser's CALL at `0x1970bea` can't reach region A (pcrel24 = ±16 MB, ~19.6 MB away). Needs a trampoline within 16 MB (e.g. region C `0x01e00000`, untested): its own small test.
+3. Later: Grids/Marbles settings in a private op1.db table (RAM only now); the knob speed if the user wants it changed; Rings + 2 Clouds CPU strain (accepted for now).
+
+**SVG lessons (a bad screen file stops the boot until COM recovery):** ids must not contain `_x` (the parser decodes `_xHH_` escapes: `Parser.cpp:231`, marbles5/6); the OP-1 folds group transforms into children (draw driven elements in screen coordinates); no arcs, no exponents, ≤ 2 decimals; `display` only proven on g/line/polyline/rect/path/ellipse. Every design goes through its `ports/*/op1/gen_*_svg.py`, which enforces all of this. Designer briefs: `docs/marbles-screen-brief.md` (v2), `docs/grids-screen-brief.md`.
+
+**Packaging recipe** (from the repo root, `.venv/Scripts/python.exe`): copy a known `op1 firmware/work_*` dir (e.g. `work_seq3`) to a new one; regenerate `content/display/*.svg` with the gen scripts; `tools/inject_app.py "op1 firmware/op1_246/OP1_vdk.ldr" <work>/OP1_vdk.ldr.new ports/rings/build/<image>.elf`, move it over `OP1_vdk.ldr`; `tools/build_package.py <work> "op1 firmware/op1_246_rings_<name>.op1"`; `tools/verify_bootloader.py` must PASS; check every hook target against `bfin-elf-nm`.
+
+**Key docs:** `docs/device-tests.md` (Tests 17–23 and results), `docs/sequencer-interface.md` (sequencers, probe results §10, pattern data/print and the rename §12), `docs/marbles-port.md` §9, `docs/grids-port.md` (Decisions, §9), `docs/clouds-port.md`. Simulator checks: `make sim-seq` (ports/marbles), `make sim-grids` / `make compare` (ports/grids), `make sim-fx` / `make test` (ports/clouds).
+
+**Older (Clouds integration, 2026-10-16):** §3 below; the Clouds sections are history now that clouds4 is on the device.
 
 ## 1. Goal and hard rules
 

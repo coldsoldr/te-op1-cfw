@@ -3,6 +3,7 @@
 op1/screen.cc needs (stdlib only):
 
   - drops the <metadata> block (unused, and most of the file);
+  - drops the main window's frame and draws the polyphony frame green;
   - replaces the #pluck polyline with 24 variants pluck0..pluck23, middle
     vertex at x = 16 + 4 i (the OP-1 has no call to move a polyline point;
     the screen shows one variant);
@@ -32,6 +33,15 @@ def convert(svg):
     if n != 1:
         raise ValueError('expected one <metadata> block, found %d' % n)
     svg = svg.replace(' xmlns:c2pa="http://c2pa.org/manifest"', '')
+
+    # The user's colour pass (2026-10-17): no frame around the main window;
+    # the polyphony frame in green, the encoder whose click picks it.
+    svg, n = re.subn(r'<path [^>]*d="M7\.3,2\.5h176\.4[^"]*"></path>', '', svg)
+    if n != 1:
+        raise ValueError('main window frame not found')
+    svg, n = re.subn(r'(<path [^>]*stroke=")#3854A5("[^>]*d="M316\.5,139\.2)', r'\g<1>#00EE92\2', svg)
+    if n != 1:
+        raise ValueError('polyphony frame not found')
 
     pluck = re.search(r'<polyline id="pluck" ([^>]*)points="16,130 44,125 108,130"></polyline>', svg)
     if not pluck:

@@ -23,7 +23,7 @@ namespace op1rings {
 const int32_t kMaxModalModes = 64;
 const int32_t kMaxModalBlockSize = 32;
 
-// Profiling (the OP-1 engine's CPU meter, op1/cpu_meter.h): when
+// Profiling (tests/sim_engine.cc): when
 // profile_clock is set, the cycles spent recomputing coefficients are added
 // to profile_update_cycles.
 extern uint32_t (*profile_clock)();
@@ -40,9 +40,13 @@ class ModalResonator {
   void set_brightness(int32_t brightness) { brightness_ = brightness; }
   void set_damping(int32_t damping) { damping_ = damping; }
   void set_position(int32_t position) { position_ = position; }
+  // Fewer modes than before drops the top ones at once; modes that come
+  // back (a trimmed voice struck again, op1/engine.cc) start from rest.
   void set_resolution(int32_t resolution) {
     resolution -= resolution & 1;
-    resolution_ = resolution < kMaxModalModes ? resolution : kMaxModalModes;
+    if (resolution > kMaxModalModes) resolution = kMaxModalModes;
+    for (int32_t i = resolution_; i < resolution; ++i) modes_[i].lp = modes_[i].bp = 0;
+    resolution_ = resolution;
   }
 
   // in: Q27 input (upstream scale, before its * 0.125); out, aux: Q27
@@ -114,9 +118,9 @@ class ModalResonator {
   Geometry geometry_[kMaxModalModes];
   int32_t log2_pf_[kMaxModalModes];  // log2(partial frequency), Q24
 
-  // Scratch buffers, kept off the stack: on the OP-1 the render call may run
-  // on a small interrupt stack.
-  int32_t scratch_in_[kMaxModalBlockSize];
+  // Kept off the stack: on the OP-1 the render call may run on a small
+  // interrupt stack. (The input and the mode bank's scratch are shared by
+  // all voices: src/scratch.h.)
   int32_t scratch_start_[kMaxModalModes];
   int32_t scratch_end_[kMaxModalModes];
 };

@@ -97,11 +97,6 @@ class StringVoice {
   StretchLine stretch_;
   StringFixed strings_[kMaxStrings];
 
-  // Scratch, shared by all voices (rendered one at a time).
-  static int32_t excitation_[kStringMaxBlockSize];
-  static int32_t sympathetic_[kStringMaxBlockSize];
-  static int32_t mono_[kStringMaxBlockSize];
-  static const int32_t zeros_[kStringMaxBlockSize];
 };
 
 }  // namespace op1rings

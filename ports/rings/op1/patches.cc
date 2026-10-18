@@ -17,6 +17,9 @@
 #ifdef OP1_MARBLES
 #include "op1/marbles_op1.h"
 #endif
+#ifdef OP1_GRIDS
+#include "op1/grids_op1.h"
+#endif
 #include "op1/input.h"
 #include "op1/screen.h"
 
@@ -31,7 +34,16 @@ namespace {
 // lfo_types and seq_types: none has a 'phase' row, so they're unchanged.
 // The Clouds image also shows fx_types' "phone" as "multi" (Clouds or
 // phone); only fx_types has a 'phone' row.
-#ifdef OP1_CLOUDS
+#if defined(OP1_CLOUDS) && defined(OP1_GRIDS) && defined(OP1_GRIDS_RENAME)
+// ... and seq_types' "pattern" (Grids or pattern; only seq_types has that
+// row). The chooser also looks the current type up by its shown name:
+// GridsSeqName answers "multi" there (docs/sequencer-interface.md §12).
+// Not built yet: the chooser's CALL (0x1970bea) can't reach region A
+// directly (pcrel24 = +-16 MB; ~19.6 MB away), so it needs a trampoline.
+const char kTypeListQuery[] =
+    "SELECT id, CASE type WHEN 'phase' THEN 'multi' WHEN 'phone' THEN 'multi' WHEN 'pattern' THEN 'multi' "
+    "ELSE type END FROM %s";
+#elif defined(OP1_CLOUDS)
 const char kTypeListQuery[] =
     "SELECT id, CASE type WHEN 'phase' THEN 'multi' WHEN 'phone' THEN 'multi' ELSE type END FROM %s";
 #else
@@ -96,6 +108,25 @@ const Patch kPatches[kNumPatches] = {
   { op1marbles::kCtlKnobSlot, kWord32, op1marbles::kStockCtlKnob, reinterpret_cast<const void*>(&MarblesCtlKnob) },
   { op1marbles::kScreenUpdateSlot, kWord32, op1marbles::kStockScreenUpdate, reinterpret_cast<const void*>(&MarblesScreenUpdate) },
   { op1marbles::kScreenInitSlot, kWord32, op1marbles::kStockScreenInit, reinterpret_cast<const void*>(&MarblesScreenInit) },
+#endif
+#ifdef OP1_GRIDS
+  // Grids on the pattern sequencer, drums only (../grids/op1/grids_op1.cc):
+  // its player (vtable 0x19110c4), controller (0x191101c) and screen
+  // (0x1911104); and the chooser's name lookup (a CALL, 0x1970bea).
+  { op1grids::kKeyDownSlot, kWord32, op1grids::kStockKeyDown, reinterpret_cast<const void*>(&GridsKeyDown) },
+  { op1grids::kKeyUpSlot, kWord32, op1grids::kStockKeyUp, reinterpret_cast<const void*>(&GridsKeyUp) },
+  { op1grids::kTickSlot, kWord32, op1grids::kStockTick, reinterpret_cast<const void*>(&GridsTick) },
+  { op1grids::kUiFrameSlot, kWord32, op1grids::kStockUiFrame, reinterpret_cast<const void*>(&GridsUiFrame) },
+  { op1grids::kAllNotesOffSlot, kWord32, op1grids::kStockAllNotesOff, reinterpret_cast<const void*>(&GridsAllNotesOff) },
+  { op1grids::kCtlKeyDownSlot, kWord32, op1grids::kStockCtlKeyDown, reinterpret_cast<const void*>(&GridsCtlKeyDown) },
+  { op1grids::kCtlShiftKeyDownSlot, kWord32, op1grids::kStockCtlShiftKeyDown, reinterpret_cast<const void*>(&GridsCtlShiftKeyDown) },
+  { op1grids::kCtlKeyUpSlot, kWord32, op1grids::kStockCtlKeyUp, reinterpret_cast<const void*>(&GridsCtlKeyUp) },
+  { op1grids::kCtlKnobSlot, kWord32, op1grids::kStockCtlKnob, reinterpret_cast<const void*>(&GridsCtlKnob) },
+  { op1grids::kScreenUpdateSlot, kWord32, op1grids::kStockScreenUpdate, reinterpret_cast<const void*>(&GridsScreenUpdate) },
+  { op1grids::kScreenInitSlot, kWord32, op1grids::kStockScreenInit, reinterpret_cast<const void*>(&GridsScreenInit) },
+#ifdef OP1_GRIDS_RENAME
+  { op1grids::kChooserNameCall, kCall24, op1grids::kStockSeqName, reinterpret_cast<const void*>(&GridsSeqName) },
+#endif
 #endif
 #ifdef OP1_SEQ_PROBE
   // Sequencer probe (op1/seq_probe.cc): tombola's player (vtable 0x1911e04),

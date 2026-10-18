@@ -5,12 +5,15 @@
 #include "src/ffloat.h"
 #include "src/fixed.h"
 #include "src/fixed_tables.h"
+#include "src/scratch.h"
 
 #ifdef OP1RINGS_DEBUG_MODE0
 #include <cstdio>
 #endif
 
 namespace op1rings {
+
+static_assert(kMaxModalBlockSize <= kScratchSubblock, "modal scratch");
 
 namespace {
 
@@ -294,7 +297,9 @@ void ModalResonator::Process(const int32_t* in, int32_t* out, int32_t* aux,
   int32_t n = (num_modes + 1) & ~1;
   if (n > resolution_) n = resolution_;
 
-  int32_t* in_scaled = scratch_in_;
+  // Scratch shared by all voices (src/scratch.h: L1 on the OP-1).
+  int32_t* in_scaled = scratch()->modal.in_scaled;
+  int32_t* half_x = scratch()->modal.half_x;
   for (size_t s = 0; s < size; ++s) {
     in_scaled[s] = in[s] >> 3;   // upstream: input * 0.125
   }
@@ -332,7 +337,7 @@ void ModalResonator::Process(const int32_t* in, int32_t* out, int32_t* aux,
     }
     const size_t offset = k * segment_size;
     ModeBankProcess(modes_, n, in_scaled + offset, &previous_input_,
-                    out + offset, aux + offset, segment_size);
+                    out + offset, aux + offset, segment_size, half_x);
   }
   previous_position_ = position_;
   weights_valid_ = true;

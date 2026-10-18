@@ -11,7 +11,7 @@ The state at the end of the Rings work (2026-10-16, `op1_246_rings_multi4.op1` o
 **Rings controls** (synth engine page of a MULTI slot playing Rings; on stock phase only the orange click is ours):
 - encoders: blue = structure, green = brightness, white = damping, orange = position; smoothed ~50 ms; **shift + turn** = stock 1/16 fine adjustment;
 - **click blue** = next model (6, Rings' order), **click green** = next polyphony (all → 1 → 2 → 4 → all), **shift + click** = back;
-- **click white** = CPU meter on the six rings (ring *i* lit at (*i*+1) × 15% of a block): hidden → engine → the modal model's coefficient updates only → hidden;
+- **click white**: free (the CPU meter was removed 2026-10-17, seq8; stock ignores the click);
 - **click orange** = next engine (phase ↔ Rings).
 - Engine, model and polyphony are saved per slot and in snapshots (`knobs[6]`, `knobs[4]`, `knobs[5]`, as `setting × 4096`).
 
@@ -19,7 +19,7 @@ The state at the end of the Rings work (2026-10-16, `op1_246_rings_multi4.op1` o
 
 | # | Model | Code | "all" |
 |---|---|---|---|
-| 0 | Modal resonator | `src/modal_resonator.*`, `mode_bank_bfin.S` | 6 voices × 14 modes |
+| 0 | Modal resonator | `src/modal_resonator.*`, `mode_bank_bfin.S` | 6 voices × up to 14 modes, 60 in all (seq11: `TrimVoices`) |
 | 1 | Sympathetic strings | `src/string_voice.*` | 6 voices × 2 strings |
 | 2 | Modulated / inharmonic string | `src/string_fixed.*` | 6 voices |
 | 3 | FM voice | `src/fm_voice_fixed.*` | 6 voices |
@@ -34,20 +34,20 @@ Polyphony 1 / 2 / 4 are Rings' own (modal: 60 / 28 / 12 modes; strings: 8 / 4 / 
 
 | File | Role |
 |---|---|
-| `op1/engine.cc` | Render and note-on entry points (phase voice vtable +0x14 / +0x1c). Latches the engine per voice at note-on; phase voices call the stock render / note-on (`0x1a0bc5c` / `0x1a0be82`). Rings runs at 44.1 kHz on 64 samples per call; a 4-point Lagrange `Upsampler` doubles it to 128 samples at 88.2 kHz. Holds six `RingsVoice` states behind `RingsVoice* voices[6]` (swapped on a steal), per-voice `ParamSmoother` and `Upsampler`, the `CoefficientBudget`, model 6's `ReverbBus`, the CPU meter; applies `VoiceAllocator` decisions and does fade-outs. The image header (`OP1X`) points to the patch table |
+| `op1/engine.cc` | Render and note-on entry points (phase voice vtable +0x14 / +0x1c). Latches the engine per voice at note-on; phase voices call the stock render / note-on (`0x1a0bc5c` / `0x1a0be82`). Rings runs at 44.1 kHz on 64 samples per call; a 4-point Lagrange `Upsampler` doubles it to 128 samples at 88.2 kHz. Holds six `RingsVoice` states behind `RingsVoice* voices[6]` (swapped on a steal), per-voice `ParamSmoother` and `Upsampler`, the `CoefficientBudget`, model 6's `ReverbBus`; applies `VoiceAllocator` decisions and does fade-outs. The image header (`OP1X`) points to the patch table |
+| `src/scratch.h` | The per-call buffers shared by all voices (the block, its reverb share, the upsampler's input, the modal and string scratch), at `0xffb000c0`–`0xffb005bf` in the L1 scratchpad on the device (`-DOP1RINGS_L1_SCRATCH`, set by the image builds), a static array elsewhere. The OP-1 runs without a data cache, so SDRAM accesses in hot loops stall (seq10) |
 | `op1/settings.h` | `knobs[4]` model, `[5]` polyphony, `[6]` engine (`setting × 4096`); `kPolyVoices` / `kPolyModes` (`{14, 60, 28, 12}`) / `kRingsPolyphony`; `StepModel` / `StepPoly` / `StepEngine` |
 | `op1/voice_allocator.h` | Rings polyphony on the OP-1's 6 voices: steal the oldest (`copy_from`: the new voice takes over its state), fade the stolen voice (512 samples, at most 2 at once), silence voices stolen before they sounded; `Forget` for voices that switch to stock phase |
 | `op1/coefficient_budget.h` | The modal model's coefficient updates per OP-1 call: at most 32 modes plus one voice whatever its size, round robin; none while a voice fades after a steal; a strike always updates. Blocks end on a repeated voice or a lower index (the OP-1 renders in index order, inferred) |
 | `op1/reverb_bus.h` | Model 6's shared reverb: ends a block when a voice renders twice, runs `SharedReverb` once per block, shares the wet signal among the carriers (`Transfer` on steals) |
 | `op1/param_smoother.h` | ~50 ms one-pole per voice and parameter; snaps within 2^-12 and at note-on |
-| `op1/cpu_meter.h` | Engine CPU share and the coefficient updates' share (`op1rings::profile_update_cycles`), for device tests |
 | `op1/screen.cc`, `screen_math.h` | MULTI screen: `MultiScreenInit` runs the stock PdScreen Init on `pd.svg`, then loads `rings.svg` with the firmware's loader (`0x1a5e3b0`, `0x1a50350`, `0x1a503d8`) and finds our nodes; `MultiScreenUpdate` swaps the screen's document by the displayed slot's engine (flushing the incoming one: its vtable +0x7c, as `Screen::UpdateAll` does on screen changes), then runs the stock Update or ours. The brightness handle spans 0..29491 (the green encoder's range) |
 | `op1/rings.svg`, `gen_rings_svg.py` | The package's SVG, generated from `incoming/rings.svg` |
 | `op1/input.cc` | Encoder clicks (`0x3b` blue, `0x3c` green, `0x3d` white confirmed, `0x3e` orange inferred). Synth controller key-down / shifted / key-up hooks, active only on the engine page of a phase slot; they write `knobs[4..6]` and call `Patch::SetKnobs` |
 | `op1/patches.cc` | The patch table: the type-list query (the engine browser shows "multi"), screen Init/Update, the 3 key hooks |
 | `op1/op1.h` | Addresses and conventions, `Header` and `Patch` structs, `VoiceIndex` (no division), `Saturate16` |
 | `src/op1_voice.*` | `RingsVoice`: strum → excitation filter (cutoff cached) → `ModalResonator` / `FmVoiceFixed` / `StringVoice` → `MonoLimiter` (per-model gains). `SharedReverb` for model 6. Coefficient hold and demand for the budget |
-| `src/modal_resonator.*`, `mode_bank.h`, `mode_bank_bfin.S` | Chamberlin SVF bank with a closed-form state map on coefficient changes; the assembly loop: 23 instructions, 23.7 cycles per mode per sample (the bit-exact minimum here). Both outputs can be summed into one buffer (out == aux); pickup weights kept while position and gains are still; `set_hold` / `TakeChanged` |
+| `src/modal_resonator.*`, `mode_bank.h`, `mode_bank_bfin.S` | Chamberlin SVF bank (the assembly takes the halved input's scratch as an 8th argument) with a closed-form state map on coefficient changes; the assembly loop: 23 instructions, 23.7 cycles per mode per sample (the bit-exact minimum here). Both outputs can be summed into one buffer (out == aux); pickup weights kept while position and gains are still; `set_hold` / `TakeChanged` |
 | `src/string_fixed.*`, `string_kernel.h`, `string_kernel_bfin.S` | Fixed-point string (Hermite delay line, dispersion, FIR/IIR damping, pickup), plucker, DC blocker, upstream's LCG; the plain and stretch-only loops in C and assembly |
 | `src/string_voice.*` | The string models for one voice (plucker, string 0, sympathetic strings, tuning, chords, LFOs) |
 | `src/reverb_fixed.*`, `reverb_bfin.S` | Rings' reverb, mono, unwrapped 16-bit buffer (109 KB), O(1) clear; the assembly runs the settled case (it wraps the write pointer before each run) |
@@ -66,7 +66,9 @@ Polyphony 1 / 2 / 4 are Rings' own (modal: 60 / 28 / 12 modes; strings: 8 / 4 / 
 - **Keys:** synth controller vtable `0x1911994`: key down `0x19119a8`, shifted `0x19119b0`, key up `0x19119b8`.
 - **Engine browser label:** the type-list query string at `0x1970866` / `0x197086a` (immediates at +2: `0x1970868` / `0x197086c`), shared by the synth, drum, fx, lfo and seq lists.
 
-## 3. CPU (simulator; the device has run ~1.5–1.8× these)
+## 3. CPU (simulator; Test 28 measured the device at ~1.2× these for the modal model, ~25 MHz a voice; the earlier 1.5–1.8× came from the CPU meter's indirect readings)
+
+Since seq11: voices sleep below ~ -72 dBFS (`RingsVoice::kSleepLevel`), and "all" shares 60 modes (six ringing voices ~96 MHz simulated). The table below is from before that.
 
 | Case | Cost |
 |---|---|

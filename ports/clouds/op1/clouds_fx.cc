@@ -21,7 +21,9 @@
 // Per call, the CPU governor (src/core/governor.h) sets the granular mode's
 // grain cap from the call interval, Clouds' own cycles and the cycles of
 // the rest of the image (measured_cycles: the synth engines and the other
-// position), skipping the first calls after a restart.
+// position), skipping the first calls after a restart. (Test 29 tried a
+// share of 0.40 so the screen keeps its frame rate next to Rings: Clouds
+// sounded thin. The user prefers the sound; the share stays at its default.)
 //
 // Simulator builds (-DOP1_SIM, tests/sim_fx.cc): no firmware. Both entries
 // play Clouds on the values the call passes, with phone's measured ranges;

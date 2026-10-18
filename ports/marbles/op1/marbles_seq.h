@@ -80,11 +80,12 @@ class MarblesSeq {
   void Tick(int32_t t, NoteSink* sink);
   void AllNotesOff(NoteSink* sink);
 
-  // Encoder k (0..3: blue, green, white, orange) on the shown page; delta
-  // in Q16 of the range (the host scales the OP-1's).
+  // Encoder k (0..3: blue, green, white, orange) on the shown page: T page
+  // rate, deja vu, jitter, T bias; X page spread, length, steps, X bias.
+  // delta in Q16 of the range (the host scales the OP-1's).
   void Knob(int32_t k, int32_t delta_q16);
   // Blue: T model (T page) or scale (X page), direction +-1; green: the
-  // page's deja vu off/on/locked; white: page (direction -1: pitch source).
+  // page's deja vu off/on/locked; white: pitch source (direction -1: page).
   void OnClick(Click click, int32_t direction);
 
   const Settings& settings() const { return settings_; }

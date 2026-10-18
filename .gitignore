@@ -3,3 +3,5 @@ op1 firmware/
 __pycache__/
 *.egg-info/
 mutableinstruments/
+incoming/*.wav
+incoming/*.jpg

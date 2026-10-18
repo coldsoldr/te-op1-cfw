@@ -206,7 +206,7 @@ extern "C" void MarblesCtlKnob(void* controller, int32_t k, int16_t* delta) {
 // legend (icons per page, level bars) and the chips. No driven element is
 // inside a moved group, so transforms are in screen coordinates. Colours
 // are read from the file's example state (gen_marbles_svg.py checks it):
-// loop_t bright, loop_x dim.
+// loop_t bright green, loop_x dim green; src_scale selected, src_keys not.
 namespace {
 
 typedef void* (*NodeFindFn)(void* document, const char* id, int32_t assert_missing);
@@ -223,10 +223,13 @@ const uint32_t kGetLineStyle = 0x01a3b854;    // (screen, id) -> RGBA bytes
 const uint32_t kGetFillStyle = 0x01a3b96c;
 const uint32_t kSetTransform = 0x019ead58;    // (node, const int32 m[9]), Q10
 
-// The Dots design's elements (ports/marbles/op1/marbles-screen.md).
+// The Dots design's elements (ports/marbles/op1/marbles-screen.md), with
+// gen_marbles_svg.py's renames: an id may not contain "_x" (the parser
+// decodes "_xHH_" escapes in ids and asserts without the closing "_":
+// marbles5/6 didn't boot), so loop_x -> loopX and leg<i>_x -> leg<i>X.
 const char* const kNodeIds[] = {
-  "loop_t", "loop_x", "bar0", "bar1", "bar2", "bar3", "chipT", "chipX", "chip_model", "chip_scale",
-  "leg0_t", "leg1_t", "leg2_t", "leg3_t", "leg0_x", "leg1_x", "leg2_x", "leg3_x" };
+  "loop_t", "loopX", "bar0", "bar1", "bar2", "bar3", "chipT", "chipX", "chip_model", "chip_scale",
+  "leg0_t", "leg1_t", "leg2_t", "leg3_t", "leg0X", "leg1X", "leg2X", "leg3X" };
 enum {
   N_LOOP_T, N_LOOP_X, N_BAR0, N_CHIP_T = N_BAR0 + 4, N_CHIP_X, N_CHIP_MODEL, N_CHIP_SCALE,
   N_LEG_T, N_LEG_X = N_LEG_T + 4, N_COUNT = N_LEG_X + 4 };
@@ -246,8 +249,14 @@ bool screen_ready;
 void* nodes[N_COUNT];
 void* marks[kLanes][kColumns];
 uint8_t* loop_line[2];
-uint8_t* source_line[2];
-Colour bright, dim;
+// gen_marbles_svg.py splits a path with several subpaths into one path per
+// subpath (the OP-1 joins subpaths with a line): id, idP2, idP3, ... The
+// keyboard icon (src_keys) has four.
+const int32_t kMaxParts = 9;
+uint8_t* source_line[2][kMaxParts];
+int32_t source_parts[2];
+Colour bright, dim;              // the deja vu brackets (green)
+Colour source_on, source_off;    // the pitch source icons
 
 void*& DocumentOf(void* screen) { return *reinterpret_cast<void**>(screen); }
 
@@ -323,11 +332,33 @@ void MarblesInit(void* self) {
   for (int32_t i = 0; i < N_COUNT; ++i) nodes[i] = Find(document, kNodeIds[i]);
   StyleFn line = reinterpret_cast<StyleFn>(kGetLineStyle);
   loop_line[0] = line(self, "loop_t");
-  loop_line[1] = line(self, "loop_x");
-  for (int32_t i = 0; i < 2; ++i) source_line[i] = line(self, kSourceIds[i]);
-  // The file's default state: loop_t bright (locked), loop_x dim (on).
+  loop_line[1] = line(self, "loopX");
+  for (int32_t i = 0; i < 2; ++i) {
+    // kSourceIds[i], then "<id>P2" .. "<id>P9" while they exist.
+    char name[24];
+    int32_t n = 0;
+    while (kSourceIds[i][n] && n < 20) {
+      name[n] = kSourceIds[i][n];
+      ++n;
+    }
+    name[n] = 0;
+    source_parts[i] = 0;
+    for (int32_t p = 0; p < kMaxParts; ++p) {
+      if (p) {
+        name[n] = 'P';
+        name[n + 1] = static_cast<char>('1' + p);
+        name[n + 2] = 0;
+        if (!Find(document, name)) break;   // GetLineStyle asserts on a missing id
+      }
+      source_line[i][source_parts[i]++] = line(self, name);
+    }
+  }
+  // The file's default state: loop_t bright (locked), loop_x dim (on),
+  // src_scale selected, src_keys not.
   Read(&bright, loop_line[0]);
   Read(&dim, loop_line[1]);
+  Read(&source_on, source_line[0][0]);
+  Read(&source_off, source_line[1][0]);
   screen_ready = true;
 }
 
@@ -376,14 +407,14 @@ void MarblesDraw(void* self, const MarblesSeq* m) {
     int32_t k = 0;
     while (k < op1marbles::kNumDivisions - 1 && op1marbles::kDivisionTicks[k] != m->division_ticks()) ++k;
     u[0] = StepU(k, op1marbles::kNumDivisions);
-    u[1] = s.t_bias;
+    u[1] = s.deja_vu;
     u[2] = s.jitter;
-    u[3] = s.deja_vu;
+    u[3] = s.t_bias;
   } else {
     u[0] = s.spread;
-    u[1] = s.x_bias;
+    u[1] = StepU(n - 1, op1marbles::kMaxLength);
     u[2] = s.steps;
-    u[3] = StepU(n - 1, op1marbles::kMaxLength);
+    u[3] = s.x_bias;
   }
   static const int32_t kBarAnchor[4] = { 18944, 98816, 178688, 258560 };   // 18.5 .. 252.5 px, Q10
   for (int32_t i = 0; i < 4; ++i) ScaleX(nodes[N_BAR0 + i], u[i], kBarAnchor[i]);
@@ -393,7 +424,11 @@ void MarblesDraw(void* self, const MarblesSeq* m) {
   SetVisible(nodes[N_CHIP_X], !page_t);
   SetTransform(nodes[N_CHIP_MODEL], 0x400, 0x400, s.t_model * 6827, 0);   // 6.67 px, Q10
   SetTransform(nodes[N_CHIP_SCALE], 0x400, 0x400, s.scale * 8192, 0);     // 8 px
-  for (int32_t i = 0; i < 2; ++i) Write(source_line[i], i == s.pitch_source ? bright : dim);
+  for (int32_t i = 0; i < 2; ++i) {
+    for (int32_t p = 0; p < source_parts[i]; ++p) {
+      Write(source_line[i][p], i == s.pitch_source ? source_on : source_off);
+    }
+  }
 
   reinterpret_cast<DrawFn>(kScreenDraw)(self);
 }

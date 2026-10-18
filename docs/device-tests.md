@@ -894,7 +894,11 @@ Shift + white = scale ↔ keys mode. Shift + encoder = fine (if the OP-1 passes 
 
 **marbles4** (`op1_246_rings_marbles4.op1`, not flashed yet): marbles3 plus the **steps** encoder remapped to Marbles' musical half only (left = all 12 notes, right = the root only; the old left half glided a voltage, which as notes repeated one pitch). The screen is still Orbit (with the offsets fixed); a v2 brief went to the designer (`docs/marbles-screen-brief.md`).
 
-## Test 22: Marbles with the "Dots" screen (`op1_246_rings_marbles5.op1`)
+## Test 22: Marbles with the "Dots" screen (`op1_246_rings_marbles7.op1`)
+
+**marbles5 didn't boot (2026-10-17):** `..\src\gui\lib\Parser.cpp:231 x_end != std::string::npos` at startup, while loading `marbles.svg`. The design wrote `transform="matrix(0.5,0,0,1,119.5,0)"`; every stock SVG writes `matrix(a b c d e f)` with spaces, and the parser looks for a space after each number. Recovery: COM at power-on, clouds4. **marbles6:** the same firmware, with `gen_marbles_svg.py` now dropping the design's example transforms (all on driven elements, which the code positions on the first frame) and rewriting any `matrix()` with spaces. Every other syntax form in the file was compared against files that booted (Orbit, Clouds, Rings, stock): only `matrix` was new.
+
+**marbles6 didn't boot either (same assert):** the transforms weren't the cause. The assert's code (`0x19fb7c8`, called while reading an element's id) looks for `"_x"` and then a closing `"_"`: the parser decodes Illustrator's `_xHH_` escapes in ids. The Dots ids `loop_x` and `leg0_x`…`leg3_x` have `_x` with no closing `_`. **marbles7:** `gen_marbles_svg.py` renames `_x` → `X` in ids (`loopX`, `leg0X`…) and rejects any id still containing `_x`; the screen code uses the new names. The parser's other content asserts were checked too: no exponents in numbers (`Parser.cpp:103`), at most 2 decimals (`:116`; Rings has always used 2), ASCII ids (`:577`).
 
 **Not flashed yet.** marbles4 (steps remapped; indicators fixed; no Marbles on drums) plus the designer's v2 screen (`ports/marbles/op1/marbles.svg`, mappings `marbles-screen.md`, brief `docs/marbles-screen-brief.md`). The core now keeps a 16-step history (`MarblesSeq::history_gates/height`; `make sim-seq` checks it).
 
@@ -914,3 +918,217 @@ Shift + white = scale ↔ keys mode. Shift + encoder = fine (if the OP-1 passes 
 7. Anything else, in numbered points.
 
 **If something is wrong:** power off; recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1`.
+
+## Test 23: Grids on drums + Marbles on synth (`op1_246_rings_seq3.op1`)
+
+**Not flashed yet.** marbles7 (Clouds, Marbles with the Dots screen) plus **Grids as the drum sequencer** on stock **pattern** (`ports/grids/op1/grids_seq.*`, `grids_op1.cc`; `make op1-seq` in `ports/rings`). Grids answers only while the drum instrument is live; synth pattern stays stock. Grids is on by default; the **orange click** on the pattern screen swaps Grids ↔ stock pattern, **shift + orange prints** the last bar into stock pattern. Settings in RAM only. **seq3** has the designer's **"Panel + kit"** screen (`ports/grids/op1/grids.svg`, mappings `grids-screen.md`): the map with its dot (X/Y), the kit (hi-hat, snare, kick) lighting on hits and growing on accents, staying lit while a part's key fills it, an arrow at the part being assigned, four bars (the fill page while shift is held), the playhead under 16 ticks, and the icons for mode, resolution, accent (louder / key), random voice and shift. Both screens went through the stricter SVG scripts (no `_x` ids, no transforms, no `display` on elements, numbers checked).
+
+**Not in this build:** showing pattern as "multi" in the sequencer list. The chooser looks the current type up by its shown name (renaming only the list would crash it), and the call that would have to answer "multi" can't reach our code (a CALL reaches ±16 MB; region A is ~19.6 MB away). It needs a small trampoline nearer the app, to be tried as its own test.
+
+**Controls** (drums mode / Euclidean mode):
+
+| | Blue | Green | White | Orange |
+|---|---|---|---|---|
+| encoders | map X / BD length | map Y / SD length | chaos / HH length | swing |
+| shift + encoders | BD fill (hits) | SD fill (hits) | HH fill (hits) | accent |
+| click | drums ↔ Euclidean | re-roll chaos (next bar) | assign: BD → SD → HH → BD accent → SD accent → HH accent → off | swap Grids ↔ pattern |
+| shift + click | 16ths ↔ 32nds (16ths default) | forget accent keys | random voice on/off | print the last bar into pattern |
+
+- **Keys:** holding a part's key (BD 0, SD 2, HH 8 by default) fills that part up while held; other keys play straight through.
+- **Assign:** white-click to a target, then press a key: it becomes that part's sound (you hear it). For an accent target, the pressed key takes that part's accents; pressing the part's own key there goes back to "louder on the same key".
+- **Print** writes 16 sixteenths of the last bar (all keys; accents become plain hits) and saves them with stock's own save. **It overwrites the drum pattern, without undo.**
+
+
+**Checks (off the device):** `make sim-grids` (host and Blackfin): notes on the 16th grid, keys 0/2/8, fill while held doubles the snare's hits, assign moves BD to a new key, accent keys take the accents, play-through, the recorded bar equals what played, no stray or stuck notes. `make compare`: still bit-exact with upstream (~15 M calls). The image: no undefined symbols or constructors, ends at `0x02d30410`; the 10 new hooks checked against their stock values and `bfin-elf-nm`; `verify_bootloader.py` passes; against clouds4 only `OP1_vdk.ldr` changes and `content/display/marbles.svg` and `grids.svg` are added.
+
+**Procedure** (numbered points):
+1. Drum mode, choose pattern, turn the sequencer on: does Grids play a beat on keys 0/2/8 (are those kick/snare/hat on your kit)?
+2. X, Y, chaos, swing; shift + the fills: do they change the beat as expected?
+3. Hold the snare key: does it fill up? Other keys: played through?
+4. Assign a new kick sound (white, then a key), then an accent key for the snare: does it work?
+5. Blue: Euclidean (the lengths on the encoders); shift + blue: 32nds.
+6. Shift + orange (print), then orange (stock pattern): is the bar there, and still there after a power cycle?
+7. Synth mode: pattern and Marbles (tombola) behave as before; any stuck notes switching instruments?
+8. Anything else.
+
+**If something is wrong:** power off; recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1`.
+
+**Result (seq3, 2026-10-17):** assigning a new BD crashed the OP-1. The white click cycled the targets, and the crash came on the next key press. **Cause:** SeqManager also passes every keyboard key to the pattern *controller*. Grids' hook let stock's handler (`0x1a07a58`) run for anything that wasn't an encoder click. That handler moves pattern's step cursor and calls the pattern screen (`0x1a095f4` → `0x1a09438`). The screen looks up pattern.svg's `h1`/`h14` through `Screen::FindNode` `0x1a3b580`, which asserts on a missing node, and grids.svg was the shown document. So this is not an assign bug: any key that reached that path could crash.
+
+## Test 23b: the controller key fix (`op1_246_rings_seq4.op1`)
+
+**Not flashed yet.** seq3 with one change: while Grids is active, pattern's controller key down, shift key down and **key up** (newly hooked, `0x1911040`, stock `0x01a07980`) return 0 without calling stock. Grids still gets the keys through the player hooks. With Grids off or in synth mode, stock runs as before. The image has no warnings, no undefined symbols and no constructors. The new hook targets match `bfin-elf-nm`, `verify_bootloader.py` passes, and only `OP1_vdk.ldr` differs from seq3.
+
+**Procedure:** Test 23's, from point 3 (holding keys, then assign). Also check shift + keyboard keys and the octave keys on the Grids screen.
+
+**Seen on seq3 (2026-10-17):** some Marbles and Grids graphics drew stray lines between vertices, for example Marbles' keyboard icon. **Cause:** these paths have several subpaths (`M…z M…`), and the OP-1 joins them with a line. None of the 61 stock screens ever writes a second `M` in a path. Affected: marbles.svg has 3 paths (`src_keys` and the two undriven arrow icons), and grids.svg has 7 (`dot`, `mode_drums`, `res16`, `res32`, `accent_vel`, `accent_key`, `rnd_on`). Clouds and Rings have none.
+
+## Test 23c: one subpath per path (`op1_246_rings_seq5.op1`)
+
+**Not flashed yet.** seq4 plus the following:
+- `gen_marbles_svg.py` and `gen_grids_svg.py` split every multi-subpath path into one path per subpath. A driven id stays on the first part, and the others are `id_2`…`id_9`. The scripts refuse a relative `m` and check that no path is left with two subpaths.
+- The screen code finds every part and applies visibility, transforms (the Grids dot) and colours (`rnd_on`, `src_keys`) to all of them.
+- The new SVGs equal the shipped ones with only the split applied (checked by script).
+- `verify_bootloader.py` passes. The hook targets match `bfin-elf-nm`. Against seq4, only `OP1_vdk.ldr`, `marbles.svg` and `grids.svg` differ.
+
+**Procedure:** check that the stray lines are gone: Marbles' keyboard icon and its arrows; Grids' dot, mode grid, 16/32 bars, accent and random icons. Then check that the driven ones still change: the keys icon lights when selected, the dot moves and hides in Euclidean, the mode/resolution/accent icons swap, and random lights up. Then carry on with Test 23b.
+
+**Result (seq5, 2026-10-17): parser error at boot.** **Cause:** the designs write `<path …></path>`, and the split copied only the start tag. So N paths shared one `</path>`, and the XML wasn't well-formed: both files fail Python's XML parser at the first split path. **A second, latent problem:** the parser also rewrites ids, and in an id with two underscores it deletes everything from one `_` to the next (`0x19fba10`, beside the `_xHH_` decoding). So `accent_vel_2` and `accent_key_2` would both have become `accent2`. Recovery: COM at power-on, then clouds4 or seq4.
+
+## Test 23c (again): `op1_246_rings_seq6.op1`
+
+**Not flashed yet.** seq5 corrected:
+- The split now copies whole elements, so every part is a complete `<path …></path>`.
+- The extra parts are named `idP2`…`idP9`, with no underscore. The screen code looks for those names.
+- Both gen scripts check well-formedness with Python's XML parser before writing, refuse ids with two underscores, and check that `<path>` and `</path>` balance.
+- Checks:
+  - Both new SVGs are, element by element, seq4's with only the split applied.
+  - Every SVG in `content/display` parses.
+  - `verify_bootloader.py` passes, and the hook targets match `bfin-elf-nm`.
+  - Against seq4, only `OP1_vdk.ldr`, `marbles.svg` and `grids.svg` differ.
+
+**Procedure:** as Test 23c above.
+
+## Test 24: Marbles colour pass (`op1_246_rings_seq7.op1`)
+
+**Not flashed yet.** seq6 plus the user's colour-coherence changes to Marbles (2026-10-17):
+- **History:** no frame.
+- **Chip box (model/scale, the blue click):** the frame stays. The marker is blue `#638BFF`, and the unselected dots/bars are the frame blue `#3854A5`.
+- **Pitch source box:** white frame. **The white click now toggles scale/keys, and shift + white turns the page** (swapped).
+- **Legend:** no frame. **Green encoder = deja vu (page T) / length (page X); orange (red) encoder = bias** (swapped), with the icons and bars swapped to match. The green and orange clicks are unchanged: green cycles deja vu off/on/locked, and orange swaps Marbles/tombola.
+- **Deja vu brackets in green:** dim green `#13704D` when on, green `#00EE92` when locked. The source icons keep white and grey (their colours are now read from `src_scale`/`src_keys`, no longer from the brackets).
+
+The design source `ports/marbles/op1/marbles.svg` was edited by script (the icons moved 156 px between slots; nothing else moved). `make sim-seq` passes on host and Blackfin (white = keys mode, shift + white = page). The image has no undefined symbols or constructors. All 36 word hooks are function starts in `bfin-elf-nm`. `verify_bootloader.py` passes. Against seq6, only `OP1_vdk.ldr` and `marbles.svg` differ.
+
+**Procedure:**
+1. Do the frames and colours look right on both pages?
+2. White click toggles scale/keys; shift + white turns the page.
+3. Green turns deja vu (T) or length (X), and the green brackets follow. Orange turns bias.
+4. Clicks: blue changes model/scale (the blue marker moves), green cycles the brackets off → dim green → green, and orange swaps to tombola.
+5. Seq6's checks if not done yet (Test 23c: icons without stray lines; Test 23b: Grids keys and assign).
+
+## Test 25: Rings follows the LFO, no CPU meter (`op1_246_rings_seq8.op1`)
+
+**Result (2026-10-18): all five points good.** seq7 plus the following:
+- **The Rings screen shows the knobs after the LFO,** as stock screens do. Stock's `ReadInterface` (`0x1a28210`) takes the Core's per-voice record of the modulated knobs: 8 × int16 at `0xff8010b8`, then the slot, the engine type and a flag, with new-flag `B[0xff8010d4]`. `0x196749c` copies a new record into `0x1ab321c`, and the record is used when its slot and type match and its flag is 0. `op1/screen.cc` does the same for knobs 0..3 (structure rings, brightness, damping, position/pluck). Knobs 4..7 (model, polyphony, engine) stay live. When no new record has come for 8 frames (nothing playing), it shows the live knobs again.
+- **The CPU meter is gone:** `op1/cpu_meter.h`, its timing in the entry points and the white click. The white click is now free (stock ignores it). The Clouds governor's cycle count is unchanged. `sim-engine` turns on the coefficient-update profiler itself.
+- **Screen:** no frame around the main window; the polyphony frame is green (the green click picks polyphony). Both are done in `gen_rings_svg.py`.
+- Checks:
+  - `op1-engine`, `op1-clouds` and `op1-seq` build.
+  - `test-screen` passes, and the modal checksum is still `ef8618dd`.
+  - All 36 word hooks are function starts. The imm16 pair is `kTypeListQuery`.
+  - `verify_bootloader.py` passes, and every display SVG parses.
+  - Against seq7, only `OP1_vdk.ldr` and `rings.svg` differ.
+
+**Procedure:**
+1. A MULTI slot on Rings with an LFO (value or random) on the engine, targeting one of the four encoders. While notes play, does the matching drawing move (rings, brightness or damping handle, pluck position)? When notes stop, does it settle back to the knob's value within a moment?
+2. Without an LFO: does every drawing follow its encoder as before, with and without notes?
+3. White click on the Rings page: nothing happens (no meter).
+4. The look: no main frame, and the green polyphony frame.
+5. Also stock phase in the MULTI slot with the LFO, to confirm nothing changed there.
+
+## Test 26: Clouds frames, first beta (`op1_246_rings_seq9.op1`)
+
+**Result (2026-10-18): everything looks good. seq9 is the first beta.** seq8 with only `clouds.svg` changed (`gen_clouds_svg.py`): the main window's frame is white (#DED7FF) and the bottom-right window has no frame. The image is seq8's. `verify_bootloader.py` passes and every display SVG parses. Against seq8, only `clouds.svg` differs.
+
+**Procedure:**
+1. Clouds on the phone effect slot: the main window has a white frame, the top-right window keeps its blue frame, and the bottom-right window has none.
+2. A quick look at the rest (Rings, Marbles, Grids, Clouds sound) to confirm it boots and behaves like seq8.
+
+## Test 27: Rings' buffers in L1 (`op1_246_rings_seq10.op1`)
+
+**Result (2026-10-18):** 1. the tape animation is still just as choppy; 2. a bit better with 4 voices; 3. Rings + Clouds the same as before; 4. every model sounds the same; 5. the rest the same. **So the SDRAM stalls on these buffers were not the main cost:** either the data cache is on after all, or the time goes elsewhere (our other SDRAM state, the OP-1's own per-voice work, the clock). The change is kept (bit-identical, slightly better). Next: measure on the device instead of inferring.
+
+**Built and flashed:** seq9 plus one change: Rings' per-call buffers move from SDRAM to the L1 scratchpad. Aimed at the user's two reports after Test 25: the tape animation gets choppy while recording Rings with more than three voices (the audio records fine), and Clouds and Rings together overload.
+
+**Why:** the OP-1 runs **without a data cache** [I, strong]. Both cacheable halves of L1 data are used as SRAM: code references `0xff804xxx`–`0xff806xxx` (bank A's cache half) and the LDR loads bank B up to `0xff907e00` (its cache half is `0xff904000`+). So every SDRAM access by our DSP code stalls on the bus. The simulator models no memory latency, which would explain the device costing 1.6–4× the simulated cycles (Tests 7, 16). The mode bank reads and writes its output buffer once per mode and sample (6 voices × 14 modes × 44.1 kHz, ~3.7 M times a second), and the string kernels do the same with their mono sum per string.
+
+**What moved** (`ports/rings/src/scratch.h`, `0xffb000c0`–`0xffb005bf`, 1280 bytes): the voice's 64-sample block and its reverb share (engine), the upsampler's input, the modal sub-block's excitation, scaled input and the mode bank's halved input (it was on the stack), and the string models' excitation, sympathetic and mono buffers (modal, strings and upsampler share one union). The scratchpad holds the live synth engine's voice objects from `0xffb00000` (stock phase's, 6 × 28 bytes, whenever our render runs), the effect objects from `0xffb00600` and the LFO objects from `0xffb00a00`; every scratchpad reference in the readable code is one of those. Nothing in the scratch outlives a render call.
+
+- Checks:
+  - All six models are **bit-identical** to the committed build in the simulator (`sim-model` M=0..5: `ef8618dd`, `4ab50a82`, `8d5a070f`, `567afc0c`, `97c1539d`, `7d5e0bee`), also with the scratch at its L1 address.
+  - `bench-mode-bank` (assembly = C = host), `bench-string`, `test-string`, `test-reverb-bus`, `step-params`, `test-alloc` and `test-screen` pass.
+  - `op1-engine`, `op1-clouds` and `op1-seq` build. All 36 word hooks are function starts; the imm16 pair is `kTypeListQuery`. `verify_bootloader.py` passes. Against seq9, only `OP1_vdk.ldr` differs.
+- **Risk:** encrypted L1 code might use the scratchpad between `0xc0` and `0x5c0` too (none of its readable fragments does). That would show as noise, wrong sounds or a crash while Rings plays.
+
+**Procedure:**
+1. Rings (modal, polyphony "all") in a MULTI slot, recording to tape, chords of 4–6 notes: is the tape animation smooth now, or less choppy than seq9?
+2. The same with the other models (strings, model 6 in polyphony 4).
+3. Rings + Clouds on the synth effect, then on the master too: better than seq9 (less or no crackle)?
+4. Does every model sound exactly as before? Listen for anything new: noise, garbage, clicks. Also switch slots (stock engines, MULTI on phase) and to drums and back while notes ring.
+5. A quick look at the rest (Marbles, Grids, Clouds alone).
+
+**If something is wrong:** power off; flash seq9 back through the te-boot menu, or recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1`.
+
+## Test 28: CPU probe (`op1_246_rings_cpuprobe1.op1`)
+
+**Results (2026-10-18, photos in `incoming/Test 28/`):** Rings modal, polyphony "all".
+
+| Case | 0 clock | 1 Rings MHz | 2 peak ‰ | 3 Clouds MHz | 4 fps | 5 gap ms | 6 voices | 7 sweep | 8 hot | 9 L1 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 idle | – | – | – | – | 42 | 24 | – | 116.0 | 12.0 | 12.0 |
+| 2 one note | 399 | 28.8 | 286 | 0 | 47 | 24 | 1.0 | 209.0 | 12.0 | 12.0 |
+| 3 three notes | 399 | 40.6 | 447 | 0 | 47 | 24 | 2.2 | 115.8 | 12.0 | 12.0 |
+| 4 four notes | 399 | 102.6 | 313 | 0 | 47 | 24 | 6.0 | 116.0 | 12.0 | 12.0 |
+| 5 six notes | 399 | 147.3 | 431 | 0 | 47 | 25 | 6.0 | 609.9 | 12.0 | 12.0 |
+| 6 six, recording | 399 | 155.1 | 448 | 0 | 33 | 48 | 6.0 | 576.3 | 12.5 | 12.0 |
+| 7 four + Clouds | 399 | 109.0 | 532 | 81.2 | 27 | 71 | 4.5 | 168.1 | 12.0 | 12.0 |
+| 8 six, sympathetic strings | 399 | 148.0 | 751 | 0 | 41 | 46 | 4.0 | 150.5 | 12.0 | 12.0 |
+
+**What they show:**
+- **The clock is 399 MHz, and the OP-1 has a data cache:** 1 KB of SDRAM read repeatedly costs the same as L1 (12.0 = the loop itself). That's why seq10 changed little (Test 27); the no-cache inference was wrong. A **cache miss costs ~100 cycles** (the idle sweep, 116 − 12); the higher sweep values are runs interrupted by the audio (1024 misses take longer than a block).
+- **Rings costs about what the simulator says:** ~25 MHz per modal voice (six voices 147 MHz; `bench-models` 20.9 MHz for a 16-mode voice before the upsampler, smoother and OP-1 glue). The earlier "1.6× the simulator" came from the CPU meter's indirect readings. So simulator savings carry over.
+- Voices: with four notes in "all", the OP-1 still renders six voices (released notes ring on, the OP-1's envelope release keeps them alive): four notes cost as much as six.
+- **The screen is starved, not the audio:** 47 fps whenever Rings plays alone, even at 147 MHz; recording drops it to 33 fps with 48 ms gaps (case 6), and Clouds (81 MHz on the device, ~2× its simulated cost: cache misses on its large buffers) plus Rings drops it to 27 fps with 71 ms gaps (case 7).
+- Peaks: a single block can take 29–75% of the block period (note-ons and coefficient updates; strings worst), so peaks, not the average, decide audio glitches when Clouds is added.
+
+**Built:** A diagnostic build: seq10 plus `ports/rings/op1/cpu_probe.cc` (`make op1-cpuprobe`). Test 27 showed the L1 buffers weren't the main cost, so this measures instead of inferring. **The white click on a Rings page** swaps the drawing for a readout of ten numbers (the sequencer probe's `seqprobe.svg`, added to the package; index on the left, two columns). Values are for the last second and hold when nothing plays. Everything else is seq10.
+
+| # | Value |
+|---|---|
+| 0 | core clock, MHz |
+| 1 | Rings, MHz × 10 (all MULTI render and note-on time) |
+| 2 | the busiest block's Rings time, ‰ of the block period |
+| 3 | Clouds, MHz × 10 |
+| 4 | screen frames per second |
+| 5 | longest gap between two frames, ms |
+| 6 | Rings voices rendered per block × 10 |
+| 7 | SDRAM, 64 KB sweep: cycles per load × 10 (cache misses) |
+| 8 | SDRAM, 1 KB read repeatedly: cycles per load × 10 (≈ 9 with a data cache, ≈ 7 without) |
+| 9 | L1 scratchpad, same loop: cycles per load × 10 (the loop's own cost) |
+
+- Checks: `op1-cpuprobe` and `op1-seq` build, no undefined symbols, no constructors; the 36 word hooks are function starts and the imm16 pair is `kTypeListQuery`; `sim-engine` still `ef8618dd`; `verify_bootloader.py` passes; `seqprobe.svg` is byte-identical to the one seqprobe1 booted with. Against seq10: `OP1_vdk.ldr` and the added `seqprobe.svg`.
+
+**Procedure** (Rings modal, polyphony "all", in a MULTI slot; white click to show the readout; wait ~2 s per case, then note all ten numbers):
+1. Nothing playing (after playing something, so values exist; just note 7, 8, 9).
+2. One note held.
+3. Three notes held.
+4. Four notes held.
+5. Six notes held.
+6. Six notes held while recording to tape (is it choppy now, and do 4/5 change?).
+7. Four notes held with Clouds on the synth effect (granular).
+8. Optional: case 5 with a string model (button 2).
+
+A photo of the screen per case is as good as typing the numbers. White click again for the drawing.
+
+**If something is wrong:** power off; flash seq10 or seq9 through the te-boot menu, or recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1`.
+
+## Test 29: Rings mode budget, earlier sleep, Clouds yields (`op1_246_rings_cpuprobe2.op1`)
+
+**Not flashed yet.** The user chose three savings after Test 28. `op1_246_rings_cpuprobe2.op1` has them plus the Test 28 readout (white click on a Rings page). `op1_246_rings_seq11.op1` is the same without the readout (the next beta if this works).
+- **Earlier sleep:** a Rings voice's tail stops computing below ~ -72 dBFS for ~12 ms (was -96 dBFS; `RingsVoice::kSleepLevel`). A sleeping voice now skips the whole render path (`op1/engine.cc`), except string + reverb's carriers, which play the shared reverb.
+- **Mode budget in "all"** (modal model, `TrimVoices` in `op1/engine.cc`): the voices still ringing share 60 modes (Rings' own budget, polyphony 1). A chord's notes (struck within ~50 ms) share equally, up to 14 each (six-note chord: 10 each). Older tails take what's left, newest first, down to 4 each. A voice only loses modes at a note-on (masked by the strike) and gets its full count back when struck again. Modes that come back start from rest (`ModalResonator::set_resolution`). Simulator: six ringing voices 122.8 → 96.3 MHz; turning 141.9 → 116.7.
+- **Clouds yields:** the governor's share for Clouds plus our engines is 0.40 of the period (was 0.75; `kShare` in `clouds_fx.cc`). From Test 28, 37% kept the screen at 47 fps and 48% dropped it to 27. With six Rings voices (~100 MHz) Clouds gets ~60 MHz: fewer grains. Clouds alone (~81 MHz, 20%) is untouched.
+- Checks:
+  - One voice still `ef8618dd`, and every model's single-voice checksum is unchanged.
+  - Clouds `sim-fx` checksums match the committed build.
+  - `test-governor`, `test-alloc`, `step-params`, `test-screen` and `bench-mode-bank` pass.
+  - All four images build. Hooks are function starts (the imm16 pair is `kTypeListQuery`), `verify_bootloader.py` passes, and only `OP1_vdk.ldr` differs from cpuprobe1 / seq10.
+
+**Procedure** (cpuprobe2; Rings modal, polyphony "all"; readout on with the white click; note the numbers as in Test 28):
+1. Repeat Test 28's cases 4, 5, 6 and 7 (four notes, six notes, six recording, four + Clouds granular). Is the tape animation smooth now while recording with 4–6 voices?
+2. Listen: do six-note chords and long tails still sound right? Any clicks when a new note strikes over ringing tails, or tails that end too early?
+3. Rings + Clouds on the synth effect, then on the master too: does it play well together now? Does Clouds sound thin while Rings is busy?
+4. Clouds alone: unchanged?
+
+**If something is wrong:** power off; flash seq10 or seq9 through the te-boot menu, or recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1`.

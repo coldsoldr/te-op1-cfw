@@ -135,6 +135,13 @@ class RingsVoice {
   ResonatorModel model() const { return model_; }
   // Modes per voice (the coefficients are recomputed on the next render).
   void set_resolution(int32_t resolution) { resonator_.set_resolution(resolution); }
+  int32_t resolution() const { return resonator_.resolution(); }
+  // RenderMono's voice has been below kSleepLevel long enough to stop
+  // computing until its next note (it renders silence, or only its share
+  // of the shared reverb).
+  bool asleep() const { return !strum_ && silent_blocks_ >= kSilentBlocksToSleep; }
+  static const int32_t kSleepLevel = 1 << 11;      // Q27 peak: ~ -96 dBFS (Test 29: -72 cut tails short)
+  static const int32_t kSilentBlocksToSleep = 8;   // RenderMono calls (~12 ms)
   // Modal model: keep the resonator's coefficients this render even if the
   // parameters move (a strike always updates them); see
   // op1/coefficient_budget.h.
@@ -191,9 +198,7 @@ class RingsVoice {
   int32_t cutoff_f0_;
   int32_t cutoff_brightness_;
   FFloat cutoff_fc_;
-  int32_t silent_blocks_;               // consecutive renders below -96 dBFS
-  int32_t excitation_[kSubblockSize];   // scratch, kept off the stack
-  int32_t aux_[kSubblockSize];          // scratch for RenderMono
+  int32_t silent_blocks_;               // consecutive renders below the sleep level
   ModalResonator resonator_;
   FmVoiceFixed fm_voice_;
   ExcitationFilter excitation_filter_;

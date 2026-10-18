@@ -4,6 +4,7 @@
 
 #include "src/fixed.h"
 #include "src/fixed_tables.h"
+#include "src/scratch.h"
 
 #ifndef OP1RINGS_SAMPLE_RATE
 #define OP1RINGS_SAMPLE_RATE 44100
@@ -11,10 +12,7 @@
 
 namespace op1rings {
 
-int32_t StringVoice::excitation_[kStringMaxBlockSize];
-int32_t StringVoice::sympathetic_[kStringMaxBlockSize];
-int32_t StringVoice::mono_[kStringMaxBlockSize];
-const int32_t StringVoice::zeros_[kStringMaxBlockSize] = { 0 };
+static_assert(kStringMaxBlockSize <= static_cast<size_t>(kScratchBlock), "string scratch");
 
 namespace {
 
@@ -264,15 +262,21 @@ void StringVoice::UpdateTuning(int32_t structure) {
 void StringVoice::Process(int32_t f0, const VoicePatch& patch, int32_t* out, size_t size) {
   const int32_t n = state_.num_strings;
 
+  // Scratch shared by all voices (src/scratch.h: L1 on the OP-1, where the
+  // string kernels read and write it once per string and sample).
+  int32_t* excitation = scratch()->strings.excitation;
+  int32_t* sympathetic = scratch()->strings.sympathetic;
+  int32_t* mono = scratch()->strings.mono;
+
   // Excitation: the plucker through the voice's DC blocker (the audio input
   // is silent on the OP-1). Once both are quiet, it's zeros.
-  const int32_t* excitation = zeros_;
   if (!state_.plucker.quiet() || !state_.dc_blocker.idle()) {
-    state_.plucker.Process(excitation_, size);
-    state_.dc_blocker.Process(excitation_, size);
-    excitation = excitation_;
+    state_.plucker.Process(excitation, size);
+    state_.dc_blocker.Process(excitation, size);
+  } else {
+    for (size_t i = 0; i < size; ++i) excitation[i] = 0;
   }
-  for (size_t i = 0; i < size; ++i) mono_[i] = 0;
+  for (size_t i = 0; i < size; ++i) mono[i] = 0;
 
   // Dispersion from structure, with a dead zone at 0.24-0.26.
   const int32_t structure = patch.structure;
@@ -377,16 +381,16 @@ void StringVoice::Process(int32_t f0, const VoicePatch& patch, int32_t* out, siz
   }
 
   for (int32_t k = 0; k < n; ++k) {
-    strings_[k].Process(k == 0 ? excitation : sympathetic_, mono_, size,
+    strings_[k].Process(k == 0 ? excitation : sympathetic, mono, size,
                         state_.dispersion ? &stretch_ : nullptr, (allowed >> k) & 1);
     if (k == 0 && n > 1) {
       // Was 0.1f, Ben Wilson -> 0.2f (upstream).
       const int32_t gain = Q(0.2, 31) >> (31 - string_index_shift);   // 0.2 / n
-      for (size_t i = 0; i < size; ++i) sympathetic_[i] = MulQ31Fast(mono_[i], gain);
+      for (size_t i = 0; i < size; ++i) sympathetic[i] = MulQ31Fast(mono[i], gain);
     }
   }
 
-  for (size_t i = 0; i < size; ++i) out[i] = ShlSat(mono_[i], 2);   // Q25 -> Q27
+  for (size_t i = 0; i < size; ++i) out[i] = ShlSat(mono[i], 2);   // Q25 -> Q27
 }
 
 }  // namespace op1rings

@@ -45,8 +45,9 @@ PHASE_NOTE_OFF = (0x01911168, 0x01a1b5ec)
 
 PT_LOAD = 1
 
-PATCH_WORD32, PATCH_IMM16_LO, PATCH_IMM16_HI = 0, 1, 2
-PATCH_KIND_NAMES = {PATCH_WORD32: 'word', PATCH_IMM16_LO: 'imm16 lo', PATCH_IMM16_HI: 'imm16 hi'}
+PATCH_WORD32, PATCH_IMM16_LO, PATCH_IMM16_HI, PATCH_CALL24 = 0, 1, 2, 3
+PATCH_KIND_NAMES = {PATCH_WORD32: 'word', PATCH_IMM16_LO: 'imm16 lo', PATCH_IMM16_HI: 'imm16 hi',
+                    PATCH_CALL24: 'call'}
 MAX_PATCHES = 64
 
 
@@ -97,7 +98,21 @@ def patch_bytes(entry):
             raise LdrError('{:#x}: bad imm16 patch'.format(address))
         half = value & 0xffff if kind == PATCH_IMM16_LO else value >> 16
         return struct.pack('<H', stock), struct.pack('<H', half)
+    if kind == PATCH_CALL24:
+        return call24(address, stock), call24(address, value)
     raise LdrError('{:#x}: unknown patch kind {}'.format(address, kind))
+
+
+def call24(address, target):
+    """Blackfin 'CALL pcrel24' at address to target: two halfwords,
+    0xE300 | offset[23:16], offset[15:0], offset = (target - address) / 2."""
+    if address & 1 or target & 1:
+        raise LdrError('{:#x}: CALL to {:#x}: odd address'.format(address, target))
+    offset = (target - address) >> 1
+    if not -(1 << 23) <= offset < (1 << 23):
+        raise LdrError('{:#x}: CALL to {:#x}: out of range'.format(address, target))
+    offset &= 0xffffff
+    return struct.pack('<HH', 0xe300 | (offset >> 16), offset & 0xffff)
 
 
 def plain_block(target, payload):

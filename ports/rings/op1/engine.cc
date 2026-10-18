@@ -10,7 +10,9 @@
 //
 // The OP-1 renders voices at 88.2 kHz, 128 samples per call. Rings runs at
 // half that (44.1 kHz, 64 samples per call; upstream runs at 48 kHz) and is
-// upsampled 2x, which halves its CPU cost.
+// upsampled 2x, which halves its CPU cost. The buffers that live only
+// within a render call are in the L1 scratchpad (src/scratch.h): the OP-1
+// runs without a data cache.
 //
 // Encoders (params[0..3], 0..32767): blue = structure, green = brightness,
 // white = damping, orange = position (confirmed on the device). They're
@@ -28,7 +30,9 @@
 #include <cstdint>
 
 #include "op1/coefficient_budget.h"
-#include "op1/cpu_meter.h"
+#ifdef OP1_CPU_PROBE
+#include "op1/cpu_probe.h"
+#endif
 #ifdef OP1_FX_PROBE
 #include "op1/fx_probe.h"
 #endif
@@ -43,6 +47,7 @@
 #include "op1/voice_allocator.h"
 #include "src/fixed.h"
 #include "src/op1_voice.h"
+#include "src/scratch.h"
 
 namespace {
 
@@ -50,6 +55,7 @@ using op1rings::RingsVoice;
 using op1rings::VoicePatch;
 
 const int32_t kRingsBlockSize = op1::kBlockSize / 2;
+static_assert(kRingsBlockSize == op1rings::kScratchBlock, "scratch block size");
 
 // params[] index for structure, brightness, damping, position.
 const int32_t kParamOrder[4] = { 0, 1, 2, 3 };
@@ -65,7 +71,7 @@ class Upsampler {
 
   // in: kRingsBlockSize Q27 samples; out: 2 * kRingsBlockSize samples.
   void Process(const int32_t* in, int16_t* out) {
-    int32_t* x = extended_;
+    int32_t* x = op1rings::scratch()->upsampler;   // the voice has rendered
     x[0] = history_[0];
     x[1] = history_[1];
     x[2] = history_[2];
@@ -81,10 +87,7 @@ class Upsampler {
 
  private:
   int32_t history_[3];   // last three inputs of the previous block
-  static int32_t extended_[kRingsBlockSize + 3];   // scratch, kept off the stack
 };
-
-int32_t Upsampler::extended_[kRingsBlockSize + 3];
 
 // Rings voice states, and which one each OP-1 voice plays. A steal swaps
 // them: the new OP-1 voice takes over the ringing state at no cost, and the
@@ -100,11 +103,7 @@ op1::ReverbBus reverb_bus;   // string + reverb's reverb, shared by the voices
 static_assert(op1::ReverbBus::kBlock == kRingsBlockSize, "reverb bus: one block per call");
 bool initialized;
 op1::Engine voice_engines[op1::kNumVoices];   // latched at note-on
-int32_t out_buffer[kRingsBlockSize];
-int32_t wet_share[kRingsBlockSize];   // a voice's share of the shared reverb
-
-// For the CPU meter's coefficient-update reading (op1/cpu_meter.h).
-uint32_t ProfileClock() { return op1::Cycles(); }
+uint32_t next_serial;
 
 void InitAll() {
   for (int32_t v = 0; v < op1::kNumVoices; ++v) {
@@ -116,7 +115,6 @@ void InitAll() {
   }
   allocator.Init();
   coefficient_budget.Init();
-  op1rings::profile_clock = &ProfileClock;
   reverb_bus.Init();
   initialized = true;
 }
@@ -172,11 +170,6 @@ void PhaseNoteOn(void* self, const int16_t* knobs) {
 
 }  // namespace
 
-namespace op1 {
-CpuMeter cpu_meter;
-int32_t cpu_meter_mode;
-}  // namespace op1
-
 namespace {
 
 void Render(void* self, int16_t* out, const int16_t* params) {
@@ -186,11 +179,19 @@ void Render(void* self, int16_t* out, const int16_t* params) {
     PhaseRender(self, out, params);
     return;
   }
-  if (allocator.silent(v)) {
-    // Its note was taken over by another voice and has faded out.
+  if (allocator.silent(v) ||
+      (voices[v]->asleep() && !allocator.fading(v) &&
+       voices[v]->model() != op1rings::MODEL_STRING_AND_REVERB)) {
+    // Its note was taken over by another voice and has faded out, or its
+    // tail has gone quiet (the shared reverb's carriers keep rendering: a
+    // share of the reverb plays through them).
     for (int32_t i = 0; i < op1::kBlockSize; ++i) out[i] = 0;
+    upsamplers[v].Init();
     return;
   }
+#ifdef OP1_CPU_PROBE
+  op1cpu::RingsVoiceRendered();
+#endif
   int32_t target[op1::ParamSmoother::kNumParams];
   for (int32_t i = 0; i < op1::ParamSmoother::kNumParams; ++i) {
     target[i] = ParamToQ31(params[kParamOrder[i]]);
@@ -210,6 +211,8 @@ void Render(void* self, int16_t* out, const int16_t* params) {
   // (op1/reverb_bus.h); a voice fading out after a steal does neither (the
   // voice that took over carries the ring on).
   const bool carrier = voices[v]->model() == op1rings::MODEL_STRING_AND_REVERB && !allocator.fading(v);
+  int32_t* out_buffer = op1rings::scratch()->render_out;
+  int32_t* wet_share = op1rings::scratch()->wet_share;   // a voice's share of the shared reverb
   const bool shared = reverb_bus.Render(v, op1::Cycles(), patch, carrier, wet_share);
   // The modal model recomputes its coefficients within a budget per block
   // (op1/coefficient_budget.h); a voice fading out after a steal keeps its
@@ -279,24 +282,25 @@ void NoteOn(void* self, const int16_t* knobs) {
 
 }  // namespace
 
-// The entry points, timed for the CPU meter (op1/cpu_meter.h).
+// The entry points (timed for Clouds' governor in the Clouds image).
 extern "C" void RingsRender(void* self, int16_t* out, const int16_t* params) {
 #ifdef OP1_FX_PROBE
   ++op1::render_calls;
 #endif
-  op1::cpu_meter.Begin();
 #ifdef OP1_CLOUDS
   const uint32_t start = op1::Cycles();
   Render(self, out, params);
-  op1fx::measured_cycles += op1::Cycles() - start;   // for Clouds' governor
+  const uint32_t end = op1::Cycles();
+  op1fx::measured_cycles += end - start;   // for Clouds' governor
+#ifdef OP1_CPU_PROBE
+  op1cpu::Rendered(start, end, true);
+#endif
 #else
   Render(self, out, params);
 #endif
-  op1::cpu_meter.End();
 }
 
 extern "C" void RingsNoteOn(void* self, const int16_t* knobs) {
-  op1::cpu_meter.Begin();
 #ifdef OP1_CLOUDS
   const uint32_t start = op1::Cycles();
   NoteOn(self, knobs);
@@ -304,7 +308,6 @@ extern "C" void RingsNoteOn(void* self, const int16_t* knobs) {
 #else
   NoteOn(self, knobs);
 #endif
-  op1::cpu_meter.End();
 }
 
 extern "C" __attribute__((section(".op1header"), used))

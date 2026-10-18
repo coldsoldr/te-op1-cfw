@@ -307,3 +307,10 @@ A wrapper around the pattern player words, logging only (method of Test 16):
 8. **Print to pattern:** yes, in the first version.
 9. **Settings:** RAM only first, then a private op1.db table.
 10. **Name:** no "Grids" label: **pattern shows as "MULTI"** in the sequencer list, and the orange click swaps Grids ↔ stock pattern (as phase and phone became "multi").
+
+## 9. Integration (2026-10-17)
+
+- **Core:** `op1/grids_seq.*` (platform-free): the controls around `DrumSequencer` per the decisions above: knobs (shift = the fill page), clicks, fill while held, assign (parts and accent keys), play-through keys, per-key note counting, and the last bar recorded for print. `make sim-grids` checks it (host and Blackfin). `DrumSequencer::Reseed` added for the re-roll (`make compare` still passes).
+- **Glue:** `op1/grids_op1.cc`: pattern's player, controller and screen words, active only on the drum instrument; print through pattern's PatternData and stock's save (`docs/sequencer-interface.md` §12); a digit readout until `grids.svg`.
+- **The "multi" name:** blocked for now. The chooser finds the current type by its shown name, and its CALL (`0x1970bea`) can't reach region A (pcrel24 = ±16 MB). Needs a trampoline within 16 MB (e.g. region C, untested) as a separate step. `tools/inject_app.py` has the new `kCall24` patch kind (checked against the stock bytes; range-checked).
+- **Image:** `make op1-seq` in `ports/rings` (Clouds + Marbles + Grids). Device: Test 23.

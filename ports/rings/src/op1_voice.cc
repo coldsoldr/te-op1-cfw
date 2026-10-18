@@ -5,12 +5,15 @@
 #include "src/ffloat.h"
 #include "src/fixed.h"
 #include "src/fixed_tables.h"
+#include "src/scratch.h"
 
 // The soft-limit table for src/limiter_bfin.S (C linkage, link-time
 // constant).
 extern "C" const int32_t* const kSoftLimitTable = op1rings::kSoftLimitQ30;
 
 namespace op1rings {
+
+static_assert(kSubblockSize <= static_cast<size_t>(kScratchSubblock), "modal scratch");
 
 namespace {
 
@@ -337,7 +340,7 @@ void RingsVoice::RenderSubblock(uint32_t phase_increment, const VoicePatch& patc
                                   (g * ghx).Scaled(1).ToQ27());
     strum_ = false;
   }
-  int32_t* excitation = excitation_;
+  int32_t* excitation = scratch()->modal.excitation;   // src/scratch.h
   excitation_filter_.Process(excitation, kSubblockSize);
 
   resonator_.set_frequency(f0);
@@ -418,11 +421,10 @@ void RingsVoice::RenderStringBlock(uint32_t phase_increment,
 void RingsVoice::RenderMono(const uint32_t* phase_increment,
                             const VoicePatch& patch, int32_t* out, size_t size, int32_t* send,
                             const int32_t* wet) {
-  const int32_t kSilence = 1 << 11;          // ~ -96 dBFS in Q27
-  const int32_t kSilentBlocksToSleep = 8;
-  // Asleep, the voice renders nothing of its own; a share of the shared
-  // reverb still plays through it (its limiter).
-  const bool asleep = !strum_ && silent_blocks_ >= kSilentBlocksToSleep;
+  // Asleep (the tail below kSleepLevel for a while), the voice renders
+  // nothing of its own; a share of the shared reverb still plays through it
+  // (its limiter).
+  const bool asleep = this->asleep();
   if (asleep && !wet) {
     for (size_t i = 0; i < size; ++i) out[i] = 0;
     return;
@@ -456,7 +458,7 @@ void RingsVoice::RenderMono(const uint32_t* phase_increment,
       mono_limiter_.Process(o, kSubblockSize, gains);
     }
   }
-  silent_blocks_ = peak < kSilence ? silent_blocks_ + 1 : 0;
+  silent_blocks_ = peak < kSleepLevel ? silent_blocks_ + 1 : 0;
 }
 
 }  // namespace op1rings

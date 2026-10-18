@@ -37,10 +37,12 @@ struct Mode {
 // the last input of the previous block (updated). out/aux: Q27; out == aux
 // sums all the modes into one buffer (the same values as out + aux: integer
 // sums don't depend on order). num_modes is even (modes are processed in
-// pairs).
+// pairs). half_x: size words of scratch for the assembly (the halved
+// inputs it reads once per mode and sample: in L1 on the OP-1, src/scratch.h).
 extern "C" void ModeBankProcessAsm(Mode* modes, int32_t num_modes,
                                    const int32_t* in, int32_t* previous_input,
-                                   int32_t* out, int32_t* aux, int32_t size);
+                                   int32_t* out, int32_t* aux, int32_t size,
+                                   int32_t* half_x);
 
 inline void ModeBankProcessC(Mode* modes, int32_t num_modes, const int32_t* in,
                              int32_t* previous_input, int32_t* out,
@@ -73,11 +75,13 @@ inline void ModeBankProcessC(Mode* modes, int32_t num_modes, const int32_t* in,
 
 inline void ModeBankProcess(Mode* modes, int32_t num_modes, const int32_t* in,
                             int32_t* previous_input, int32_t* out,
-                            int32_t* aux, size_t size) {
+                            int32_t* aux, size_t size, int32_t* half_x = nullptr) {
 #if defined(__bfin__) && !defined(OP1RINGS_NO_ASM)
+  int32_t local[32];   // MAX_BLOCK in mode_bank_bfin.S
   ModeBankProcessAsm(modes, num_modes, in, previous_input, out, aux,
-                     static_cast<int32_t>(size));
+                     static_cast<int32_t>(size), half_x ? half_x : local);
 #else
+  (void)half_x;
   ModeBankProcessC(modes, num_modes, in, previous_input, out, aux, size);
 #endif
 }

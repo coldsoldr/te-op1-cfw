@@ -107,6 +107,7 @@ int main(int argc, char** argv) {
   // continuously (a step every block, so the coefficients are recomputed in
   // every call): the worst case for knob movement.
   harness::CycleStats turning;
+  op1rings::profile_clock = [] { return static_cast<uint32_t>(harness::ReadCycles()); };
   const uint32_t updates_before = op1rings::profile_update_cycles;
   uint64_t turning_cycles = 0;
   int16_t moving[4] = { params[0], params[1], params[2], params[3] };
@@ -120,8 +121,8 @@ int main(int argc, char** argv) {
     if (b > 0) turning.Add(harness::ReadCycles() - t0);
   }
   turning.Print("6 active, knobs turning", op1::kBlockSize / 2);
-  // What the CPU meter's second reading shows (op1/cpu_meter.h): the
-  // coefficient updates' share of the time, here of the engine's cycles.
+  // The coefficient updates' share of the time, here of the engine's
+  // cycles (ModalResonator's profile counters).
   const uint32_t updates = op1rings::profile_update_cycles - updates_before;
   printf("  coefficient updates  %.1f%% of the engine's cycles, %.1f MHz\n",
          100.0 * updates / static_cast<double>(turning_cycles),

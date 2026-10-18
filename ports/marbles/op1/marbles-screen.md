@@ -1,4 +1,4 @@
-# Marbles for OP-1: screen SVG handover (v2, "Dots")
+# Marbles for OP-1: screen SVG handover (v2, "Dots"; colour pass 2026-10-17)
 
 Files:
 - `marbles.svg`: the asset. Ships showing page T.
@@ -6,7 +6,7 @@ Files:
 
 The marks, brackets, bars and chip positions baked into `marbles.svg` are an example (an 8-step locked loop). The code overwrites them on load. The **colours** are drawn in the default states the brief asked for:
 - `h00` shown;
-- `loop_t` bright (locked) and `loop_x` dim (on);
+- `loop_t` green (locked) and `loop_x` dim green (on);
 - `src_scale` selected and `src_keys` not.
 
 ## Conventions
@@ -25,13 +25,15 @@ The marks, brackets, bars and chip positions baked into `marbles.svg` are an exa
 
 | Role | Hex |
 |---|---|
-| Frames | `#3854A5` |
+| Frames: chip box only (history and legend have none; the pitch source box is white `#DED7FF`) | `#3854A5` |
 | Blue encoder | `#638BFF` |
 | Green encoder | `#00EE92` |
 | White encoder | `#DED7FF` |
 | Orange encoder | `#FF395A` |
-| Marks, bright bracket, selected icon, chip markers | `#DED7FF` |
-| Dim bracket, unselected icon, chip dots/bars, bar centre ticks | `#514959` |
+| Marks, selected source icon | `#DED7FF` |
+| Unselected source icon, bar centre ticks | `#514959` |
+| Brackets: locked / on (deja vu is green throughout) | `#00EE92` / `#13704D` |
+| Chip markers / chip dots and bars (the blue click) | `#638BFF` / `#3854A5` |
 | Lane guide lines, bar tracks | `#38354D` |
 
 ## Layout
@@ -72,8 +74,8 @@ The marks, brackets, bars and chip positions baked into `marbles.svg` are an exa
 - Length `n` 1..16: `s = n/16`, `transform="matrix(s,0,0,1,239·(1-s),0)"`. The left end lands at `239 − 14·n`, so the bracket covers the last `n` columns.
 - State (per bracket, from that page's deja vu click):
   - off: `display="none"`;
-  - on: `stroke="#514959"`;
-  - locked: `stroke="#DED7FF"`.
+  - on: `stroke="#13704D"` (dim green);
+  - locked: `stroke="#00EE92"` (green).
 
 ## 3. Legend (4 slots)
 
@@ -84,25 +86,25 @@ Slot `i` = 0..3 in encoder order (blue, green, white, orange). Slot left edge `x
 | Slot | Colour | `leg<i>_t` | `leg<i>_x` |
 |---|---|---|---|
 | 0 | `#638BFF` | rate: metronome | spread: arrows apart |
-| 1 | `#00EE92` | bias: seesaw | bias: up/down arrows |
+| 1 | `#00EE92` | deja vu: loop arrow | length: bracket |
 | 2 | `#DED7FF` | jitter: wobbly line | steps: staircase |
-| 3 | `#FF395A` | deja vu: loop arrow | length: bracket |
+| 3 | `#FF395A` | bias: seesaw | bias: up/down arrows |
 
 **Bars:** `bar<i>` is a `rect` at `x = x0+14`, y 140, 50 × 4, filled with the slot colour. **Anchor = left end, x = x0+14** (18.5, 96.5, 174.5, 252.5).
 - Value `u` 0..1: `transform="matrix(u,0,0,1,ax·(1-u),0)"`, where `ax` is the anchor.
 - A static track (`#38354D`, same rect) sits underneath.
-- Slots 1 and 3 have a centre tick at `x0+39` (y 147–149). On page T it marks bias = even and deja vu = locked loop. On page X it marks bias = middle; for length it has no special meaning.
+- Slots 1 and 3 have a centre tick at `x0+39` (y 147–149). Slot 1 (deja vu): the locked-loop point on page T; no special meaning for length. Slot 3 (bias): even on page T, middle on page X.
 - Value mapping:
   - Page T:
     - blue: rate step `k` 0..9, `u = k/9`
-    - green: bias
+    - green: deja vu
     - white: jitter
-    - orange: deja vu
+    - orange: bias
   - Page X:
     - blue: spread
-    - green: bias
+    - green: length `n`, `u = (n−1)/15`
     - white: steps
-    - orange: length `n`, `u = (n−1)/15`
+    - orange: bias
 
 ## 4. Chips
 
@@ -111,9 +113,9 @@ Slot `i` = 0..3 in encoder order (blue, green, white, orange). Slot left edge `x
 | `chipT` | 7 dim dots at `x = 268 + 6.67·i`, y=20, plus the marker `chip_model` | page T |
 | `chipX` | 6 dim bars of rising height at `x = 268 + 8·i` (bottoms at y=23), plus the marker `chip_scale` | page X |
 
-- `chip_model`: a white triangle (264.5,34 271.5,34 268,29). `transform="translate(6.67·m, 0)"`. The order of m 0..6: coin toss, clusters, drums, independent, divider, three states, Markov.
+- `chip_model`: a blue triangle (264.5,34 271.5,34 268,29). `transform="translate(6.67·m, 0)"`. The order of m 0..6: coin toss, clusters, drums, independent, divider, three states, Markov.
 - `chip_scale`: same triangle. `transform="translate(8·s, 0)"`. The order of s 0..5: major, minor, pentatonic, pelog, raag Bhairav, raag Shri.
-- `src_scale` (staircase) / `src_keys` (keyboard), stroke-only. Selected: `stroke="#DED7FF"`; other: `stroke="#514959"`. Toggled with shift + white.
+- `src_scale` (staircase) / `src_keys` (keyboard), stroke-only. Selected: `stroke="#DED7FF"`; other: `stroke="#514959"`. Toggled with the white click (shift + white turns the page).
 
 ## Full id list
 

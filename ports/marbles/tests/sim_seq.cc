@@ -140,8 +140,8 @@ int main() {
 
   // Keys mode: chord 2, 5, 9 (latched), released.
   seq.mutable_settings()->rate = 0x8000;
-  seq.OnClick(CLICK_WHITE, -1);
-  Check(seq.settings().pitch_source == PITCH_KEYS, "shift + white: keys mode");
+  seq.OnClick(CLICK_WHITE, 1);
+  Check(seq.settings().pitch_source == PITCH_KEYS, "white: keys mode");
   seq.KeyDown(2, false);
   seq.KeyDown(5, false);
   seq.KeyDown(9, false);
@@ -164,11 +164,11 @@ int main() {
   Run(2000);
   sink.record = false;
   Check(sink.pool_seen == (1u << 12), "a new chord replaces the latched one");
-  seq.OnClick(CLICK_WHITE, -1);
+  seq.OnClick(CLICK_WHITE, 1);
 
   // X deja vu locked, length 4: T2's pitches repeat every 4 notes.
-  seq.OnClick(CLICK_WHITE, 1);   // X page
-  Check(seq.settings().page == PAGE_X, "white: X page");
+  seq.OnClick(CLICK_WHITE, -1);   // X page
+  Check(seq.settings().page == PAGE_X, "shift + white: X page");
   seq.OnClick(CLICK_GREEN, 1);
   seq.OnClick(CLICK_GREEN, 1);
   Check(seq.settings().x_deja_vu == DEJA_VU_LOCKED, "green twice: X deja vu locked");
@@ -186,7 +186,7 @@ int main() {
   Check(n > 8 && repeats == n - 4, "locked loop of 4");
 
   // Full jitter: no stuck notes; T2 near the grid on average.
-  seq.OnClick(CLICK_WHITE, 1);   // T page
+  seq.OnClick(CLICK_WHITE, -1);   // T page
   seq.mutable_settings()->jitter = 65535;
   seq.mutable_settings()->t_model = 0;
   seq.mutable_settings()->x_deja_vu = DEJA_VU_OFF;

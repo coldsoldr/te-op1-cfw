@@ -298,3 +298,62 @@ A wrapper around tombola's player words (method of Test 16) logging tick and cal
 4. **Velocity:** whether engines respond to `MidiNote.velocity` (Y → velocity).
 5. **Switching:** what the play-mode popup (id 40) and `+0x24 OnLeave` do on a synth ↔ drum switch with tombola on both instruments (one shared player object).
 6. **Storage:** confirm that a private op1.db table survives firmware updates and factory resets (op1.db is rewritten by "restore factory defaults").
+
+## 12. Pattern data and the sequencer list (for Grids)
+
+### 12.1 Renaming "pattern" to "multi" in the sequencer list
+
+- **The chooser list is built by the same type-list function** `0x19707d8` with `seq_types` [C]:
+  - `0x1970b24` `GetSeqList()` caches the list at `0x1bab8d0` (48-byte entries: the name string, id at +0x1c);
+  - its only caller is `0x1a4245c`, which opens the chooser popup.
+- **Picking an entry resolves by id** [C]: SeqManager +0x4c `0x1a429d0` runs `SELECT type FROM seq_types WHERE id='%i'` (`0x18fa79c`), which gives the raw db name 'pattern', then `SeqIds` name → index (`0x1a42344`). It writes `UPDATE sequencer SET value='%s' …` (`0x18fa724` / `0x18fa760`) with that raw name. So op1.db keeps 'pattern'.
+- **Opening the chooser resolves by the displayed name** [C]. `0x1970ba0(current type index)`:
+  1. `0x1a422ec` index → SeqIds name ('pattern');
+  2. `0x1a17c28(list, name)` finds the entry by name;
+  3. on a miss it calls `0x1919aa8("Presets.cpp:66 can't find %s")`, the fatal assert.
+
+  With `WHEN 'pattern' THEN 'multi'` in the query, the list holds 'multi', so **opening the chooser while pattern is the current type would assert. The query rename alone is not safe.**
+- **Safest fix:** redirect the one call at **`0x1970bea`** (stock bytes `06 e3 81 8b` = `CALL 0x1a422ec`) to a wrapper that returns "multi" for index 0 and otherwise tail-calls `0x1a422ec`; then add `WHEN 'pattern' THEN 'multi'` to the query.
+  - It is a pc-relative `CALL` (pcrel24, ±32 MB; region A at `0x02c0xxxx` is in range). That needs a new patch kind in `tools/inject_app.py`: encode `0xE300 | (off >> 16 & 0xff)`, `off & 0xffff` with `off = (target − 0x1970bea) / 2`, after checking the stock bytes.
+  - The selection path and op1.db stay 'pattern', so stock firmware is unaffected [C].
+  - **Not covered:** any other place that shows the sequencer's name from SeqIds directly (none found in the chooser path) [I].
+- **Alternatives rejected:** renaming the SeqIds string, or the `seq_types` row, would store 'multi' in op1.db, and stock firmware asserts on that at boot.
+
+### 12.2 Pattern data (for "print")
+
+- **Two `PatternData` objects, built lazily** by the getter **`0x1a083c4()`** [C]:
+  - guards `[0x1de2ecc]` / `[0x1de2ed0]`;
+  - the db is loaded once (guard byte `0x1de320c`): `SELECT data FROM drumseq WHERE is_synth=%i`, then JSON;
+  - it returns **synth `0x1de2ed4`** if `[0x1de4c40] == 0`, otherwise **drum `0x1de3070`**.
+- **Layout** (size 0x19c) [C]:
+
+| offset | field |
+|---|---|
+| +0x00 / +0x01 | dirty bytes (set by `0x193ef3c`) |
+| +0x04 | vptr `0x191106c`; its +0x14 = `0x1a08204`, the save |
+| **+0x08** | **notes: 16 steps × 24 keys, one byte each (0/1); address `+8 + step·24 + key`** |
+| +0x188 | swing (default 50) |
+| +0x18c | length (1..16, default 16; `pattern_data.cpp:57`) |
+| +0x190 | start (0..15, `start + length ≤ 16`; `:74`) |
+| +0x194 | pm (0..2, default 2; `:68`) |
+| +0x198 | is_synth |
+
+- **kMaxLength = 16**: a pattern holds at most 16 steps [C]. A Grids bar prints as 16 sixteenths. 32nd resolution would have to drop the odd steps. Accents can't be stored (notes are on/off only) [C/I].
+- **Accessors** (this = data object, R1 = step, R2 = key; they assert step < 16, key < 24) [C]:
+  - `0x1a07ee0` clear key;
+  - `0x1a07f60` get key;
+  - `0x1a07fc4` toggle key;
+  - `0x1a08030` SetLength(len);
+  - `0x1a08080` SetStart(start);
+  - `0x1a080d8` SetPm(pm).
+
+  The setters call `0x193ef3c(this)`.
+- **Saving** [C/I]: `0x193ef3c(obj)` sets the dirty bytes and posts the saver semaphore `[0x1ba2990]`. The saver thread then calls the object's vtable +0x14 = `0x1a08204`, which runs `UPDATE drumseq SET data='%s' WHERE is_synth=%i`.
+- **The player reads the data live** [C]: Tick `0x1a08ffc` → step `0x1a08d24` calls the getter and `0x1a07f60` (get key) every step, and reads `+0x194` / `+0x18c`. Writes show up at the next step.
+- **Recommended print** (UI thread, drum instrument live):
+  1. `pd = 0x1a083c4()`;
+  2. for step 0..15, key 0..23: `B[pd + 8 + step·24 + key] = hit ? 1 : 0`;
+  3. `0x1a08030(pd, 16)`, `0x1a08080(pd, 0)`;
+  4. `0x193ef3c(pd)` to save.
+
+  Stock pattern then plays and shows the bar after the orange swap, and it persists in op1.db's `drumseq` row (is_synth 0). Byte writes racing the sequencer thread can at worst mix old and new steps within one tick [I].

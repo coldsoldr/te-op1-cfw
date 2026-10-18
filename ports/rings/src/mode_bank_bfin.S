@@ -5,7 +5,10 @@
  *
  * void ModeBankProcessAsm(Mode* modes, int32_t num_modes, const int32_t* in,
  *                         int32_t* previous_input, int32_t* out,
- *                         int32_t* aux, int32_t size);
+ *                         int32_t* aux, int32_t size, int32_t* half_x);
+ *
+ * half_x: size words of scratch (the halved inputs, read once per mode and
+ * sample; the OP-1 engine passes L1 memory, src/scratch.h).
  *
  * Loop order: for each mode, all samples of the block, so the mode's six
  * values stay in registers; the outputs are accumulated in out[] / aux[].
@@ -86,9 +89,6 @@ _ModeBankProcessAsm:
 	[--SP] = LC1;
 	[--SP] = LT1;
 	[--SP] = LB1;
-	P5 = -(MAX_BLOCK * 4) (X);
-	SP = SP + P5;                   /* half_x[] scratch */
-
 	P5 = R0;                        /* modes */
 	R1 >>= 1;
 	P4 = R1;                        /* number of mode pairs */
@@ -100,7 +100,8 @@ _ModeBankProcessAsm:
 	/* half_x[s] = (in[s] + x_prev) >> 1; out[s] = aux[s] = 0 */
 	R1 = [P3];                      /* x_prev */
 	R2 = 0;
-	I0 = SP;
+	R0 = [FP + 36];                 /* half_x */
+	I0 = R0;
 	R0 = [FP + 24];
 	I1 = R0;                        /* out */
 	R0 = [FP + 28];
@@ -117,7 +118,7 @@ _ModeBankProcessAsm:
 	[I2++] = R2;
 	[P3] = R1;
 
-	P0 = SP;                        /* half_x base */
+	P0 = [FP + 36];                 /* half_x base */
 	P2 = [FP + 24];                 /* out */
 	P3 = [FP + 28];                 /* aux */
 	CC = P4 == 0;
@@ -132,8 +133,6 @@ _ModeBankProcessAsm:
 	NOP;
 
 .Ldone:
-	P5 = (MAX_BLOCK * 4) (X);
-	SP = SP + P5;
 	LB1 = [SP++];
 	LT1 = [SP++];
 	LC1 = [SP++];

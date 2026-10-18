@@ -80,15 +80,23 @@ static void ProcessC(Mode* m, int32_t n, const int32_t* in, int32_t* prev,
   ModeBankProcessC(m, n, in, prev, out, aux, static_cast<size_t>(size));
 }
 
+#ifdef __bfin__
+static int32_t half_x[32];
+static void ProcessAsm(Mode* m, int32_t n, const int32_t* in, int32_t* prev,
+                       int32_t* out, int32_t* aux, int32_t size) {
+  ModeBankProcessAsm(m, n, in, prev, out, aux, size, half_x);
+}
+#endif
+
 int main() {
   harness::EnableCycleCounter();
   Run("C", ProcessC, false);
 #ifdef __bfin__
-  Run("asm", ModeBankProcessAsm, false);
+  Run("asm", ProcessAsm, false);
 #endif
   Run("C mono", ProcessC, true);
 #ifdef __bfin__
-  Run("asm mono", ModeBankProcessAsm, true);
+  Run("asm mono", ProcessAsm, true);
 #endif
   return 0;
 }

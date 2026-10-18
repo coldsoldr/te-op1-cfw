@@ -10,7 +10,8 @@ The design is kept as drawn, with what the OP-1's SVG parser needs:
   to know them), so each arc becomes cubic Beziers of at most 90 degrees;
 - page2ind's fill "none" becomes #010101 (the design's mask colour, black
   on the screen): a fill colour can only be changed where the file gives
-  one (op1/clouds_screen.cc lights the indicator by writing it).
+  one (op1/clouds_screen.cc lights the indicator by writing it);
+- the main window's frame is white and the bottom-right frame goes.
 """
 
 import math
@@ -156,6 +157,14 @@ def main():
     svg, n = re.subn(r'(<rect id="page2ind" )fill="none"', r'\1fill="#010101"', svg)
     if n != 1:
         raise SystemExit('page2ind not found')
+    # The user's colour pass (2026-10-18): the main window's frame in white,
+    # no frame around the bottom-right window.
+    svg, n = re.subn(r'(<path [^>]*stroke=")#3854A5("[^>]*d="M7\.5,2\.5L)', r'\g<1>#DED7FF\2', svg)
+    if n != 1:
+        raise SystemExit('main window frame not found')
+    svg, n = re.subn(r'<path [^>]*d="M235\.5,102\.5L[^"]*"></path>\n?', '', svg)
+    if n != 1:
+        raise SystemExit('bottom-right frame not found')
     if re.search(r'\sd="[^"]*[Aa]', svg):
         raise SystemExit('an arc is left')
     open(sys.argv[2], 'w', encoding='utf-8', newline='\n').write(svg)

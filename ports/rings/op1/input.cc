@@ -7,8 +7,7 @@
 //   click blue           next model (op1/settings.h kModelCycle)
 //   click green          next polyphony (all -> 1 -> 2 -> 4)
 //   shift + click        the previous one
-//   click white          CPU meter: hidden -> engine -> coefficient updates
-//                        (op1/cpu_meter.h)
+// (the white click is free: stock ignores it)
 // The value goes into the slot's knobs[4..6] and is saved with the preset
 // through Patch::SetKnobs, as the stock knob handler does for knobs[0..3]
 // in the same thread. Our clicks are consumed (return 1: no global
@@ -29,7 +28,9 @@
 #ifdef OP1_CLOUDS
 #include "op1/clouds_fx.h"
 #endif
-#include "op1/cpu_meter.h"
+#ifdef OP1_CPU_PROBE
+#include "op1/cpu_probe.h"
+#endif
 #include "op1/op1.h"
 #include "op1/settings.h"
 
@@ -83,20 +84,25 @@ int16_t* SlotKnobs(int32_t slot) {
   return reinterpret_cast<int16_t*>(op1::kKnobs + slot * 16);
 }
 
-// Whether a click on this slot is ours: orange always (the engine), the
-// others while the slot plays Rings.
+// Whether a click on this slot is ours: orange always (the engine), blue
+// and green while the slot plays Rings.
 bool IsOurClick(int32_t slot, int32_t key) {
   if (key == kClickOrange) return true;
-  if (key != kClickBlue && key != kClickGreen && key != kClickWhite) return false;
+#ifdef OP1_CPU_PROBE
+  if (key == kClickWhite) return op1::EngineSetting(SlotKnobs(slot)) == op1::ENGINE_RINGS;
+#endif
+  if (key != kClickBlue && key != kClickGreen) return false;
   return op1::EngineSetting(SlotKnobs(slot)) == op1::ENGINE_RINGS;
 }
 
 void Step(int32_t slot, int32_t key, int32_t direction) {
-  if (key == kClickWhite) {
-    op1::cpu_meter_mode = (op1::cpu_meter_mode + direction + op1::kNumMeterModes) % op1::kNumMeterModes;
+  int16_t* knobs = SlotKnobs(slot);
+#ifdef OP1_CPU_PROBE
+  if (key == kClickWhite) {   // the CPU probe's readout (op1/cpu_probe.cc)
+    op1cpu::Toggle();
     return;
   }
-  int16_t* knobs = SlotKnobs(slot);
+#endif
   if (key == kClickOrange) {
     knobs[op1::kEngineKnob] = op1::EncodeSetting(op1::StepEngine(op1::EngineSetting(knobs), direction));
   } else if (key == kClickBlue) {

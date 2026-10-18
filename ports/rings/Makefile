@@ -81,7 +81,7 @@ bench-port: $(BUILD)/bench_port.elf
 
 OP1_CXXFLAGS := -O2 -std=c++17 -mcpu=bf524 -ffreestanding -fno-exceptions \
                 -fno-rtti -fno-threadsafe-statics -fno-use-cxa-atexit \
-                -ffunction-sections -fdata-sections -I. $(WARN)
+                -ffunction-sections -fdata-sections -DOP1RINGS_L1_SCRATCH -I. $(WARN)
 OP1_LDFLAGS  := -nostdlib -nostartfiles -T op1/link.ld -Wl,--gc-sections \
                 -Wl,--no-undefined
 OP1_ENGINE_SRC := op1/engine.cc op1/screen.cc op1/input.cc op1/patches.cc op1/support.cc \
@@ -90,7 +90,7 @@ OP1_ENGINE_SRC := op1/engine.cc op1/screen.cc op1/input.cc op1/patches.cc op1/su
                   src/mode_bank_bfin.S src/string_kernel_bfin.S src/limiter_bfin.S src/reverb_bfin.S
 OP1_HDR := $(wildcard op1/*.h)
 
-.PHONY: op1-probe op1-engine op1-fxprobe op1-clouds op1-seqprobe op1-marbles sim-engine sim-engine-fm host-probe step-params test-fm test-screen test-alloc \
+.PHONY: op1-cpuprobe op1-probe op1-engine op1-fxprobe op1-clouds op1-seqprobe op1-marbles op1-seq sim-engine sim-engine-fm host-probe step-params test-fm test-screen test-alloc \
         test-string sim-model bench-string test-reverb test-reverb-bus bench-mode-bank
 
 $(BUILD)/op1_probe.elf: op1/probe.cc op1/support.cc op1/op1.h op1/link.ld | $(BUILD)
@@ -139,6 +139,25 @@ $(BUILD)/op1_marbles.elf: $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(OP1_H
 	$(BFIN_BIN)/bfin-elf-size -A $@
 
 op1-marbles: $(BUILD)/op1_marbles.elf
+
+#   make op1-seq      Clouds + Marbles (synth, tombola) + Grids (drums,
+#                     pattern) -> build/op1_seq.elf. Grids is GPL v3.
+GRIDS := ../grids
+GRIDS_SRC := $(GRIDS)/op1/grids_op1.cc $(GRIDS)/op1/grids_seq.cc $(GRIDS)/src/pattern_generator.cc              $(GRIDS)/src/drum_sequencer.cc $(GRIDS)/src/grids_tables.cc
+GRIDS_HDR := $(wildcard $(GRIDS)/op1/*.h $(GRIDS)/src/*.h)
+$(BUILD)/op1_seq.elf: $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(GRIDS_SRC) $(OP1_HDR) $(CLOUDS_HDR) $(MARBLES_HDR) $(GRIDS_HDR) op1/link.ld $(PORT_HDR) | $(BUILD)
+	$(BFIN_CXX) $(OP1_CXXFLAGS) -I$(CLOUDS) -I$(MARBLES) -I$(GRIDS) -I.. -Wno-class-memaccess -DOP1_CLOUDS 	  -DOP1CLOUDS_SAMPLE_RATE=22050 -DOP1_MARBLES -DOP1_GRIDS 	  $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(GRIDS_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
+	$(BFIN_BIN)/bfin-elf-size -A $@
+
+op1-seq: $(BUILD)/op1_seq.elf
+
+#   make op1-cpuprobe the op1-seq image plus the CPU probe (op1/cpu_probe.cc:
+#                     white click on a Rings page = timing readout)
+$(BUILD)/op1_cpuprobe.elf: $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(GRIDS_SRC) op1/cpu_probe.cc $(OP1_HDR) $(CLOUDS_HDR) $(MARBLES_HDR) $(GRIDS_HDR) op1/link.ld $(PORT_HDR) | $(BUILD)
+	$(BFIN_CXX) $(OP1_CXXFLAGS) -I$(CLOUDS) -I$(MARBLES) -I$(GRIDS) -I.. -Wno-class-memaccess -DOP1_CLOUDS 	  -DOP1CLOUDS_SAMPLE_RATE=22050 -DOP1_MARBLES -DOP1_GRIDS -DOP1_CPU_PROBE 	  $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(GRIDS_SRC) op1/cpu_probe.cc $(OP1_LDFLAGS) -o $@ -lgcc
+	$(BFIN_BIN)/bfin-elf-size -A $@
+
+op1-cpuprobe: $(BUILD)/op1_cpuprobe.elf
 
 # Checks of the images' code off the device:
 #   make sim-engine   the engine's entry points in bfin-elf-run: CPU cost, and

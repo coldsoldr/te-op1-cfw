@@ -32,7 +32,7 @@ BFIN_RUN      := $(BFIN_BIN)/bfin-elf-run
 BFIN_SIZE     := $(BFIN_BIN)/bfin-elf-size
 BFIN_CXXFLAGS := -O2 -std=c++11 -mcpu=bf524 -fno-exceptions -fno-rtti -DOP1_SIM -I. $(WARN)
 
-.PHONY: all compare patterns sim size tables clean
+.PHONY: all compare patterns sim size tables sim-grids clean
 
 all: compare sim size
 
@@ -71,6 +71,17 @@ size: $(BUILD)/pattern_generator.o $(BUILD)/drum_sequencer.o $(BUILD)/grids_tabl
 	$(BFIN_BIN)/bfin-elf-ld -r -o $(BUILD)/grids_all.o $^
 	@u=$$($(BFIN_BIN)/bfin-elf-nm -u $(BUILD)/grids_all.o | awk '{print $$2}' | tr '\n' ' '); \
 	 echo "undefined symbols (helpers the image must provide): $${u:-none}" | tee -a $(OUT)/size.txt
+
+# make sim-grids: the OP-1 controls (op1/grids_seq.*) on the host and in the
+# Blackfin simulator.
+GRIDS_SEQ_SRC := tests/sim_grids.cc op1/grids_seq.cc $(PORT_SRC)
+$(BUILD)/sim_grids: $(GRIDS_SEQ_SRC) $(PORT_HDR) op1/grids_seq.h | $(BUILD)
+	$(HOST_CXX) $(HOST_CXXFLAGS) $(GRIDS_SEQ_SRC) -o $@
+$(BUILD)/sim_grids.elf: $(GRIDS_SEQ_SRC) $(PORT_HDR) op1/grids_seq.h | $(BUILD)
+	$(BFIN_CXX) $(BFIN_CXXFLAGS) -msim $(GRIDS_SEQ_SRC) -o $@
+sim-grids: $(BUILD)/sim_grids $(BUILD)/sim_grids.elf
+	$(BUILD)/sim_grids
+	$(BFIN_RUN) $(BUILD)/sim_grids.elf
 
 tables:
 	$(PYTHON) scripts/gen_tables.py $(MI) src/grids_tables.cc --stats

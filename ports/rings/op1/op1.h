@@ -89,7 +89,10 @@ inline int16_t Saturate16(int32_t x) {
 // A patch tools/inject_app.py applies to the app, after checking the stock
 // value. kWord32 replaces a 32-bit word; kImm16Lo/kImm16Hi replace an
 // instruction's 16-bit immediate (at `address`) with the low/high half of
-// `value`, so an R.L/R.H pair can be pointed at our data.
+// `value`, so an R.L/R.H pair can be pointed at our data. kCall24 retargets
+// a 32-bit CALL instruction (pcrel24: +-16 MB) at `address` from the
+// function `stock` to `value`; region A is out of reach of most of the app
+// (0x19xxxxx is ~19 MB away), so a target there needs a nearby trampoline.
 struct Patch {
   uint32_t address;
   uint32_t kind;
@@ -100,6 +103,7 @@ struct Patch {
 const uint32_t kWord32 = 0;
 const uint32_t kImm16Lo = 1;
 const uint32_t kImm16Hi = 2;
+const uint32_t kCall24 = 3;
 
 // Image header at the start of the injected region, read by
 // tools/inject_app.py to find the entry points.

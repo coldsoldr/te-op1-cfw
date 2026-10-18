@@ -18,12 +18,18 @@
 //
 // The model and polyphony buttons show the slot's knobs[4] and knobs[5]
 // (op1/settings.h); polyphony "all" lights all three polyphony buttons.
+//
+// The four encoder drawings follow the LFO, as stock screens do: they show
+// the knobs after the LFO's modulation (ModulatedKnobs below), and the
+// live knobs when no fresh modulated values are coming (no voice playing).
 
 #include "op1/screen.h"
 
 #include <cstdint>
 
-#include "op1/cpu_meter.h"
+#ifdef OP1_CPU_PROBE
+#include "op1/cpu_probe.h"
+#endif
 #include "op1/op1.h"
 #include "op1/screen_math.h"
 #include "op1/settings.h"
@@ -45,6 +51,15 @@ const uint32_t kDisplayedSlot = 0x01df4e38;   // synth instance on screen
 const uint32_t kKnobs = 0xff8013c4;           // int16 knobs[8] per instance
 const int32_t kNumSlots = 8;
 const uint32_t kNodeVisible = 0x50;           // byte in a Node
+const uint32_t kSlotTypes = 0xff8016e4;       // engine type per slot
+// The knobs after the LFO, as stock screens read them (ReadInterface
+// 0x1a28210): the Core publishes the rendered voice's modulated knobs with
+// its slot and engine type (0xff8010b8, new-flag B[0xff8010d4]); TakeRecord
+// copies a new record into the one stock keeps (0x1ab321c) and returns 1.
+// ReadInterface uses it when slot and type match and its flag is 0.
+const uint32_t kTakeRecord = 0x0196749c;      // (unused, record*) -> 1 if new
+const uint32_t kRecord = 0x01ab321c;
+const int32_t kStaleFrames = 8;               // then the live knobs again
 
 typedef void* (*NodeFindFn)(void* document, const char* id, int32_t assert_missing);
 typedef uint8_t* (*StyleFn)(void* screen, const char* id);
@@ -55,6 +70,14 @@ typedef void (*UpdateFn)(void* screen, int32_t ticks);
 typedef void* (*NewFn)(uint32_t size);
 typedef void* (*SvgFileNewFn)(void* file, const char* name);
 typedef void* (*SvgFileLoadFn)(void* file);
+typedef int32_t (*TakeRecordFn)(int32_t unused, void* record);
+
+struct Record {         // as ReadInterface reads it
+  int16_t knobs[8];
+  int32_t slot;
+  int32_t type;
+  int32_t flag;
+};
 
 // Screen object (Screen::Screen 0x1a3bab0): +0 the document, +8 its SvgFile.
 void*& DocumentOf(void* screen) { return *reinterpret_cast<void**>(screen); }
@@ -189,16 +212,29 @@ void RingsInit(void* self) {
   ready = true;
 }
 
+int32_t frames_since_record = kStaleFrames;
+
+// The slot's knobs as the screen shows them: 0..3 after the LFO while
+// fresh records for this slot come in (one per frame is plenty), else as
+// set; 4..7 always as set (our settings, which the LFO doesn't touch).
+void ModulatedKnobs(int32_t slot, const int16_t* knobs, int16_t* shown) {
+  Record* record = reinterpret_cast<Record*>(kRecord);
+  if (reinterpret_cast<TakeRecordFn>(kTakeRecord)(0, record)) {
+    frames_since_record = 0;
+  } else if (frames_since_record < kStaleFrames) {
+    ++frames_since_record;
+  }
+  const bool modulated = frames_since_record < kStaleFrames && record->slot == slot &&
+                         record->type == *reinterpret_cast<const volatile int32_t*>(kSlotTypes + slot * 4) &&
+                         record->flag == 0;
+  for (int32_t k = 0; k < 8; ++k) shown[k] = modulated && k < 4 ? record->knobs[k] : knobs[k];
+}
+
 void RingsUpdate(void* self, const int16_t* knobs) {
   if (ready) {
     const op1::ScreenState s = op1::ComputeScreenState(knobs);
-    // The rings show structure, or a CPU meter reading (the engine's, or its
-    // coefficient updates'): ring i at (i + 1) x 15%.
-    const int32_t lit = op1::cpu_meter_mode == op1::METER_ENGINE    ? op1::cpu_meter.percent() / 15
-                        : op1::cpu_meter_mode == op1::METER_UPDATES ? op1::cpu_meter.update_percent() / 15
-                                                                    : s.lit_rings;
     for (int32_t i = 0; i < 6; ++i) {
-      Write(ring_styles[i], i < lit ? ring_on : ring_off);
+      Write(ring_styles[i], i < s.lit_rings ? ring_on : ring_off);
     }
     SetTranslate(nodes[0], 0, s.brightness_ty);
     SetTranslate(nodes[1], 0, s.damping_ty);
@@ -236,6 +272,9 @@ extern "C" void MultiScreenInit(void* self) {
     RingsInit(self);
     DocumentOf(self) = pd_document;
   }
+#ifdef OP1_CPU_PROBE
+  op1cpu::Init();
+#endif
 }
 
 extern "C" void MultiScreenUpdate(void* self, int32_t ticks) {
@@ -244,13 +283,27 @@ extern "C" void MultiScreenUpdate(void* self, int32_t ticks) {
       slot >= 0 && slot < kNumSlots ? reinterpret_cast<const int16_t*>(kKnobs + slot * 16) : nullptr;
   const bool rings = knobs && rings_document && op1::EngineSetting(knobs) == op1::ENGINE_RINGS;
   void* document = rings ? rings_document : pd_document;
+#ifdef OP1_CPU_PROBE
+  // The readout in place of Rings' drawing (white click, op1/input.cc).
+  op1cpu::Frame();
+  void* readout = rings ? op1cpu::Document() : nullptr;
+  if (readout) document = readout;
+#endif
   if (document != shown_document) {
     DocumentOf(self) = document;
     if (document) Flush(document);
     shown_document = document;
   }
+#ifdef OP1_CPU_PROBE
+  if (readout) {
+    op1cpu::Draw(self);
+    return;
+  }
+#endif
   if (rings) {
-    RingsUpdate(self, knobs);
+    int16_t shown[8];
+    ModulatedKnobs(slot, knobs, shown);
+    RingsUpdate(self, shown);
   } else if (pd_document) {
     reinterpret_cast<UpdateFn>(kStockUpdate)(self, ticks);
   }
