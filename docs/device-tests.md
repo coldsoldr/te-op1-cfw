@@ -1115,7 +1115,7 @@ A photo of the screen per case is as good as typing the numbers. White click aga
 
 ## Test 29: Rings mode budget, earlier sleep, Clouds yields (`op1_246_rings_cpuprobe2.op1`)
 
-**Not flashed yet.** The user chose three savings after Test 28. `op1_246_rings_cpuprobe2.op1` has them plus the Test 28 readout (white click on a Rings page). `op1_246_rings_seq11.op1` is the same without the readout (the next beta if this works).
+**Result (2026-10-18): all three changes worsened the sound of Rings and Clouds (the user couldn't single one out). Reverted; the user flashed seq10 back. The user's priority: Rings + Clouds (granular, master) together at full quality; the animation is second.** The user chose three savings after Test 28. `op1_246_rings_cpuprobe2.op1` has them plus the Test 28 readout (white click on a Rings page). `op1_246_rings_seq11.op1` is the same without the readout (the next beta if this works).
 - **Earlier sleep:** a Rings voice's tail stops computing below ~ -72 dBFS for ~12 ms (was -96 dBFS; `RingsVoice::kSleepLevel`). A sleeping voice now skips the whole render path (`op1/engine.cc`), except string + reverb's carriers, which play the shared reverb.
 - **Mode budget in "all"** (modal model, `TrimVoices` in `op1/engine.cc`): the voices still ringing share 60 modes (Rings' own budget, polyphony 1). A chord's notes (struck within ~50 ms) share equally, up to 14 each (six-note chord: 10 each). Older tails take what's left, newest first, down to 4 each. A voice only loses modes at a note-on (masked by the strike) and gets its full count back when struck again. Modes that come back start from rest (`ModalResonator::set_resolution`). Simulator: six ringing voices 122.8 → 96.3 MHz; turning 141.9 → 116.7.
 - **Clouds yields:** the governor's share for Clouds plus our engines is 0.40 of the period (was 0.75; `kShare` in `clouds_fx.cc`). From Test 28, 37% kept the screen at 47 fps and 48% dropped it to 27. With six Rings voices (~100 MHz) Clouds gets ~60 MHz: fewer grains. Clouds alone (~81 MHz, 20%) is untouched.
@@ -1132,3 +1132,32 @@ A photo of the screen per case is as good as typing the numbers. White click aga
 4. Clouds alone: unchanged?
 
 **If something is wrong:** power off; flash seq10 or seq9 through the te-boot menu, or recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1`.
+
+## Test 30: CPU probe v3, stages and caches (`op1_246_rings_cpuprobe3.op1`)
+
+**Not flashed yet.** seq10's sound (the Test 29 changes reverted; committed as `3f4919b`) plus the probe's third version (`op1/cpu_probe.cc`, `op1/sled_bfin.S`, Clouds' `src/core/profile.h`). The question: Clouds costs 3-5× its simulated cycles on the device; is that instruction cache misses (Clouds' code is 30 KB, Rings' 29 KB, the cache 16 KB) or pipeline stalls in its branchy C? The fix differs. **The white click on a Rings page cycles: drawing → page 0 → page 1 → page 2 → drawing.** Values cover the last second; MHz × 10 unless said.
+
+| Page 0 (Test 28's) | Page 1: Clouds | Page 2: Rings and the caches |
+|---|---|---|
+| 0 clock MHz | 0 Clouds, both instances | 0 Rings |
+| 1 Rings | 1 master (stereo) | 1 mode bank |
+| 2 busiest block ‰ | 2 synth (mono) | 2 coefficient updates |
+| 3 Clouds | 3 decimator + interpolator + mix | 3 rest of the voice |
+| 4 frames/s | 4 grain scheduling | 4 glue (smoothing, upsampler, fades) |
+| 5 longest frame gap ms | 5 overlap-add (grain kernels) | 5 instruction cache: miss cycles per 32-byte line |
+| 6 voices/block × 10 | 6 feedback + record write | 6 12 KB code warm: cycles/instr × 10 (10 = fits) |
+| 7 SDRAM 64 KB sweep | 7 diffuser + pitch + filters + reverb | 7 32 KB code warm: cycles/instr × 10 |
+| 8 SDRAM 1 KB hot | 8 active grains: master × 100 + synth | 8 SDRAM 24 KB hot: cycles/load × 10 |
+| 9 L1 hot | 9 grain cap: master × 100 + synth | 9 SDRAM 12 KB hot |
+
+Page 2's cache tests run on the Gfx thread only while page 2 shows (a few ms a second). Checks: `op1-cpuprobe` and `op1-seq` build; `sim-engine` `ef8618dd`, Clouds `sim-fx` checksums unchanged; hooks are function starts and the imm16 pair is `kTypeListQuery`; `verify_bootloader.py` passes. Against cpuprobe1 only `OP1_vdk.ldr` differs.
+
+**Procedure** (photos as before; wait ~2 s per case; white click to the page):
+1. Nothing playing: page 2 (the cache numbers 5-9 are what matter here).
+2. Rings modal "all", six notes held: page 2, then page 0.
+3. Clouds granular on the **master**, nothing playing but Clouds running (e.g. after a note, with reverb/density where you normally use them): page 1.
+4. Rings six notes + Clouds granular on the master: page 1, then page 0.
+5. The same with Clouds on the synth effect instead of the master: page 1.
+6. Optional: case 4 with density turned up high (many grains): page 1.
+
+**If something is wrong:** power off; flash seq10 through the te-boot menu, or recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1`.

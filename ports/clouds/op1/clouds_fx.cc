@@ -35,6 +35,7 @@
 #include "op1/op1.h"
 #include "src/core/clouds_core.h"
 #include "src/core/governor.h"
+#include "src/core/profile.h"
 #include "src/core/halfband.h"
 
 namespace op1fx {
@@ -194,13 +195,16 @@ void Render(Instance* in, int16_t* l, int16_t* r) {
   using namespace op1clouds;
   const int32_t n = op1fx::kFxBlockSize;
   const int32_t channels = r ? 2 : 1;
+  OP1CLOUDS_PROFILE_MARK(profile_t);
   in->decimator[0].Process(l, in->half[0], n / 2);
+  if (r) in->decimator[1].Process(r, in->half[1], n / 2);
+  OP1CLOUDS_PROFILE_ADD(PROFILE_RESAMPLE_MIX, profile_t);
   if (r) {
-    in->decimator[1].Process(r, in->half[1], n / 2);
     in->core.ProcessStereo(in->half[0], in->half[1], n / 2);
   } else {
     in->core.ProcessMono(in->half[0], n / 2);
   }
+  OP1CLOUDS_PROFILE_RESET(profile_t);
   for (int32_t c = 0; c < channels; ++c) {
     // The half-rate buffer is free again: the wet signal, half scale.
     int16_t* w = in->half[c];
@@ -218,6 +222,7 @@ void Render(Instance* in, int16_t* l, int16_t* r) {
     const int16_t wet_gain = WetGain(target);
     MixSoftLimit(l, in->wet[0], n, fade_out, wet_gain, &soft_limit);
     if (r) MixSoftLimit(r, in->wet[1], n, fade_out, wet_gain, &soft_limit);
+    OP1CLOUDS_PROFILE_ADD(PROFILE_RESAMPLE_MIX, profile_t);
     return;
   }
   int32_t dry_wet = in->dry_wet;
@@ -229,6 +234,7 @@ void Render(Instance* in, int16_t* l, int16_t* r) {
     if (r) MixSoftLimitC(&r[i], &in->wet[1][i], 1, fade_out, wet_gain, &soft_limit);
   }
   in->dry_wet = dry_wet;
+  OP1CLOUDS_PROFILE_ADD(PROFILE_RESAMPLE_MIX, profile_t);
 }
 
 // Clouds on one call. `values`: the position's 8 values, `s` their
@@ -273,6 +279,11 @@ void Process(Instance* in, int32_t channels, int32_t slot, int16_t* l, int16_t* 
   const uint32_t end = op1::Cycles();
   in->own = end - t1;
   in->own_avg += static_cast<int32_t>(in->own - in->own_avg) >> 4;
+#ifdef OP1CLOUDS_PROFILE
+  op1clouds::profile_instance_cycles[channels - 1] += in->own;
+  op1clouds::profile_grains[channels - 1] = in->core.granular()->active_grains();
+  op1clouds::profile_cap[channels - 1] = in->governor.cap();
+#endif
   op1fx::measured_cycles += end - start;
   in->mark = op1fx::measured_cycles;
 }

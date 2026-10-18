@@ -82,6 +82,7 @@ const int32_t k0_02Q31 = 42949673;               // 0.02
 
 uint32_t (*profile_clock)() = nullptr;
 uint32_t profile_update_cycles = 0;
+uint32_t profile_mode_bank_cycles = 0;
 
 void ModalResonator::Init() {
   frequency_ = 10713070;        // 220 Hz at 44.1 kHz, Q31
@@ -322,6 +323,7 @@ void ModalResonator::Process(const int32_t* in, int32_t* out, int32_t* aux,
   // unless the gains (or the number of modes) changed since.
   const bool kept = weights_valid_ && weights_n_ == n;
   if (!kept) ComputeWeights(previous_position_, start, n);
+  const uint32_t profile_start = profile_clock ? profile_clock() : 0;
   for (int32_t k = 0; k < segments; ++k) {
     int32_t position = k + 1 == segments
         ? position_ : previous_position_ + (delta >> 2) * (k + 1);
@@ -339,6 +341,7 @@ void ModalResonator::Process(const int32_t* in, int32_t* out, int32_t* aux,
     ModeBankProcess(modes_, n, in_scaled + offset, &previous_input_,
                     out + offset, aux + offset, segment_size, half_x);
   }
+  if (profile_clock) profile_mode_bank_cycles += profile_clock() - profile_start;
   previous_position_ = position_;
   weights_valid_ = true;
   weights_n_ = n;

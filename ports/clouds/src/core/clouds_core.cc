@@ -2,7 +2,17 @@
 
 #include "src/core/clouds_core.h"
 
+#include "src/core/profile.h"
+
 namespace op1clouds {
+
+#ifdef OP1CLOUDS_PROFILE
+uint32_t (*profile_clock)() = nullptr;
+uint32_t profile_cycles[PROFILE_NUM_STAGES];
+uint32_t profile_instance_cycles[2];
+int32_t profile_grains[2];
+int32_t profile_cap[2];
+#endif
 
 namespace {
 
@@ -82,6 +92,7 @@ void CloudsCore::ProcessBlock(int16_t* l, int16_t* r) {
   }
 
   const CloudsParams& p = params_;
+  OP1CLOUDS_PROFILE_MARK(profile_t);
   for (int32_t i = 0; i < n; ++i) {
     in_[0][i] = static_cast<int32_t>(l[i]) << 12;
     if (r) in_[1][i] = static_cast<int32_t>(r[i]) << 12;
@@ -128,6 +139,7 @@ void CloudsCore::ProcessBlock(int16_t* l, int16_t* r) {
   for (int32_t ch = 0; ch < channels; ++ch) {
     buffer_[ch].WriteFade(in_[ch], n, 1, !p.freeze);
   }
+  OP1CLOUDS_PROFILE_ADD(PROFILE_RECORD, profile_t);
   switch (mode_) {
     case MODE_LOOPING_DELAY:
       looper_.Play(buffer_, p, out_[0], out_[1], n);
@@ -142,6 +154,7 @@ void CloudsCore::ProcessBlock(int16_t* l, int16_t* r) {
       break;
   }
   int32_t* const out_r = r ? out_[1] : nullptr;
+  OP1CLOUDS_PROFILE_ADD(PROFILE_PLAYER, profile_t);
 
   // Diffusion and pitch shifting.
   if (mode_ != MODE_SPECTRAL) {
@@ -193,6 +206,7 @@ void CloudsCore::ProcessBlock(int16_t* l, int16_t* r) {
   for (int32_t ch = 0; ch < channels; ++ch) {
     for (int32_t i = 0; i < n; ++i) fb_[ch][i] = out_[ch][i];
   }
+  OP1CLOUDS_PROFILE_ADD(PROFILE_DIFFUSE, profile_t);
 
   // The reverb.
   {
@@ -219,6 +233,7 @@ void CloudsCore::ProcessBlock(int16_t* l, int16_t* r) {
       reverb_on_ = false;
     }
   }
+  OP1CLOUDS_PROFILE_ADD(PROFILE_REVERB, profile_t);
 
   if (external_mix_) return;
 

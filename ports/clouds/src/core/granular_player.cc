@@ -3,6 +3,7 @@
 #include "src/core/granular_player.h"
 
 #include "src/core/grain_kernel.h"
+#include "src/core/profile.h"
 
 #ifdef OP1CLOUDS_GRAIN_LOG
 #include <cstdio>   // diagnostics: one line per scheduled grain on stderr
@@ -125,6 +126,7 @@ void GranularPlayer::Play(const RecordBuffer* buffer, const CloudsParams& p, Lcg
   }
 
   // Overlap the grains.
+  OP1CLOUDS_PROFILE_MARK(profile_t);
   for (int32_t t = 0; t < size; ++t) {
     out_l[t] = 0;
     if (out_r) out_r[t] = 0;
@@ -132,6 +134,7 @@ void GranularPlayer::Play(const RecordBuffer* buffer, const CloudsParams& p, Lcg
   for (int32_t i = 0; i < max_num_grains_; ++i) {
     OverlapAdd(&grains_[i], buffer, out_l, out_r, size);
   }
+  OP1CLOUDS_PROFILE_ADD(PROFILE_OVERLAP, profile_t);
   active_grains_ = num_active;
 
   // Gain normalisation: SLOPE(num_grains, active, 0.9, 0.2), then

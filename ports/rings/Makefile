@@ -153,8 +153,11 @@ op1-seq: $(BUILD)/op1_seq.elf
 
 #   make op1-cpuprobe the op1-seq image plus the CPU probe (op1/cpu_probe.cc:
 #                     white click on a Rings page = timing readout)
-$(BUILD)/op1_cpuprobe.elf: $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(GRIDS_SRC) op1/cpu_probe.cc $(OP1_HDR) $(CLOUDS_HDR) $(MARBLES_HDR) $(GRIDS_HDR) op1/link.ld $(PORT_HDR) | $(BUILD)
-	$(BFIN_CXX) $(OP1_CXXFLAGS) -I$(CLOUDS) -I$(MARBLES) -I$(GRIDS) -I.. -Wno-class-memaccess -DOP1_CLOUDS 	  -DOP1CLOUDS_SAMPLE_RATE=22050 -DOP1_MARBLES -DOP1_GRIDS -DOP1_CPU_PROBE 	  $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(GRIDS_SRC) op1/cpu_probe.cc $(OP1_LDFLAGS) -o $@ -lgcc
+CPU_PROBE_SRC := op1/cpu_probe.cc op1/sled_bfin.S
+$(BUILD)/op1_cpuprobe.elf: $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(GRIDS_SRC) $(CPU_PROBE_SRC) $(OP1_HDR) $(CLOUDS_HDR) $(MARBLES_HDR) $(GRIDS_HDR) op1/link.ld $(PORT_HDR) | $(BUILD)
+	$(BFIN_CXX) $(OP1_CXXFLAGS) -I$(CLOUDS) -I$(MARBLES) -I$(GRIDS) -I.. -Wno-class-memaccess -DOP1_CLOUDS \
+	  -DOP1CLOUDS_SAMPLE_RATE=22050 -DOP1_MARBLES -DOP1_GRIDS -DOP1_CPU_PROBE -DOP1CLOUDS_PROFILE \
+	  $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(GRIDS_SRC) $(CPU_PROBE_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
 	$(BFIN_BIN)/bfin-elf-size -A $@
 
 op1-cpuprobe: $(BUILD)/op1_cpuprobe.elf

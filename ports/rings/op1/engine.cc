@@ -189,9 +189,6 @@ void Render(void* self, int16_t* out, const int16_t* params) {
     upsamplers[v].Init();
     return;
   }
-#ifdef OP1_CPU_PROBE
-  op1cpu::RingsVoiceRendered();
-#endif
   int32_t target[op1::ParamSmoother::kNumParams];
   for (int32_t i = 0; i < op1::ParamSmoother::kNumParams; ++i) {
     target[i] = ParamToQ31(params[kParamOrder[i]]);
@@ -220,11 +217,20 @@ void Render(void* self, int16_t* out, const int16_t* params) {
   const bool fading = allocator.fading(v);
   const bool allowed = coefficient_budget.Allow(v);
   voices[v]->set_coefficient_hold(fading || !allowed);
+#ifdef OP1_CPU_PROBE
+  const uint32_t probe_t0 = op1::Cycles();
+#endif
   voices[v]->RenderMono(&rings_inc, patch, out_buffer, kRingsBlockSize,
                         carrier ? reverb_bus.send() : nullptr, shared ? wet_share : nullptr);
   const int32_t demand = voices[v]->TakeCoefficientDemand();
   coefficient_budget.Report(v, demand, fading);
+#ifdef OP1_CPU_PROBE
+  const uint32_t probe_t1 = op1::Cycles();
+#endif
   upsamplers[v].Process(out_buffer, out);
+#ifdef OP1_CPU_PROBE
+  op1cpu::RingsVoiceRendered(probe_t1 - probe_t0, op1::Cycles() - probe_t1);
+#endif
   allocator.Rendered(v);
   if (allocator.fading(v)) {
     // Linear fade-out (Q15 gain) of a voice whose note was taken over.
@@ -293,7 +299,7 @@ extern "C" void RingsRender(void* self, int16_t* out, const int16_t* params) {
   const uint32_t end = op1::Cycles();
   op1fx::measured_cycles += end - start;   // for Clouds' governor
 #ifdef OP1_CPU_PROBE
-  op1cpu::Rendered(start, end, true);
+  op1cpu::Rendered(start, end);
 #endif
 #else
   Render(self, out, params);

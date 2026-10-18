@@ -28,6 +28,7 @@ const int32_t kMaxModalBlockSize = 32;
 // to profile_update_cycles.
 extern uint32_t (*profile_clock)();
 extern uint32_t profile_update_cycles;
+extern uint32_t profile_mode_bank_cycles;   // the mode bank's share of Process
 
 class ModalResonator {
  public:
