@@ -3,30 +3,39 @@
 // grains) instead of the audio crackling.
 //
 // Called once per effect call (64 samples) with cycle counts:
-//   interval: since the previous call's start (the audio period; a late
-//             call means the audio thread overran);
-//   own:      Clouds' cycles in the previous call;
-//   engines:  the synth engines' render cycles since the previous call
-//             (our image measures its engines; stock engines, drums and
-//             tape it can't see).
+//   interval:     since the previous call's start (the audio period; a late
+//                 call means the audio thread overran);
+//   own:          Clouds' cycles in the previous call;
+//   grain_cycles: of those, the grain overlap-add (the part that scales
+//                 with the grain count);
+//   grains:       the grains that overlap-add mixed;
+//   engines:      the synth engines' render cycles since the previous call
+//                 (our image measures its engines; stock engines, drums and
+//                 tape it can't see).
 //
-// Feed-forward: Clouds' target is a share of the period (default
-// kDefaultShare; Test 16: ~77% of a period free with stock phone running and
-// nothing playing, phone itself ~9%, and the UI thread runs in that free
-// time too: 0.75 keeps ~10% in reserve) minus the engines' smoothed cycles.
-// Above the target the grain cap drops in proportion at once; well under
-// it, it grows by one grain every kGrowCalls calls.
+// Clouds' cost is a fixed part (recording, resampling, reverb, diffuser:
+// ~80 MHz on the device, Tests 30-31) plus a cost per grain. The first
+// version cut the cap in proportion to the whole cost, so one Rings peak
+// collapsed it to 1 and a ceiling held it there for ~17 s (Test 31: one
+// grain next to Rings). Now the fixed part and the cost per grain are
+// tracked apart, and the cap is what the grain budget buys:
+//   budget = share x period - engines - fixed;  cap = budget / per_grain.
+// The share (kDefaultShare, Test 16: ~77% of a period is free with stock
+// phone running, the UI thread included) leaves ~10% in reserve. A smaller
+// cap applies at once; a larger one grows by a grain every kGrowCalls
+// calls (~12 ms).
 //
 // Feedback, for the load it can't see: overload shows as late calls. A
-// sustained overrun of a few percent makes every call only slightly late,
-// so (as probe v3 found) the test is on the mean interval (a running mean
-// over ~16 calls above period + 1/64), plus any single call later than 5/4
-// of the period. An overload sets a ceiling on Clouds' own cycles at 7/8 of
-// what it used, cuts the cap to fit it, and starts 16 calls of cooldown.
-// The ceiling relaxes by 1/1024 every kGrowCalls calls (~1% a second). If
-// it passes the point where the overload happened without another one, the
-// hidden load has shrunk and the ceiling goes; with a hidden load that
-// stays, Clouds re-tests the limit every ~13 s.
+// single late call is ignored (the firmware has its own jitter); a mean
+// interval over ~16 calls above the period + 1/1024 sets a ceiling on the
+// grain cycles at 7/8 of what they were, with a short cooldown. The period
+// is learnt: the smallest mean interval seen (the nominal one is 0.1% off
+// the device's, more than a chronic overrun that still underruns the
+// audio buffer in the end), with a short cooldown. Only a re-test
+// can tell that hidden load has gone, so the ceiling relaxes slowly
+// (1/1024 every kRelaxCalls calls, ~1% a second): a steady hidden load
+// costs a short late burst every few seconds; the ceiling goes once it
+// passes the point of the last overload by 1/32, or the budget.
 //
 // Plain integer code; tests/test_governor.cc runs it against a simulated
 // OP-1.
@@ -41,15 +50,20 @@ namespace op1clouds {
 class Governor {
  public:
   static const int32_t kDefaultShare = 49152;   // Q16 of the period: 0.75
-  static const int32_t kGrowCalls = 64;         // ~0.1 s
+  static const int32_t kGrowCalls = 8;          // ~12 ms
+  static const int32_t kRelaxCalls = 64;        // ~0.1 s
   static const uint32_t kNoCeiling = 0xffffffffu;
+  static const uint32_t kInitialPerGrain = 3000;   // a stereo grain, 32 samples (device)
 
   void Init(int32_t max_grains, uint32_t nominal_period, int32_t share = kDefaultShare) {
     share_ = share;
     max_grains_ = max_grains;
     cap_ = max_grains;
     period_ = nominal_period;
+    nominal_period_ = nominal_period;
     engines_ = 0;
+    fixed_ = 0;
+    per_grain_ = kInitialPerGrain;
     mean_interval_ = nominal_period;
     cooldown_ = 0;
     ceiling_ = kNoCeiling;
@@ -57,56 +71,66 @@ class Governor {
     calls_ = 0;
     grow_counter_ = 0;
     late_calls_ = 0;
-    previous_own_ = 0;
   }
 
   // Returns the grain cap for the next call.
-  int32_t Update(uint32_t interval, uint32_t own, uint32_t engines) {
-    // The engines' cost, smoothed (rises at once, falls over ~16 calls).
-    if (engines > engines_) {
-      engines_ = engines;
-    } else {
-      engines_ -= (engines_ - engines) >> 4;
+  int32_t Update(uint32_t interval, uint32_t own, uint32_t grain_cycles, int32_t grains,
+                 uint32_t engines) {
+    // The engines' and the fixed costs, smoothed (they rise at once and
+    // fall over ~16 calls); the cost per grain, from the calls that had
+    // grains (falls over ~8 calls).
+    Track(&engines_, engines);
+    Track(&fixed_, own > grain_cycles ? own - grain_cycles : 0);
+    if (grains > 0) {
+      const uint32_t per_grain = grain_cycles / static_cast<uint32_t>(grains);
+      if (per_grain > per_grain_) {
+        per_grain_ = per_grain;
+      } else {
+        per_grain_ -= (per_grain_ - per_grain) >> 3;
+      }
+      if (per_grain_ < 1) per_grain_ = 1;
     }
-    // Overload: a late call, or the mean interval over the period.
+
+    // Overload: the mean interval over the period (learnt as the smallest
+    // mean seen, within 1/16 of the nominal).
     mean_interval_ += static_cast<int32_t>(interval - mean_interval_) >> 4;
+    if (mean_interval_ < period_ && mean_interval_ > nominal_period_ - (nominal_period_ >> 4)) {
+      period_ = mean_interval_;
+    }
     if (cooldown_) --cooldown_;
-    const bool late = interval > period_ / 4 * 5 || mean_interval_ > period_ + (period_ >> 6);
-    if (late && !cooldown_) {
+    if (mean_interval_ > period_ + (period_ >> 10) && !cooldown_) {
       ++late_calls_;
       cooldown_ = 16;
       mean_interval_ = period_;
-      // `own` is the call just made; the overrun built up over the ones
-      // before, so take the larger.
-      const uint32_t used = own > previous_own_ ? own : previous_own_;
+      const uint32_t used = grain_cycles > per_grain_ ? grain_cycles : per_grain_;
       overload_point_ = used;
       ceiling_ = used - (used >> 3);
-      Cut(own, ceiling_);
       grow_counter_ = 0;
-      previous_own_ = own;
-      return cap_;
     }
-    previous_own_ = own;
 
-    // The ceiling relaxes; once above the feed-forward target it's gone.
+    // The grain budget, under the ceiling while there is one.
     const uint32_t share = static_cast<uint32_t>((static_cast<uint64_t>(period_) * share_) >> 16);
-    uint32_t target = share > engines_ ? share - engines_ : 0;
+    const uint32_t spent = engines_ + fixed_;
+    uint32_t budget = share > spent ? share - spent : 0;
     if (ceiling_ != kNoCeiling) {
-      if (++calls_ >= kGrowCalls) {
+      if (++calls_ >= kRelaxCalls) {
         calls_ = 0;
         ceiling_ += (ceiling_ >> 10) + 1;
       }
-      if (ceiling_ >= target || ceiling_ > overload_point_ + (overload_point_ >> 5)) {
+      if (ceiling_ >= budget || ceiling_ > overload_point_ + (overload_point_ >> 5)) {
         ceiling_ = kNoCeiling;
       } else {
-        target = ceiling_;
+        budget = ceiling_;
       }
     }
+    int32_t want = static_cast<int32_t>(budget / per_grain_);
+    if (want < 1) want = 1;
+    if (want > max_grains_) want = max_grains_;
 
-    if (own > target) {
-      Cut(own, target);
+    if (want < cap_) {
+      cap_ = want;
       grow_counter_ = 0;
-    } else if (own < target - (target >> 2) && cap_ < max_grains_) {
+    } else if (want > cap_) {
       if (++grow_counter_ >= kGrowCalls) {
         ++cap_;
         grow_counter_ = 0;
@@ -120,23 +144,26 @@ class Governor {
   int32_t cap() const { return cap_; }
   int32_t late_calls() const { return late_calls_; }
   uint32_t ceiling() const { return ceiling_; }
+  uint32_t fixed() const { return fixed_; }
+  uint32_t per_grain() const { return per_grain_; }
 
  private:
-  // The cap in proportion to target / own (own cycles roughly scale with
-  // grains), down by one at least. Cycle counts are < 2^20 (a period is
-  // ~580k): the product fits 32 bits.
-  void Cut(uint32_t own, uint32_t target) {
-    if (!own) return;
-    int32_t cap = static_cast<int32_t>(static_cast<uint32_t>(cap_) * target / own);
-    if (cap >= cap_) cap = cap_ - 1;
-    cap_ = cap < 1 ? 1 : cap;
+  static void Track(uint32_t* smoothed, uint32_t value) {
+    if (value > *smoothed) {
+      *smoothed = value;
+    } else {
+      *smoothed -= (*smoothed - value) >> 4;
+    }
   }
 
   int32_t share_;
   int32_t max_grains_;
   int32_t cap_;
   uint32_t period_;
+  uint32_t nominal_period_;
   uint32_t engines_;
+  uint32_t fixed_;
+  uint32_t per_grain_;
   uint32_t mean_interval_;
   int32_t cooldown_;
   uint32_t ceiling_;
@@ -144,7 +171,6 @@ class Governor {
   int32_t calls_;
   int32_t grow_counter_;
   int32_t late_calls_;
-  uint32_t previous_own_;
 };
 
 }  // namespace op1clouds

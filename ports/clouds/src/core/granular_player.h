@@ -52,11 +52,51 @@ struct Grain {
   bool active;
 };
 
+// What Play derives from density, texture and the grain size hint
+// (software-float divisions), kept while they don't change.
+struct GrainRate {
+  int32_t density, texture, hint, max_grains;   // the inputs
+  FFloat overlap;
+  int32_t window_shape_q16;
+  uint32_t threshold;
+  bool probabilistic;
+  bool use_deterministic_seed;
+  int32_t space_q16;
+  int32_t target_q16;
+  FFloat window_factor;                         // 1 + (window gain - 1) overlap
+};
+
+// What Schedule derives from size, pitch and position (per grain
+// otherwise), kept while they don't change.
+struct GrainGeometry {
+  int32_t size, pitch, position, buffer_size;   // the inputs
+  int32_t width;
+  int32_t increment_q16;
+  int32_t start_offset;                         // Trunc(position available + eaten)
+};
+
+// What Schedule derives from the grain's width and the window shape.
+struct GrainEnvelope {
+  int32_t width, window_shape;                  // the inputs
+  uint32_t envelope_increment;
+  int32_t num_samples, k_peak;
+  int32_t smoothness, slope;
+  int32_t k_clamp_on, k_clamp_off;
+};
+
 class GranularPlayer {
  public:
   void Init(int32_t num_channels, int32_t max_num_grains);
   void set_max_grains(int32_t n);
   int32_t active_grains() const { return active_grains_; }
+  // The overlap-add's cycles since the last Take (for the governor: the
+  // part of the cost that scales with the grain count), when a clock is set.
+  void set_clock(uint32_t (*clock)()) { clock_ = clock; }
+  uint32_t TakeOverlapCycles() {
+    const uint32_t c = overlap_cycles_;
+    overlap_cycles_ = 0;
+    return c;
+  }
 
   // Granular parameters, derived from density and texture per block (as
   // upstream's GranularProcessor does).
@@ -82,6 +122,16 @@ class GranularPlayer {
   int32_t active_grains_;
   Grain grains_[kMaxNumGrains];
   int32_t available_[kMaxNumGrains];
+  // The derived values, recomputed only when their inputs change (the
+  // software-float work was most of the player's code on the device).
+  GrainRate rate_;
+  GrainGeometry geometry_;
+  int32_t geometry_hint_target_;   // the grain size, Q16, for the hint's one-pole
+  GrainEnvelope envelope_;
+  int32_t sqrt_gain_key_;     // num_grains_ the gain below was computed for
+  FFloat sqrt_gain_;
+  uint32_t (*clock_)();
+  uint32_t overlap_cycles_;
 };
 
 }  // namespace op1clouds

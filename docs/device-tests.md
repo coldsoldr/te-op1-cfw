@@ -1135,7 +1135,43 @@ A photo of the screen per case is as good as typing the numbers. White click aga
 
 ## Test 30: CPU probe v3, stages and caches (`op1_246_rings_cpuprobe3.op1`)
 
-**Not flashed yet.** seq10's sound (the Test 29 changes reverted; committed as `3f4919b`) plus the probe's third version (`op1/cpu_probe.cc`, `op1/sled_bfin.S`, Clouds' `src/core/profile.h`). The question: Clouds costs 3-5× its simulated cycles on the device; is that instruction cache misses (Clouds' code is 30 KB, Rings' 29 KB, the cache 16 KB) or pipeline stalls in its branchy C? The fix differs. **The white click on a Rings page cycles: drawing → page 0 → page 1 → page 2 → drawing.** Values cover the last second; MHz × 10 unless said.
+**Results (2026-10-18, photos in `incoming/Test 30/`; the user also saw page 2's 5 bounce 99-191, 7 72-130, 8 844-1741 with nothing playing):**
+
+| Case | Page | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 nothing playing (held values) | 2 | 1622 | 1125 | 0 | 361 | 136 | 99 | 10 | 72 | 1123 | 230 |
+| 2 Rings six notes | 0 | 399 | 1609 | 461 | 0 | 47 | 25 | 60 | 1268 | 231 | 231 |
+| 2 Rings six notes | 2 | 1611 | 1124 | 0 | 355 | 132 | 188 | 12 | 346 | 6129 | 230 |
+| 3 Clouds granular, master, no notes | 1 | 852 | 852 | 0 | 112 | 65 | 0 | 142 | 514 | 0 | 100 |
+| 4 Rings six + Clouds master | 0 | 417 | 1823 | 488 | 986 | 14 | 160 | 60 | 5675 | 231 | 231 |
+| 4 Rings six + Clouds master | 1 | 989 | 989 | 0 | 134 | 69 | 0 | 163 | 603 | 0 | 100 |
+| 5 Rings six + Clouds synth | 1 | 788 | 0 | 788 | 94 | 204 | 46 | 142 | 284 | 1 | 101 |
+| 6 case 4, density high | 1 | 1004 | 1004 | 0 | 140 | 71 | 0 | 167 | 605 | 1 | 101 |
+
+(The probe's load loop costs 23 cycles this time, page 0's 8 and 9: v3's loop has a compare instead of a mask. Case 4 page 0's clock reads 417: the window ran long.)
+
+**What they show:**
+- **Caches:** both 16 KB. A line miss is ~100 cycles idle (page 2's 5 = 99; 64 KB sweep 127 − 23) and up to ~190 with the audio running. 12 KB of code or data fits (6 = 10, 9 = 23 = the loop); 24 KB of data and 32 KB of code don't (8 = 112 per load, 7 = 7.2 per NOP). Under load the sled tests include audio interrupts (7 = 346, 8 = 6129): ignore those.
+- **Rings (161 MHz, six modal voices):** the mode bank is 112 MHz (the simulator: 88, so 1.28×: pipeline stalls in the 23-instruction loop, since its data is in L1 now), the rest of the voices 36, the glue (smoothing, upsampler, fades) 13. No coefficient updates while the knobs are still.
+- **Clouds on the master costs 85-100 MHz with no grains at all:** diffuser/reverb stage 51-60 MHz, feedback + record write 14-17, decimator/interpolator/mix 11-14, grain scheduling 6.5-7, overlap-add 0. Density high changed nothing (case 6 = case 4).
+- **The governor's grain cap reads 1 on both instances** (9 = 100 / 101), and active grains 0-1. If right, Clouds has been playing at most one grain: the lateness detector fires and `Cut` assumes Clouds' cycles scale with the cap, but ~80 MHz of its cost is fixed, so the cap collapses to 1 and the ceiling holds it there. To verify (late-call count, ceiling) and to hear the difference, next.
+- Rings + Clouds master together (case 4): 182 + 99 MHz = 70% of the CPU, frames 14/s with 160 ms gaps: the screen is starved and the audio near its edge (peak block 49% for Rings alone).
+
+**Against the simulator, stage by stage** (`make sim-fx` built with `-DOP1CLOUDS_PROFILE` prints the stages; scenario `master_gr_full`: granular, density .8, texture .9, feedback .3, reverb .5; `master_ld` for looping delay):
+
+| Stage | Simulator, granular full | Simulator, looping delay + reverb + diffusion | Device, master (cases 3-6) | Ratio |
+|---|---|---|---|---|
+| decimator + interpolator + mix | 5.3 | 5.3 | 11-14 | 2.1-2.6 |
+| player less overlap (scheduling / looper) | 3.6 | 3.0 | 6.5-7 | 1.8-2.3 |
+| overlap-add (4 grains) | 8.6 | 0 | 0 | — |
+| feedback + record | 4.8 | ~4.8 | 14-17 | 3-3.5 |
+| diffuser + pitch shifter + filters + reverb | 5.5 | ~15 | 51-60 | 3.5-4 (looping delay) or 9-11 (granular) |
+
+Every stage is 2-4× the simulator, whatever its algorithm (the asm kernels included), with one exception: if the master was in granular mode, the diffuser/reverb stage is 9-11×, which no cache model explains; if it was in **looping delay** mode (0 grains, the overlap-add at 0, density changing nothing, all as measured), it's 3.5-4× like the rest. So the master was most likely in looping delay during Test 30 (to confirm with the user). Either way the reading of the governor's cap (1) stands: with ~85 MHz of Clouds' cost fixed (not proportional to grains), `Cut` can't bring its cycles under the ceiling, so one late call or one Rings peak collapses the cap to 1, and the ceiling holds it there for ~17 s. Granular next to Rings therefore plays with 0-1 grains.
+
+**Reading:** a uniform 2-4× across stages, with 16 KB caches and a 100-190-cycle miss, means Clouds runs with cold caches every call: its per-call code (ProcessBlock 6 KB, Play 3.2 KB, Process 2.7 KB, Schedule 3.8 KB, the kernels) plus Rings' (~10 KB) exceed the 16 KB instruction cache, and its ~22 reverb streams, the diffuser's 16, the record buffer and the scratch arrays exceed the data cache between calls. Levers, in order: (1) the governor's cut must act on the grain-proportional cost only, and recover fast; (2) shrink Clouds' per-call code path (parameter math only when a value changes; the 6 KB ProcessBlock is mostly inlined software-float work) so Rings' and Clouds' hot code both stay resident; (3) if still short, process two OP-1 calls per core run (halves the cache refills, +1.45 ms latency); (4) Rings' mode bank is 1.28× the simulator from pipeline stalls: interleave two modes per loop (bit-exact), ~20 MHz.
+
+**Built:** seq10's sound (the Test 29 changes reverted; committed as `3f4919b`) plus the probe's third version (`op1/cpu_probe.cc`, `op1/sled_bfin.S`, Clouds' `src/core/profile.h`). The question: Clouds costs 3-5× its simulated cycles on the device; is that instruction cache misses (Clouds' code is 30 KB, Rings' 29 KB, the cache 16 KB) or pipeline stalls in its branchy C? The fix differs. **The white click on a Rings page cycles: drawing → page 0 → page 1 → page 2 → drawing.** Values cover the last second; MHz × 10 unless said.
 
 | Page 0 (Test 28's) | Page 1: Clouds | Page 2: Rings and the caches |
 |---|---|---|
@@ -1159,5 +1195,39 @@ Page 2's cache tests run on the Gfx thread only while page 2 shows (a few ms a s
 4. Rings six notes + Clouds granular on the master: page 1, then page 0.
 5. The same with Clouds on the synth effect instead of the master: page 1.
 6. Optional: case 4 with density turned up high (many grains): page 1.
+
+**If something is wrong:** power off; flash seq10 through the te-boot menu, or recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1`.
+
+## Test 31: cpuprobe3 again, the master in granular mode
+
+**Results (2026-10-18, photos in `incoming/Test 31/`).** The user confirmed the master was in looping delay during Test 30. Cases 1 and 2 (Clouds alone) showed held values: the probe's window only advanced in RingsRender (fixed in v4: the window runs from the screen thread).
+
+| Case | Page | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 3 Rings six + Clouds granular master, usual settings | 0 | 399 | 1825 | 498 | 820 | 13 | 162 | 60 | 5542 | 231 | 231 |
+| 4 the same, density high | 0 | 399 | 1824 | 500 | 844 | 13 | 135 | 60 | 1465 | 231 | 231 |
+| 4 the same, density high | 1 | 853 | 853 | 0 | 142 | 0? (cropped; the sum says ~200) | 59 | 178 | 275 | 100 | 100 |
+
+**What they show:**
+- **The governor's cap is 1 next to Rings** (9 = 100: master cap 1), one grain active (8 = 100), whatever the density. Confirmed: granular next to Rings plays one grain. The overlap-add of that one stereo grain costs 5.9 MHz on the device (the simulator: ~1.4 per grain).
+- Clouds granular master at one grain: 85 MHz: resampling + mix 14.2, scheduling ~20 (by the sum; Test 30's synth case read 20.4), overlap-add 5.9, feedback + record 17.8, diffuser + reverb 27.5. The simulator for the same settings: 5.3 / 3.6 / 1.4 / 4.8 / 5.5. Scheduling is the worst ratio (~5×): a per-sample loop with a random call, software-float divisions per call, and `Schedule`'s software-float work on every new grain (short grains at cap 1 schedule one almost every call).
+- **Rings next to Clouds costs 182 MHz, 21 more than alone** (Test 30: 161): the instruction cache contention goes both ways.
+- Together: 182 + 85 = 267 MHz, 67% of the CPU, 13 frames/s, gaps 135-162 ms; Rings' peak block 50%.
+
+## Test 32: governor fix and Clouds' parameter caches (`op1_246_rings_cpuprobe4.op1`)
+
+**Not flashed yet.** seq10's sound plus two changes, and the probe (`op1_246_rings_seq11.op1` is the same without the readout):
+- **The governor** (`src/core/governor.h`) tracks Clouds' fixed cost and its cost per grain apart (the granular player times its overlap-add) and sets the cap to what the grain budget buys: `cap = (share x period - engines - fixed) / per_grain`. A smaller cap applies at once; a larger one grows a grain every 8 calls (~12 ms). Late calls: only a mean interval over ~16 calls above the learnt period + 1/1024 sets a ceiling (on the grain cycles, 7/8), which relaxes slowly and re-tests every few seconds. `test-governor` (with the device's costs): no late calls with measured load, one short burst per re-test with hidden load, full cap back within 0.4 s of Rings going. **So granular next to Rings now plays as many grains as fit instead of one: a denser Clouds than seq9/seq10 next to Rings, by design.**
+- **Clouds' parameter maths runs only when a value changes** (`granular_player.cc`: the density/texture/hint-derived seeding values, the per-grain size/pitch/position geometry and the width/window envelope; `clouds_core.cc`: the feedback, texture and pitch-shifter coefficients). Bit-identical: every `sim-fx` checksum is unchanged. The traced per-call code footprint (`make hot-set`, `tools/hot_set.py`) went from 310 to 226 lines (9.7 to 7.1 KB) in steady state; Rings' six voices are 134 lines (4.2 KB).
+- The probe's window now runs from the screen thread (Clouds-alone cases read live); page 2's 8 and 9 are the master's and the synth's late-call counts.
+- Checks: `test-governor`, `test` (kernels) and `sim-fx` pass; `sim-engine` `ef8618dd`; `op1-seq` and `op1-cpuprobe` build; hooks are function starts, the imm16 pair is `kTypeListQuery`; `verify_bootloader.py` passes.
+
+**Procedure** (as Test 31, page 1 unless said; the sound matters as much as the numbers):
+1. Clouds granular on the master, usual settings, nothing playing: page 1 (now live).
+2. The same with density high.
+3. Rings six notes + case 1: page 1 and page 0.
+4. Rings six notes + case 2: page 1 and page 0. Numbers 8 (grains) and 9 (cap): the cap should now be well above 1 and move with the load.
+5. Listen: Clouds granular next to Rings: denser than before? Any crackle? Does the grain count audibly pump as the cap moves (it shouldn't: a grain more every 12 ms)?
+6. Page 2's 8 (master late calls): note it after a minute of playing Rings + Clouds. A handful is fine; hundreds mean the lateness detector fires on the firmware's own jitter.
 
 **If something is wrong:** power off; flash seq10 through the te-boot menu, or recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1`.

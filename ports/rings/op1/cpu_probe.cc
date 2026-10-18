@@ -38,9 +38,9 @@
 //   6  a 12 KB sled warm: cycles per instruction x 10 (10 = fits the cache)
 //   7  a 32 KB sled warm: cycles per instruction x 10 (misses if the cache
 //      is 16 KB: expect ~5's value / 16 + 10)
-//   8  SDRAM, 24 KB read repeatedly: cycles per load x 10
-//   9  SDRAM, 12 KB read repeatedly: cycles per load x 10
-//      (8 and 9 with page 0's 1 KB and 64 KB: the data cache's size)
+//   8  the master governor's late calls so far
+//   9  the synth governor's late calls so far
+//      (v3 had the data cache's size here: 16 KB, Test 30)
 
 #include "op1/cpu_probe.h"
 
@@ -106,7 +106,7 @@ volatile uint32_t clock_mhz, peak_permille, voices10;
 volatile int32_t page = -1;   // -1: the drawing
 uint32_t frame_window_block = 0, frames_window = 0, last_frame = 0, longest_gap = 0;
 volatile uint32_t frames_per_second, longest_gap_ms;
-volatile uint32_t sweep10, hot10, l1_10, hot24k10, hot12k10;
+volatile uint32_t sweep10, hot10, l1_10;
 volatile uint32_t icache_miss, sled12k10, sled32k10;
 uint32_t sweep_index = 0;
 volatile uint32_t sink;
@@ -195,18 +195,9 @@ void ShowNumber(int32_t i, uint32_t value) {
 
 uint32_t Sub(uint32_t a, uint32_t b) { return a > b ? a - b : 0; }
 
-}  // namespace
-
-namespace op1cpu {
-
-void Rendered(uint32_t start, uint32_t end) {
-  const uint32_t now = BlockCounter();
-  if (!started) {
-    started = true;
-    block = window_block = now;
-    window_cycles = start;
-    for (int32_t c = 0; c < C_NUM; ++c) counters_mark[c] = counters[c];
-  }
+// The counters Clouds keeps (src/core/profile.h) and Rings' profile
+// counters, copied into counters[] (from either thread).
+void Gather() {
 #ifdef OP1_CLOUDS
   // Clouds' stages, kept by the core (src/core/profile.h).
   counters[C_CLOUDS_MASTER] = op1clouds::profile_instance_cycles[1];
@@ -221,26 +212,50 @@ void Rendered(uint32_t start, uint32_t end) {
 #endif
   counters[C_MODE_BANK] = op1rings::profile_mode_bank_cycles;
   counters[C_UPDATES] = op1rings::profile_update_cycles;
+}
+
+// The window: once a second, from the screen thread (Frame), so the
+// numbers move whether or not Rings renders (v3 published them from
+// RingsRender: Test 31's Clouds-alone cases showed held values).
+void Window() {
+  const uint32_t now = BlockCounter();
+  const uint32_t cycles = op1::Cycles();
+  if (!started) {
+    started = true;
+    window_block = now;
+    window_cycles = cycles;
+    Gather();
+    for (int32_t c = 0; c < C_NUM; ++c) counters_mark[c] = counters[c];
+    return;
+  }
+  const uint32_t blocks = now - window_block;
+  if (blocks < kBlocksPerWindow) return;
+  const uint32_t elapsed = cycles - window_cycles;   // < 2^32: ~1 s
+  const uint32_t per_block = elapsed / blocks;
+  clock_mhz = per_block * kBlocksPerWindow / 1000000;
+  Gather();
+  // MHz x 10 = cycles per block x 689 / 100000.
+  for (int32_t c = 0; c < C_NUM; ++c) {
+    mhz10[c] = (counters[c] - counters_mark[c]) / blocks * kBlocksPerWindow / 100000;
+    counters_mark[c] = counters[c];
+  }
+  peak_permille = per_block ? peak_block / (per_block / 1000) : 0;
+  voices10 = voices_window * 10 / blocks;
+  window_block = now;
+  window_cycles = cycles;
+  voices_window = peak_block = 0;
+}
+
+}  // namespace
+
+namespace op1cpu {
+
+void Rendered(uint32_t start, uint32_t end) {
+  const uint32_t now = BlockCounter();
   if (now != block) {
     if (block_cycles > peak_block) peak_block = block_cycles;
     block_cycles = 0;
     block = now;
-    const uint32_t blocks = now - window_block;
-    if (blocks >= kBlocksPerWindow) {
-      const uint32_t elapsed = start - window_cycles;   // < 2^32: ~1 s
-      const uint32_t per_block = elapsed / blocks;
-      clock_mhz = per_block * kBlocksPerWindow / 1000000;
-      // MHz x 10 = cycles per block x 689 / 100000.
-      for (int32_t c = 0; c < C_NUM; ++c) {
-        mhz10[c] = (counters[c] - counters_mark[c]) / blocks * kBlocksPerWindow / 100000;
-        counters_mark[c] = counters[c];
-      }
-      peak_permille = per_block ? peak_block / (per_block / 1000) : 0;
-      voices10 = voices_window * 10 / blocks;
-      window_block = now;
-      window_cycles = start;
-      voices_window = peak_block = 0;
-    }
   }
   block_cycles += end - start;
   counters[C_RINGS] += end - start;
@@ -282,6 +297,7 @@ void Frame() {
   if (last_frame && now - last_frame > longest_gap) longest_gap = now - last_frame;
   last_frame = now;
   ++frames_window;
+  Window();
   const uint32_t blocks = BlockCounter() - frame_window_block;
   if (blocks >= kBlocksPerWindow) {
     frames_per_second = frames_window * kBlocksPerWindow / blocks;
@@ -298,9 +314,6 @@ void Frame() {
       hot10 = TimeLoads(sdram_area, 256, 8, &hot_index);
       l1_10 = TimeLoads(reinterpret_cast<const volatile uint32_t*>(kL1Scratch), 256, 8, &l1_index);
     } else if (page == 2) {
-      uint32_t i24 = 0, i12 = 0;
-      hot24k10 = TimeLoads(sdram_area, 6144, 8, &i24);
-      hot12k10 = TimeLoads(sdram_area, 3072, 8, &i12);
       TimeInstructionCache();
     }
   }
@@ -349,8 +362,10 @@ void Draw(void* screen) {
       ShowNumber(5, icache_miss);
       ShowNumber(6, sled12k10);
       ShowNumber(7, sled32k10);
-      ShowNumber(8, hot24k10);
-      ShowNumber(9, hot12k10);
+#ifdef OP1_CLOUDS
+      ShowNumber(8, static_cast<uint32_t>(op1clouds::profile_late[1]));
+      ShowNumber(9, static_cast<uint32_t>(op1clouds::profile_late[0]));
+#endif
       break;
   }
   reinterpret_cast<DrawFn>(kScreenDraw)(screen);

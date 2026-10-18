@@ -60,7 +60,7 @@ RATE44 := -DOP1CLOUDS_SAMPLE_RATE=44100 -DOP1RINGS_SAMPLE_RATE=44100
 # The OP-1 image's core rate (op1/clouds_fx.cc: half the effect rate).
 RATE22 := -DOP1CLOUDS_SAMPLE_RATE=22050 -DOP1RINGS_SAMPLE_RATE=44100
 
-.PHONY: all ref copy copy-check copyd port port44 compare spec test test-governor profile bench bench-ref sim-fx clean
+.PHONY: all ref copy copy-check copyd port port44 compare spec test test-governor profile bench bench-ref sim-fx sim-fx-profile hot-set clean
 
 all: ref port compare
 
@@ -177,6 +177,24 @@ $(BUILD)/sim_fx.elf: $(SIM_FX_SRC) $(CORE_HDR) $(wildcard op1/*.h) | $(BUILD)
 
 sim-fx: $(BUILD)/sim_fx.elf
 	$(BFIN_RUN) $<
+
+#   make sim-fx-profile  the same with the core's stage timers (src/core/profile.h)
+$(BUILD)/sim_fx_prof.elf: $(SIM_FX_SRC) $(CORE_HDR) $(wildcard op1/*.h) | $(BUILD)
+	$(BFIN_CXX) $(SIM_CXXFLAGS) $(RATE22) -DOP1CLOUDS_PROFILE $(SIM_FX_SRC) -o $@
+
+sim-fx-profile: $(BUILD)/sim_fx_prof.elf
+	$(BFIN_RUN) $<
+
+#   make hot-set      the granular master's per-call code footprint
+#                     (tests/hot_set.cc, ../../tools/hot_set.py)
+HOT_SET_SRC := tests/hot_set.cc op1/clouds_fx.cc $(CORE_SRC) $(CORE_ASM)
+$(BUILD)/hot_set.elf: $(HOT_SET_SRC) $(CORE_HDR) $(wildcard op1/*.h) | $(BUILD)
+	$(BFIN_CXX) $(SIM_CXXFLAGS) $(RATE22) $(HOT_SET_SRC) -o $@
+
+hot-set: $(BUILD)/hot_set.elf
+	$(BFIN_BIN)/bfin-elf-nm -n $< > $(BUILD)/hot_set.nm
+	$(BFIN_RUN) --trace-insn=on $< 2>&1 | grep -o 'insn: *0x[0-9a-f]*' > $(BUILD)/hot_set.trace
+	python3 ../../tools/hot_set.py $(BUILD)/hot_set.trace $(BUILD)/hot_set.nm
 
 clean:
 	rm -rf $(BUILD) $(OUT)

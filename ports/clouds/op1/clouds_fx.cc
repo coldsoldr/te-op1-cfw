@@ -169,6 +169,7 @@ bool RestartStep(Instance* in, int32_t channels) {
   op1clouds::InitSoftLimitTable(&soft_limit);
   in->governor.Init(channels == 1 ? 40 : 32, kNominalPeriod);
   in->core.granular()->set_max_grains(in->governor.cap());
+  in->core.granular()->set_clock(op1::Cycles);
   in->running = true;
   in->settle = kSettleCalls;
   in->own = 0;
@@ -264,7 +265,9 @@ void Process(Instance* in, int32_t channels, int32_t slot, int16_t* l, int16_t* 
   if (in->settle) {
     --in->settle;
   } else {
-    in->core.granular()->set_max_grains(in->governor.Update(interval, in->own, others));
+    op1clouds::GranularPlayer* granular = in->core.granular();
+    in->core.granular()->set_max_grains(in->governor.Update(
+        interval, in->own, granular->TakeOverlapCycles(), granular->active_grains(), others));
   }
 
   int32_t v[op1clouds::kNumParams];
@@ -283,6 +286,7 @@ void Process(Instance* in, int32_t channels, int32_t slot, int16_t* l, int16_t* 
   op1clouds::profile_instance_cycles[channels - 1] += in->own;
   op1clouds::profile_grains[channels - 1] = in->core.granular()->active_grains();
   op1clouds::profile_cap[channels - 1] = in->governor.cap();
+  op1clouds::profile_late[channels - 1] = in->governor.late_calls();
 #endif
   op1fx::measured_cycles += end - start;
   in->mark = op1fx::measured_cycles;

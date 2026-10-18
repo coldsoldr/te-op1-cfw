@@ -75,6 +75,15 @@ class CloudsCore {
   bool diffuser_on_;
   bool reverb_on_;
   bool external_mix_;
+  // Coefficients kept while their inputs don't change (software-float
+  // reciprocals per block otherwise).
+  int32_t fb_key_;                      // p.feedback
+  FFloat fb_feedback_;
+  SvfCoefficients fb_coefficients_;
+  int32_t texture_key_, texture_fb_key_;   // p.texture, p.feedback
+  SvfCoefficients texture_lp_, texture_hp_;
+  int32_t pitch_key_;                   // p.pitch
+  FFloat pitch_ratio_;
 
   int32_t in_[2][kBlockSize];
   int32_t out_[2][kBlockSize];

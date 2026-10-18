@@ -90,7 +90,7 @@ OP1_ENGINE_SRC := op1/engine.cc op1/screen.cc op1/input.cc op1/patches.cc op1/su
                   src/mode_bank_bfin.S src/string_kernel_bfin.S src/limiter_bfin.S src/reverb_bfin.S
 OP1_HDR := $(wildcard op1/*.h)
 
-.PHONY: op1-cpuprobe op1-probe op1-engine op1-fxprobe op1-clouds op1-seqprobe op1-marbles op1-seq sim-engine sim-engine-fm host-probe step-params test-fm test-screen test-alloc \
+.PHONY: hot-set op1-cpuprobe op1-probe op1-engine op1-fxprobe op1-clouds op1-seqprobe op1-marbles op1-seq sim-engine sim-engine-fm host-probe step-params test-fm test-screen test-alloc \
         test-string sim-model bench-string test-reverb test-reverb-bus bench-mode-bank
 
 $(BUILD)/op1_probe.elf: op1/probe.cc op1/support.cc op1/op1.h op1/link.ld | $(BUILD)
@@ -179,6 +179,17 @@ $(BUILD)/sim_engine.elf: $(SIM_ENGINE_SRC) $(OP1_HDR) $(PORT_HDR) | $(BUILD)
 
 sim-engine: $(BUILD)/sim_engine.elf
 	$(BFIN_RUN) $< $(BUILD)/sim_engine.raw
+
+#   make hot-set      six modal voices' per-block code footprint
+#                     (tests/hot_set.cc, ../../tools/hot_set.py)
+HOT_SET_SRC := tests/hot_set.cc $(filter-out tests/sim_engine.cc,$(SIM_ENGINE_SRC))
+$(BUILD)/hot_set.elf: $(HOT_SET_SRC) $(OP1_HDR) $(PORT_HDR) | $(BUILD)
+	$(BFIN_CXX) $(SIM_CXXFLAGS) $(HOT_SET_SRC) -o $@
+
+hot-set: $(BUILD)/hot_set.elf
+	$(BFIN_BIN)/bfin-elf-nm -n $< > $(BUILD)/hot_set.nm
+	$(BFIN_RUN) --trace-insn=on $< 2>&1 | grep -o 'insn: *0x[0-9a-f]*' > $(BUILD)/hot_set.trace
+	python3 ../../tools/hot_set.py $(BUILD)/hot_set.trace $(BUILD)/hot_set.nm
 
 #   make sim-engine-fm  the same with the FM voice -> build/sim_engine_fm.raw
 $(BUILD)/sim_engine_fm.elf: $(SIM_ENGINE_SRC) $(OP1_HDR) $(PORT_HDR) | $(BUILD)

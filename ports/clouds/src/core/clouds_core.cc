@@ -12,6 +12,7 @@ uint32_t profile_cycles[PROFILE_NUM_STAGES];
 uint32_t profile_instance_cycles[2];
 int32_t profile_grains[2];
 int32_t profile_cap[2];
+int32_t profile_late[2];
 #endif
 
 namespace {
@@ -34,6 +35,7 @@ void CloudsCore::Init(int32_t num_channels, bool clear_buffers) {
   dry_wet_ = 0;
   fb_on_ = diffuser_on_ = reverb_on_ = false;
   external_mix_ = false;
+  fb_key_ = texture_key_ = texture_fb_key_ = pitch_key_ = INT32_MIN;
   for (int32_t c = 0; c < 2; ++c) {
     for (int32_t i = 0; i < kBlockSize; ++i) {
       in_[c][i] = out_[c][i] = fb_[c][i] = 0;
@@ -100,12 +102,17 @@ void CloudsCore::ProcessBlock(int16_t* l, int16_t* r) {
 
   // Feedback, high-passed against low-frequency build-ups.
   freeze_lp_ += MulQ31Fast((p.freeze ? kQ31One : 0) - freeze_lp_, kFreezeSmoothingQ31);
-  const FFloat feedback = Q16ToFFloat(p.feedback);
-  {
+  if (p.feedback != fb_key_) {
     static constexpr FFloat k20 = FFloat(20.0);
     static constexpr FFloat k100 = FFloat(100.0);
     static constexpr FFloat kInvRate = FFloat(1.0 / kSampleRate);
     static constexpr FFloat kOne = FFloat(1.0);
+    fb_key_ = p.feedback;
+    fb_feedback_ = Q16ToFFloat(p.feedback);
+    fb_coefficients_ = MakeSvfCoefficients((k20 + k100 * fb_feedback_ * fb_feedback_) * kInvRate, kOne);
+  }
+  const FFloat feedback = fb_feedback_;
+  {
     // Skipped while feedback is 0 (it then has no effect on the output);
     // the filters restart from rest when it comes back.
     if (p.feedback > 0) {
@@ -114,9 +121,8 @@ void CloudsCore::ProcessBlock(int16_t* l, int16_t* r) {
         fb_filter_[1].Init();
         fb_on_ = true;
       }
-      const SvfCoefficients c = MakeSvfCoefficients((k20 + k100 * feedback * feedback) * kInvRate, kOne);
       for (int32_t ch = 0; ch < channels; ++ch) {
-        fb_filter_[ch].Process<SVF_HIGH_PASS>(c, fb_[ch], n);
+        fb_filter_[ch].Process<SVF_HIGH_PASS>(fb_coefficients_, fb_[ch], n);
       }
     } else {
       fb_on_ = false;
@@ -177,28 +183,37 @@ void CloudsCore::ProcessBlock(int16_t* l, int16_t* r) {
     }
   }
   if (mode_ == MODE_LOOPING_DELAY && (!p.freeze || looper_.synchronized())) {
-    pitch_shifter_.Prepare(SemitonesToRatio(p.pitch), p.size);
+    if (p.pitch != pitch_key_) {
+      pitch_key_ = p.pitch;
+      pitch_ratio_ = SemitonesToRatio(p.pitch);
+    }
+    pitch_shifter_.Prepare(pitch_ratio_, p.size);
     pitch_shifter_.Process(out_[0], out_r, n);
   }
 
-  // The texture filters.
+  // The texture filters (coefficients kept while texture and feedback are
+  // still).
   if (mode_ == MODE_LOOPING_DELAY || mode_ == MODE_STRETCH) {
-    const int32_t cutoff = p.texture;
-    static constexpr FFloat kHalf = FFloat(0.5);
-    static constexpr FFloat kQuarter = FFloat(0.25);
-    static constexpr FFloat kMax = FFloat(0.499);
-    static constexpr FFloat kOne = FFloat(1.0);
-    static constexpr FFloat kThree = FFloat(3.0);
-    FFloat lp_cutoff = kHalf * SemitonesToRatio(cutoff < 32768 ? (cutoff - 32768) * 216 : 0);
-    FFloat hp_cutoff = kQuarter * SemitonesToRatio((cutoff < 32768 ? -32768 : cutoff - 65536) * 216);
-    lp_cutoff = FFloat::Min(lp_cutoff, kMax);
-    hp_cutoff = FFloat::Min(hp_cutoff, kMax);
-    const FFloat lpq = kOne + kThree * (kOne - feedback) * (kHalf - lp_cutoff);
-    const SvfCoefficients lp = MakeSvfCoefficients(lp_cutoff, lpq);
-    const SvfCoefficients hp = MakeSvfCoefficients(hp_cutoff, kOne);
+    if (p.texture != texture_key_ || p.feedback != texture_fb_key_) {
+      texture_key_ = p.texture;
+      texture_fb_key_ = p.feedback;
+      const int32_t cutoff = p.texture;
+      static constexpr FFloat kHalf = FFloat(0.5);
+      static constexpr FFloat kQuarter = FFloat(0.25);
+      static constexpr FFloat kMax = FFloat(0.499);
+      static constexpr FFloat kOne = FFloat(1.0);
+      static constexpr FFloat kThree = FFloat(3.0);
+      FFloat lp_cutoff = kHalf * SemitonesToRatio(cutoff < 32768 ? (cutoff - 32768) * 216 : 0);
+      FFloat hp_cutoff = kQuarter * SemitonesToRatio((cutoff < 32768 ? -32768 : cutoff - 65536) * 216);
+      lp_cutoff = FFloat::Min(lp_cutoff, kMax);
+      hp_cutoff = FFloat::Min(hp_cutoff, kMax);
+      const FFloat lpq = kOne + kThree * (kOne - feedback) * (kHalf - lp_cutoff);
+      texture_lp_ = MakeSvfCoefficients(lp_cutoff, lpq);
+      texture_hp_ = MakeSvfCoefficients(hp_cutoff, kOne);
+    }
     for (int32_t ch = 0; ch < channels; ++ch) {
-      lp_filter_[ch].Process<SVF_LOW_PASS>(lp, out_[ch], n);
-      hp_filter_[ch].Process<SVF_HIGH_PASS>(hp, out_[ch], n);
+      lp_filter_[ch].Process<SVF_LOW_PASS>(texture_lp_, out_[ch], n);
+      hp_filter_[ch].Process<SVF_HIGH_PASS>(texture_hp_, out_[ch], n);
     }
   }
 

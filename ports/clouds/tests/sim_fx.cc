@@ -13,6 +13,7 @@
 
 #include "harness/cycles.h"
 #include "op1/clouds_fx.h"
+#include "src/core/profile.h"
 #include "op1/clouds_settings.h"
 
 namespace op1 { uint32_t sim_pitch_buffer[128]; }
@@ -44,6 +45,11 @@ const Scenario kScenarios[] = {
   { "master_granular",  true,  { 6300, 10240, 9216, 26214, 1 << 1, 0, 0, 0 } },
   // granular, density .95 (dense)
   { "master_gr_dense",  true,  { 6300, 12000, 9216, 31129, 1 << 1, 0, 0, 0 } },
+  // granular, density .8, the hidden page: reverb .5 only
+  { "master_gr_reverb", true,  { 6300, 10240, 9216, 26214, 1 << 1, 0, 0, 16384 } },
+  // granular, density .8, texture .9 (diffusion on), feedback .3, reverb .5
+  // (values[4]: mode 1, texture offset (29490 - 16384) >> 4 = 819 << 4)
+  { "master_gr_full",   true,  { 6300, 10240, 9216, 26214, (1 << 1) | (819 << 4), 0, 9830, 16384 } },
   { "synth_ld",         false, { 6300, 10240, 9216, 0, 0, 0, 0, 0 } },
   { "synth_granular",   false, { 6300, 10240, 9216, 26214, 1 << 1, 0, 0, 0 } },
 };
@@ -150,16 +156,39 @@ void TestSettings() {
 
 }  // namespace
 
+#ifdef OP1CLOUDS_PROFILE
+// Stage cycles per call (src/core/profile.h), printed per scenario, as the
+// device's CPU probe shows them (ports/rings/op1/cpu_probe.cc, page 1).
+uint32_t ProfileClock() { return static_cast<uint32_t>(harness::ReadCycles()); }
+const char* const kStageNames[] = { "record", "player", "overlap", "diffuse", "reverb", "resample+mix" };
+#endif
+
 int main() {
   harness::EnableCycleCounter();
   const int kCalls = 1400;   // ~2 s
+#ifdef OP1CLOUDS_PROFILE
+  op1clouds::profile_clock = ProfileClock;
+#endif
   for (const Scenario& sc : kScenarios) {
     harness::CycleStats stats;
     uint64_t restart = 0;
+#ifdef OP1CLOUDS_PROFILE
+    uint32_t before[op1clouds::PROFILE_NUM_STAGES];
+    for (int i = 0; i < op1clouds::PROFILE_NUM_STAGES; ++i) before[i] = op1clouds::profile_cycles[i];
+#endif
     const uint32_t checksum = Run(sc, kCalls, &stats, &restart);
     printf("%-16s restart %7lu cyc  ", sc.name, static_cast<unsigned long>(restart));
     stats.Print("", op1fx::kFxBlockSize);
     printf("%-16s checksum %08lx\n", sc.name, static_cast<unsigned long>(checksum));
+#ifdef OP1CLOUDS_PROFILE
+    for (int i = 0; i < op1clouds::PROFILE_NUM_STAGES; ++i) {
+      const uint32_t per_call = (op1clouds::profile_cycles[i] - before[i]) / kCalls;
+      // 689 calls a second: MHz = cycles per call x 689 / 1e6.
+      printf("    %-13s %6lu cyc/call  %5.1f MHz\n", kStageNames[i],
+             static_cast<unsigned long>(per_call), per_call * 689.0 / 1e6);
+    }
+    printf("    grains %ld\n", static_cast<long>(op1clouds::profile_grains[sc.stereo ? 1 : 0]));
+#endif
   }
   TestSettings();
   printf(failures ? "sim-fx: %d FAILED\n" : "sim-fx: all checks passed\n", failures);
