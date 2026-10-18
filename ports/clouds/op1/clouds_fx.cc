@@ -19,7 +19,7 @@
 // (src/core/halfband.h; the core's own dry/wet stage is skipped).
 //
 // Per call, the CPU governor (src/core/governor.h) sets the granular mode's
-// grain cap from the call interval, Clouds' own cycles and the cycles of
+// grain cap from the audio blocks elapsed, Clouds' own cycles and the cycles of
 // the rest of the image (measured_cycles: the synth engines and the other
 // position), skipping the first calls after a restart. (Test 29 tried a
 // share of 0.40 so the screen keeps its frame rate next to Rings: Clouds
@@ -58,6 +58,7 @@ using op1clouds::HalfbandDecimator;
 using op1clouds::HalfbandInterpolator;
 
 const uint32_t kGapCycles = 2000000;          // 5 ms at 400 MHz
+const uint32_t kBlockCounter = 0xff8016e0;    // +1 per audio block (the firmware's callback)
 const uint32_t kNominalPeriod = 566 * 1024;   // Test 16: 64 samples at 44.1 kHz
 const int32_t kSettleCalls = 16;              // no governor updates after a restart
 const uint32_t kClearBytes = 8192;            // of the core zeroed per call (~45 calls)
@@ -108,6 +109,7 @@ struct Instance {
   int32_t settle;
   int32_t slot;
   uint32_t last_call;
+  uint32_t last_block;   // the block counter at the previous call
   uint32_t own;     // Clouds' cycles in the previous call
   uint32_t own_avg; // smoothed (1/16 per call), for the screen's meter
   uint32_t mark;    // measured_cycles after the previous call
@@ -254,11 +256,21 @@ void Process(Instance* in, int32_t channels, int32_t slot, int16_t* l, int16_t* 
     if (RestartStep(in, channels)) in->cleared = 0;
     const uint32_t end = op1::Cycles();
     in->last_call = end;
+#ifndef OP1_SIM
+    in->last_block = Read<uint32_t>(kBlockCounter);
+#endif
     op1fx::measured_cycles += end - start;
     in->mark = op1fx::measured_cycles;
     return;
   }
   in->last_call = start;
+#ifdef OP1_SIM
+  const uint32_t blocks = 1;
+#else
+  const uint32_t block = Read<uint32_t>(kBlockCounter);
+  const uint32_t blocks = block - in->last_block;
+  in->last_block = block;
+#endif
 
   // The grain cap: the rest of the image's cycles since our previous call.
   const uint32_t others = op1fx::measured_cycles - in->mark;
@@ -267,7 +279,7 @@ void Process(Instance* in, int32_t channels, int32_t slot, int16_t* l, int16_t* 
   } else {
     op1clouds::GranularPlayer* granular = in->core.granular();
     in->core.granular()->set_max_grains(in->governor.Update(
-        interval, in->own, granular->TakeOverlapCycles(), granular->active_grains(), others));
+        blocks, in->own, granular->TakeOverlapCycles(), granular->active_grains(), others));
   }
 
   int32_t v[op1clouds::kNumParams];

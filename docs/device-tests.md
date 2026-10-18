@@ -1216,7 +1216,22 @@ Page 2's cache tests run on the Gfx thread only while page 2 shows (a few ms a s
 
 ## Test 32: governor fix and Clouds' parameter caches (`op1_246_rings_cpuprobe4.op1`)
 
-**Not flashed yet.** seq10's sound plus two changes, and the probe (`op1_246_rings_seq11.op1` is the same without the readout):
+**Results (2026-10-18, photos in `incoming/Test 32/`):** pops, clicks and crackles, typically at note onsets; page 2's master late-call count climbed into the thousands within a minute.
+
+| Case | Page | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 Clouds alone, usual | 1 | 499 | 499 | 0 | 98 | 68 | 14 | 76 | 192 | 0 | 100 |
+| 2 Clouds alone, density high | 1 | 477 | 477 | 0 | 95 | 66 | 43 | 75 | 184 | 100 | 100 |
+| 3 Rings six + Clouds usual | 1 | 639 | 639 | 0 | 119 | 116 | 27 | 113 | 244 | 0 | 100 |
+| 3 | 0 | 399 | 1767 | 486 | 675 | 20 | 111 | 60 | — | — | — |
+| 4 Rings six + Clouds dense | 1 | 723 | 723 | 0 | 121 | 117 | 79 | 117 | 273 | 100 | 100 |
+| 4 | 0 | 399 | 1785 | 483 | 736 | 16 | 158 | 60 | — | — | — |
+
+- **The cap was still 1, even with Clouds alone:** the lateness detector (the mean call interval against a learnt period) fired thousands of times on the firmware's own call jitter, and its ceiling pinned the cap. The learnt period (the smallest mean seen) is biased low by that jitter; a 1/1024 threshold then trips constantly. Replaced (cpuprobe5): an overrun is a call that comes **two audio blocks** after the previous one (the firmware's block counter at `0xff8016e0`), which is what actually crackles.
+- The caches helped: Clouds alone 48-50 MHz; next to Rings 64-74 (Test 31: 85); Rings 177-179 (182); 16-20 frames/s (13). Next to Rings every Clouds stage costs ~1.5x its alone figure (Rings' code and data evict it).
+- Still at the edge: Rings 178 + Clouds 70 = 62% of the CPU before the firmware's own work (~25% idle, more with six voices playing): the onset pops are real overruns, which a governor can't fix at one grain. The fixed costs must come down (Rings' mode bank and glue, Clouds' remaining per-call code).
+
+**Built:** seq10's sound plus two changes, and the probe (`op1_246_rings_seq11.op1` is the same without the readout):
 - **The governor** (`src/core/governor.h`) tracks Clouds' fixed cost and its cost per grain apart (the granular player times its overlap-add) and sets the cap to what the grain budget buys: `cap = (share x period - engines - fixed) / per_grain`. A smaller cap applies at once; a larger one grows a grain every 8 calls (~12 ms). Late calls: only a mean interval over ~16 calls above the learnt period + 1/1024 sets a ceiling (on the grain cycles, 7/8), which relaxes slowly and re-tests every few seconds. `test-governor` (with the device's costs): no late calls with measured load, one short burst per re-test with hidden load, full cap back within 0.4 s of Rings going. **So granular next to Rings now plays as many grains as fit instead of one: a denser Clouds than seq9/seq10 next to Rings, by design.**
 - **Clouds' parameter maths runs only when a value changes** (`granular_player.cc`: the density/texture/hint-derived seeding values, the per-grain size/pitch/position geometry and the width/window envelope; `clouds_core.cc`: the feedback, texture and pitch-shifter coefficients). Bit-identical: every `sim-fx` checksum is unchanged. The traced per-call code footprint (`make hot-set`, `tools/hot_set.py`) went from 310 to 226 lines (9.7 to 7.1 KB) in steady state; Rings' six voices are 134 lines (4.2 KB).
 - The probe's window now runs from the screen thread (Clouds-alone cases read live); page 2's 8 and 9 are the master's and the synth's late-call counts.
@@ -1229,5 +1244,15 @@ Page 2's cache tests run on the Gfx thread only while page 2 shows (a few ms a s
 4. Rings six notes + case 2: page 1 and page 0. Numbers 8 (grains) and 9 (cap): the cap should now be well above 1 and move with the load.
 5. Listen: Clouds granular next to Rings: denser than before? Any crackle? Does the grain count audibly pump as the cap moves (it shouldn't: a grain more every 12 ms)?
 6. Page 2's 8 (master late calls): note it after a minute of playing Rings + Clouds. A handful is fine; hundreds mean the lateness detector fires on the firmware's own jitter.
+
+**If something is wrong:** power off; flash seq10 through the te-boot menu, or recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1`.
+
+## Test 33: lateness by the block counter (`op1_246_rings_cpuprobe5.op1`)
+
+**Not flashed yet.** cpuprobe4 with the governor's overload detection replaced: a call that comes two audio blocks after the previous one counts as an overrun (the mean-interval test fired on jitter and pinned the cap at 1); the share is 0.70 of the period. `op1_246_rings_seq12.op1` is the same without the readout. Bit-identical otherwise (`sim-fx` checksums unchanged; `sim-engine` `ef8618dd`). `test-governor` models the lag: no late calls with measured load, at most a skipped block per re-test of a hidden load.
+
+**Procedure:** as Test 32 (cases 1-4, page 1, plus page 0 for 3 and 4), then:
+5. Page 2's 8 (master late calls) after a minute of Rings + Clouds: it should now count real overruns only (tens at most; each is a skipped block).
+6. Listen: with Clouds alone the cap should be at its maximum (page 1's 9 = 3200 for the master at 32); next to Rings it should settle where the pops stop, and the sound should be denser than seq10's one grain. Note whether the onset pops remain with Rings alone (no Clouds): that tells whether they are Rings' own peak.
 
 **If something is wrong:** power off; flash seq10 through the te-boot menu, or recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1`.
