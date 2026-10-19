@@ -1305,3 +1305,11 @@ cpuprobe5 was cpuprobe4 with the governor's overload detection replaced: a call 
 4. Listen in 2 and 3: pops?
 
 **If something is wrong:** power off; flash seq10 through the te-boot menu, or recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1`.
+
+## Test 35 (proposal): where the combination does fit (`op1_246_rings_cpuprobe6.op1`, no new build)
+
+Rings' cost is per voice (~8% of a period each), so the question is how many voices fit next to the master Clouds. Same image as Test 34, synth FX slot not Clouds, Clouds granular on the master, usual settings:
+1. Rings polyphony 4, four notes held: page 0 (0 should read 399) and page 2 (9 should read ~1000, 8 should stop counting). Pops?
+2. If 1 pops: polyphony 2, two notes. The same readings.
+3. If 1 is clean: Clouds at density high with polyphony 4. The same readings.
+The clean case is the documented limit: the engine stays as it is, the user picks the polyphony.
