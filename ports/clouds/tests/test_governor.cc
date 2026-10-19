@@ -4,8 +4,9 @@
 // follows a script; Clouds costing a fixed part plus a cost per grain (the
 // device's figures, Tests 30-31), with the density asking for more grains
 // than fit. A period whose work exceeds it puts the audio thread behind by
-// the overrun; a lag of a whole period skips a block (what the governor
-// sees, and what crackles).
+// the overrun: the next call comes after the work instead of the period
+// (the mean interval the governor watches), and a lag of a whole period
+// skips a block (what crackles).
 //
 // Phases: idle (no engine), heavy Rings arriving at once (45% of a
 // period), heavier (55%), back to idle; then load the governor can't see
@@ -54,6 +55,7 @@ int main() {
   g.Init(kDemand, kPeriod);
   int failures = 0;
   uint32_t blocks = 1;
+  uint32_t interval = kPeriod;
   uint32_t lag = 0;
   int32_t grains = kDemand;
   bool previous_measured = true;
@@ -64,10 +66,12 @@ int main() {
     for (int32_t c = 0; c < ph.calls; ++c) {
       const uint32_t grain_cycles = grains * kPerGrain;
       const uint32_t own = kCloudsFixed + grain_cycles;
-      const int32_t cap = g.Update(blocks, own, grain_cycles, grains, ph.measured ? ph.engines : 0);
+      const int32_t cap = g.Update(blocks, interval, own, grain_cycles, grains,
+                                   ph.measured ? ph.engines : 0);
       grains = cap < kDemand ? cap : kDemand;
       const uint32_t work = kBase + ph.engines + kCloudsFixed + grains * kPerGrain;
       blocks = 1;
+      interval = lag > 0 || work > kPeriod ? work : kPeriod;
       if (work > kPeriod) {
         lag += work - kPeriod;
         if (lag >= kPeriod) {

@@ -121,3 +121,7 @@ Also: the image ends below `0x03000000` (multi4: `0x02ca37d4`); `bfin-elf-nm` sh
 ## 6. History in one line each
 
 clicks1 (modal + FM, screen, clicks) → strings1–3 (string models, assembly loops) → strings4 (model 6 hang fixed) → strings5 (green handle) → strings6 (model 6 shared reverb) → multi1 (MULTI engine: phase or Rings, orange click, "multi" labels) → multi2 (coefficient budget) → multi3 (meter: updates reading) → multi4 (14 modes in "all", bit-identical savings). Detail per build: `docs/device-tests.md`.
+
+### Blackfin latencies (ADI EE-197, the BF53x core; the BF524 is the same core)
+
+Most numeric instructions have no latency: MAC, ALU, shifter and accumulator-to-register chains are single-cycle (the only accumulator-to-dreg stall is a video op reading it next). Stalls that matter: a pointer register loaded then used (3), a pointer or DAG register written from a dreg then used (4), LSETUP not followed by the loop top (3), a 64-bit first loop instruction off 64-bit alignment (1 an iteration), a load from an address stored to within 3 cycles (3), dual data fetches in the same 4 KB sub-bank (1), MMR reads (2), 32-bit `*=` (3 cycles), jumps and calls (5), a mispredicted branch (9). Memory: a data-cache line from SDRAM 100-190 cycles (Tests 30-33); the write buffer is two deep. The mode bank kernel's device excess (30 against 23.7 simulated cycles per mode and sample) is therefore cache lines, which `src/mode_bank_bfin.S` prefetches two modes ahead (Test 34).

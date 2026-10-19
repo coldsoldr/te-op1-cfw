@@ -266,7 +266,9 @@ void Process(Instance* in, int32_t channels, int32_t slot, int16_t* l, int16_t* 
   in->last_call = start;
 #ifdef OP1_SIM
   const uint32_t blocks = 1;
+  const uint32_t call_interval = kNominalPeriod;   // the simulator's cycles aren't a clock
 #else
+  const uint32_t call_interval = interval;
   const uint32_t block = Read<uint32_t>(kBlockCounter);
   const uint32_t blocks = block - in->last_block;
   in->last_block = block;
@@ -279,7 +281,8 @@ void Process(Instance* in, int32_t channels, int32_t slot, int16_t* l, int16_t* 
   } else {
     op1clouds::GranularPlayer* granular = in->core.granular();
     in->core.granular()->set_max_grains(in->governor.Update(
-        blocks, in->own, granular->TakeOverlapCycles(), granular->active_grains(), others));
+        blocks, call_interval, in->own, granular->TakeOverlapCycles(), granular->active_grains(),
+        others));
   }
 
   int32_t v[op1clouds::kNumParams];
@@ -299,6 +302,7 @@ void Process(Instance* in, int32_t channels, int32_t slot, int16_t* l, int16_t* 
   op1clouds::profile_grains[channels - 1] = in->core.granular()->active_grains();
   op1clouds::profile_cap[channels - 1] = in->governor.cap();
   op1clouds::profile_late[channels - 1] = in->governor.late_calls();
+  op1clouds::profile_interval[channels - 1] = in->governor.mean_interval_permille();
 #endif
   op1fx::measured_cycles += end - start;
   in->mark = op1fx::measured_cycles;

@@ -27,6 +27,7 @@ extern uint32_t profile_instance_cycles[2];   // [0] mono (synth), [1] stereo (m
 extern int32_t profile_grains[2];             // active grains, last call
 extern int32_t profile_cap[2];                // the governor's cap, last call
 extern int32_t profile_late[2];               // the governor's late calls so far
+extern uint32_t profile_interval[2];          // the governor's mean call interval, permille of nominal
 inline uint32_t ProfileNow() { return profile_clock ? profile_clock() : 0; }
 #define OP1CLOUDS_PROFILE_MARK(var) uint32_t var = ::op1clouds::ProfileNow()
 #define OP1CLOUDS_PROFILE_RESET(var) var = ::op1clouds::ProfileNow()

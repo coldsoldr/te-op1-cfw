@@ -5,7 +5,8 @@
 // Called once per effect call (64 samples) with:
 //   blocks:       audio blocks (the firmware's block counter) since the
 //                 previous call: 1, or more when the audio thread fell a
-//                 block behind (an overrun: what crackles);
+//                 block behind;
+//   interval:     cycles since the previous call's start;
 //   own:          Clouds' cycles in the previous call;
 //   grain_cycles: of those, the grain overlap-add (the part that scales
 //                 with the grain count);
@@ -29,11 +30,17 @@
 //
 // Feedback, for the load it can't see: an overrun shows as a call that
 // comes two audio blocks after the previous one (the block counter the
-// firmware's audio callback keeps). Test 32 tried the call interval
-// against a learnt period: the firmware's own jitter made it fire
-// thousands of times a minute and pin the cap at 1. A skipped block sets
-// a ceiling on the grain cycles at 7/8 of what they were, with a short
-// cooldown. Only a re-test can tell that hidden load has gone, so the
+// firmware's audio callback keeps), or as a mean call interval over ~64
+// calls above the nominal period by 2% (Test 33: the block counter
+// counts the blocks the audio thread processes, so when it drops blocks
+// under overload the counter falls behind real time instead of
+// skipping, and only the interval shows it: the probe's clock read 460
+// for 399 MHz). Test 32 tried the interval against a learnt period with a
+// 1/1024 threshold: the firmware's jitter made it fire thousands of
+// times a minute and pin the cap at 1; the nominal period and a 2%
+// margin are above the jitter (the 64-call mean's noise is ~0.1%). An
+// overrun sets a ceiling on the grain cycles at 7/8 of what they were,
+// with a short cooldown. Only a re-test can tell that hidden load has gone, so the
 // ceiling relaxes slowly (1/1024 every kRelaxCalls calls, ~1% a second):
 // a steady hidden load costs a short burst every few seconds; the ceiling
 // goes once it passes the point of the last overload by 1/32, or the
@@ -65,6 +72,7 @@ class Governor {
     engines_ = 0;
     fixed_ = 0;
     per_grain_ = kInitialPerGrain;
+    mean_interval_ = nominal_period;
     cooldown_ = 0;
     ceiling_ = kNoCeiling;
     overload_point_ = 0;
@@ -74,8 +82,8 @@ class Governor {
   }
 
   // Returns the grain cap for the next call.
-  int32_t Update(uint32_t blocks, uint32_t own, uint32_t grain_cycles, int32_t grains,
-                 uint32_t engines) {
+  int32_t Update(uint32_t blocks, uint32_t interval, uint32_t own, uint32_t grain_cycles,
+                 int32_t grains, uint32_t engines) {
     // The engines' and the fixed costs, smoothed (they rise at once and
     // fall over ~16 calls); the cost per grain, from the calls that had
     // grains (falls over ~8 calls).
@@ -91,11 +99,16 @@ class Governor {
       if (per_grain_ < 1) per_grain_ = 1;
     }
 
-    // Overload: the audio thread fell a block behind.
+    // Overload: the audio thread fell a block behind, or runs its blocks
+    // slower than real time (a 5 ms gap restarts the instance before it
+    // gets here, so one interval can't swamp the mean).
+    mean_interval_ += (static_cast<int32_t>(interval) - static_cast<int32_t>(mean_interval_)) >> 6;
     if (cooldown_) --cooldown_;
-    if (blocks > 1 && !cooldown_) {
+    const bool slow = mean_interval_ > period_ + period_ / 50;
+    if ((blocks > 1 || slow) && !cooldown_) {
       ++late_calls_;
-      cooldown_ = 16;
+      cooldown_ = slow ? 64 : 16;
+      if (slow) mean_interval_ = period_;
       const uint32_t used = grain_cycles > per_grain_ ? grain_cycles : per_grain_;
       overload_point_ = used;
       ceiling_ = used - (used >> 3);
@@ -137,6 +150,10 @@ class Governor {
 
   int32_t cap() const { return cap_; }
   int32_t late_calls() const { return late_calls_; }
+  // The mean call interval, in permille of the nominal period.
+  uint32_t mean_interval_permille() const {
+    return static_cast<uint32_t>((static_cast<uint64_t>(mean_interval_) * 1000) / period_);
+  }
   uint32_t ceiling() const { return ceiling_; }
   uint32_t fixed() const { return fixed_; }
   uint32_t per_grain() const { return per_grain_; }
@@ -157,6 +174,7 @@ class Governor {
   uint32_t engines_;
   uint32_t fixed_;
   uint32_t per_grain_;
+  uint32_t mean_interval_;
   int32_t cooldown_;
   uint32_t ceiling_;
   uint32_t overload_point_;

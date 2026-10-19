@@ -33,14 +33,16 @@
 //   0  Rings, MHz x 10        1  mode bank     2  coefficient updates
 //   3  the rest of the voice (RenderMono less 1 and 2)
 //   4  the glue (RingsRender less RenderMono: smoothing, upsampler, fades)
-//   5  instruction cache: miss cycles per 32-byte line (an 8 KB NOP sled,
-//      cold less warm, per line)
-//   6  a 12 KB sled warm: cycles per instruction x 10 (10 = fits the cache)
-//   7  a 32 KB sled warm: cycles per instruction x 10 (misses if the cache
-//      is 16 KB: expect ~5's value / 16 + 10)
-//   8  the master governor's late calls so far
-//   9  the synth governor's late calls so far
-//      (v3 had the data cache's size here: 16 KB, Test 30)
+//   5  the mode bank kernel, warm (a second run on the same 28 modes):
+//      cycles per mode and sample x 10 (the simulator: 237)
+//   6  the same kernel cold (after a 64 KB sweep evicts the modes)
+//   7  the previous kernel (no prefetch, unaligned loop tops) cold
+//   8  the master governor's overruns so far (a skipped block, or a mean
+//      call interval 2% over the nominal period)
+//   9  the master's mean call interval, permille of the nominal period
+//      (1000 = real time; more = the audio thread drops blocks)
+//      (v4 had the instruction cache tests here: 16 KB, a miss 100-190
+//      cycles, Test 30; v3 the data cache's size: 16 KB)
 
 #include "op1/cpu_probe.h"
 
@@ -53,9 +55,10 @@
 #endif
 #include "src/modal_resonator.h"
 
-extern "C" void Sled8k();
-extern "C" void Sled12k();
-extern "C" void Sled32k();
+extern "C" void ModeBankProcessAsmOld(op1rings::Mode* modes, int32_t num_modes,
+                                      const int32_t* in, int32_t* previous_input,
+                                      int32_t* out, int32_t* aux, int32_t size,
+                                      int32_t* half_x);
 
 namespace {
 
@@ -107,7 +110,9 @@ volatile int32_t page = -1;   // -1: the drawing
 uint32_t frame_window_block = 0, frames_window = 0, last_frame = 0, longest_gap = 0;
 volatile uint32_t frames_per_second, longest_gap_ms;
 volatile uint32_t sweep10, hot10, l1_10;
-volatile uint32_t icache_miss, sled12k10, sled32k10;
+volatile uint32_t bank_warm10, bank_cold10, bank_old10;
+op1rings::Mode bank_modes[28];        // SDRAM, as a voice's modes
+int32_t bank_in[32], bank_out[32], bank_aux[32], bank_half_x[32];
 uint32_t sweep_index = 0;
 volatile uint32_t sink;
 uint32_t sdram_area[16384];   // 64 KB of our image's bss (SDRAM)
@@ -134,33 +139,44 @@ uint32_t TimeLoads(const volatile uint32_t* base, uint32_t limit, uint32_t strid
   return best * 10 / 1024;
 }
 
-// One run of a sled, in cycles.
-uint32_t TimeSled(void (*sled)()) {
+// The mode bank kernel on 28 modes and 32 samples (a modal voice's
+// block at the "all" resolution): cycles per mode and sample x 10. Warm:
+// the second of two runs back to back. Cold: after a 64 KB sweep of
+// sdram_area (the data cache is 16 KB) evicts the modes; the stack
+// buffers are small and warm either way. Best of 3 (an interrupt only
+// makes a run slower). The modes' values don't matter for the timing
+// (no data-dependent paths), so they are left at zero.
+typedef void (*BankFn)(op1rings::Mode*, int32_t, const int32_t*, int32_t*, int32_t*,
+                       int32_t*, int32_t, int32_t*);
+
+uint32_t TimeBank(BankFn fn) {
+  int32_t previous = 0;
   const uint32_t start = op1::Cycles();
-  sled();
+  fn(bank_modes, 28, bank_in, &previous, bank_out, bank_aux, 32, bank_half_x);
   return op1::Cycles() - start;
 }
 
-// The instruction cache: a 32 KB sled evicts, then an 8 KB sled cold and
-// warm (the difference is 256 line misses); 12 KB and 32 KB sleds warm
-// (the second of two runs). Best of 3 for each.
-void TimeInstructionCache() {
-  uint32_t miss = 0xffffffffu, warm12 = 0xffffffffu, warm32 = 0xffffffffu;
+void EvictModes() {
+  uint32_t sum = 0;
+  for (uint32_t i = 0; i < 16384; i += 8) sum += sdram_area[i];
+  sink = sink + sum;
+}
+
+void TimeModeBank() {
+  uint32_t warm = 0xffffffffu, cold = 0xffffffffu, old = 0xffffffffu;
   for (int32_t run = 0; run < 3; ++run) {
-    Sled32k();
-    const uint32_t cold = TimeSled(Sled8k);
-    const uint32_t warm = TimeSled(Sled8k);
-    if (cold > warm && cold - warm < miss) miss = cold - warm;
-    Sled12k();
-    const uint32_t w12 = TimeSled(Sled12k);
-    if (w12 < warm12) warm12 = w12;
-    Sled32k();
-    const uint32_t w32 = TimeSled(Sled32k);
-    if (w32 < warm32) warm32 = w32;
+    EvictModes();
+    uint32_t t = TimeBank(op1rings::ModeBankProcessAsm);
+    if (t < cold) cold = t;
+    t = TimeBank(op1rings::ModeBankProcessAsm);
+    if (t < warm) warm = t;
+    EvictModes();
+    t = TimeBank(ModeBankProcessAsmOld);
+    if (t < old) old = t;
   }
-  icache_miss = miss == 0xffffffffu ? 0 : miss / 256;
-  sled12k10 = warm12 * 10 / 6144;
-  sled32k10 = warm32 * 10 / 16384;
+  bank_warm10 = warm * 10 / (28 * 32);
+  bank_cold10 = cold * 10 / (28 * 32);
+  bank_old10 = old * 10 / (28 * 32);
 }
 
 // The readout.
@@ -314,7 +330,7 @@ void Frame() {
       hot10 = TimeLoads(sdram_area, 256, 8, &hot_index);
       l1_10 = TimeLoads(reinterpret_cast<const volatile uint32_t*>(kL1Scratch), 256, 8, &l1_index);
     } else if (page == 2) {
-      TimeInstructionCache();
+      TimeModeBank();
     }
   }
 }
@@ -359,12 +375,12 @@ void Draw(void* screen) {
       ShowNumber(2, mhz10[C_UPDATES]);
       ShowNumber(3, Sub(mhz10[C_VOICE], mhz10[C_MODE_BANK] + mhz10[C_UPDATES]));
       ShowNumber(4, Sub(mhz10[C_RINGS], mhz10[C_VOICE] + mhz10[C_UPSAMPLER]) + mhz10[C_UPSAMPLER]);
-      ShowNumber(5, icache_miss);
-      ShowNumber(6, sled12k10);
-      ShowNumber(7, sled32k10);
+      ShowNumber(5, bank_warm10);
+      ShowNumber(6, bank_cold10);
+      ShowNumber(7, bank_old10);
 #ifdef OP1_CLOUDS
       ShowNumber(8, static_cast<uint32_t>(op1clouds::profile_late[1]));
-      ShowNumber(9, static_cast<uint32_t>(op1clouds::profile_late[0]));
+      ShowNumber(9, op1clouds::profile_interval[1]);
 #endif
       break;
   }

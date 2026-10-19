@@ -13,6 +13,7 @@ uint32_t profile_instance_cycles[2];
 int32_t profile_grains[2];
 int32_t profile_cap[2];
 int32_t profile_late[2];
+uint32_t profile_interval[2];
 #endif
 
 namespace {

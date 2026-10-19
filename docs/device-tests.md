@@ -1249,10 +1249,45 @@ Page 2's cache tests run on the Gfx thread only while page 2 shows (a few ms a s
 
 ## Test 33: lateness by the block counter (`op1_246_rings_cpuprobe5.op1`)
 
-**Not flashed yet.** cpuprobe4 with the governor's overload detection replaced: a call that comes two audio blocks after the previous one counts as an overrun (the mean-interval test fired on jitter and pinned the cap at 1); the share is 0.70 of the period. `op1_246_rings_seq12.op1` is the same without the readout. Bit-identical otherwise (`sim-fx` checksums unchanged; `sim-engine` `ef8618dd`). `test-governor` models the lag: no late calls with measured load, at most a skipped block per re-test of a hidden load.
+**Results (2026-10-19, photos in `incoming/Test 33/`):** page 2's 8 stayed at 0; page 1's 9 settles at 101 when Rings plays; no pops without Clouds.
+
+| Case | Page | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 Clouds alone, usual | 1 | 1001 | 481 | 520 | 158 | ? | 114 | 123 | 386 | 105 | 1940 |
+| 2 Clouds alone, density high | 1 | 1350 | 821 | 529 | 160 | 205 | 424 | 130 | 407 | 2409 | 3239 |
+| 3 Rings six + Clouds usual | 1 | 1056 | 498 | 558 | 181 | 209 | 76 | 145 | 418 | 201 | 101 |
+| 3 | 0 | **460** | 1591 | 407 | 1028 | 26 | 74 | 60 | 5641 | 231 | 231 |
+| 4 Rings six + Clouds dense | 1 | 1048 | 524 | 524 | 171 | ? | 122 | 138 | 394 | 202 | 101 |
+| 4 | 0 | **452** | 1639 | 623 | 1071 | 20 | 212 | 60 | 5874 | 231 | 231 |
+
+- **A synth Clouds instance ran in every case** (page 1's 2: 52-56 MHz, 5-9 grains), which Test 32 didn't have (its 2 read 0). Clouds "alone" was 100 MHz for the two instances; with Rings, the load is Test 32's plus ~52 MHz.
+- **Clouds alone works as designed:** at density high the master's cap is at its maximum (32), 24 grains play, 82 MHz for the master; at the usual settings one grain plays (cap 19: the cost per grain is overstated while only one grain runs; it settles as grains are added).
+- **The block counter can't see the overload.** Page 0's clock read 460 and 452 for a 399 MHz core: the probe divides a second's cycles by the blocks the counter advanced, so the counter advanced 13-15% less than real time. The counter counts the blocks the audio thread processes (`0xffa01988`, the thread's per-block callback), so when the thread falls behind the firmware drops blocks and the counter never skips: page 2's 8 stayed at 0 while 13% of the audio was dropped (the pops). Rings' and Clouds' MHz readings in cases 3-4 are inflated by the same factor (Rings ~140 real, 159 read), and the screen rate improves (26 frames/s) because the audio thread does less.
+- **The cap is 1 next to Rings by the budget** (0.70 x period less Rings, the synth instance and the master's fixed cost leaves nothing), not by the lateness ceiling. Right, and still an overload: the fixed costs are the problem, as Test 32 said.
+- **No pops with Rings alone:** Rings' own peak fits.
+- EE-197 (ADI's latency note for this core, `incoming/EE-197.pdf`, untracked; the gist in `docs/rings-op1-reference.md`): the MAC/ALU/shifter chain has no pipeline latencies, so the mode bank's 30 cycles per mode and sample on the device against 23.7 simulated are memory: the modes' cache lines (SDRAM behind the 16 KB data cache; a line 100-190 cycles) and a cycle an iteration for a 64-bit first instruction off 64-bit alignment.
+
+**Built (`op1_246_rings_cpuprobe6.op1`, `op1_246_rings_seq13.op1`):** see Test 34.
+
+cpuprobe5 was cpuprobe4 with the governor's overload detection replaced: a call that comes two audio blocks after the previous one counts as an overrun (the mean-interval test fired on jitter and pinned the cap at 1); the share is 0.70 of the period. `op1_246_rings_seq12.op1` is the same without the readout. Bit-identical otherwise (`sim-fx` checksums unchanged; `sim-engine` `ef8618dd`). `test-governor` models the lag: no late calls with measured load, at most a skipped block per re-test of a hidden load.
 
 **Procedure:** as Test 32 (cases 1-4, page 1, plus page 0 for 3 and 4), then:
 5. Page 2's 8 (master late calls) after a minute of Rings + Clouds: it should now count real overruns only (tens at most; each is a skipped block).
 6. Listen: with Clouds alone the cap should be at its maximum (page 1's 9 = 3200 for the master at 32); next to Rings it should settle where the pops stop, and the sound should be denser than seq10's one grain. Note whether the onset pops remain with Rings alone (no Clouds): that tells whether they are Rings' own peak.
+
+**If something is wrong:** power off; flash seq10 through the te-boot menu, or recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1`.
+
+## Test 34: mode bank prefetch, overloads by the call interval (`op1_246_rings_cpuprobe6.op1`)
+
+**Not flashed yet.** `op1_246_rings_seq13.op1` is the same without the readout. Changes, all sound-identical (`sim-fx` checksums unchanged, `sim-engine` `ef8618dd`, `bench-mode-bank`: assembly = C = host):
+- **The mode bank kernel** (`src/mode_bank_bfin.S`) prefetches the mode two ahead at each mode pass (`PREFETCH`, the data cache fills while the current mode's 32 samples run) and 64-bit-aligns its loop tops. Simulated cost 24.0 cycles per mode and sample (23.7 before: the prefetch and an MNOP per mode).
+- **The governor** counts an overrun when the mean call interval over ~64 calls is 2% above the nominal period as well as on a skipped block (Test 33: the counter can't see dropped blocks; the interval can; the nominal period and a 2% margin are far above the jitter that caught Test 32's learnt-period version). `test-governor` passes with the thread-behind interval modelled.
+- **The probe's page 2:** 5-7 bench the kernel from the screen thread on 28 modes x 32 samples (cycles per mode and sample x 10): 5 the new kernel warm (a second run), 6 the new kernel cold (after a 64 KB sweep evicts the modes), 7 the old kernel cold. 8 is the master's overruns (both kinds), 9 the master's mean call interval in permille of the nominal period (1000 = real time; 1130 = 13% of the blocks dropped). The instruction cache tests are gone (known: 16 KB, a miss 100-190 cycles).
+
+**Procedure:**
+1. Nothing playing, no Clouds: page 2. Note 5, 6, 7 (the kernel bench). Expected: 5 ~ 240-260 (the loop alone), 6 well under 7 if the prefetch works. Also page 2's 9 with Clouds granular on the master and nothing else: it should read ~1000 (and tell whether idle calls are evenly spaced).
+2. Rings "all", six notes + Clouds granular on the master (usual settings), **no synth Clouds** (check the synth FX slot): page 0 (0 should read 399 if nothing is dropped; more = dropped blocks), page 2 (0 Rings total, 1 mode bank: Test 32 had ~112 MHz for six voices; 8 overruns; 9 the interval permille).
+3. The same with the synth Clouds on as in Test 33: page 0 and page 2 again.
+4. Listen in 2 and 3: pops?
 
 **If something is wrong:** power off; flash seq10 through the te-boot menu, or recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1`.
