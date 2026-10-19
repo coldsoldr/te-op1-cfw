@@ -1279,7 +1279,21 @@ cpuprobe5 was cpuprobe4 with the governor's overload detection replaced: a call 
 
 ## Test 34: mode bank prefetch, overloads by the call interval (`op1_246_rings_cpuprobe6.op1`)
 
-**Not flashed yet.** `op1_246_rings_seq13.op1` is the same without the readout. Changes, all sound-identical (`sim-fx` checksums unchanged, `sim-engine` `ef8618dd`, `bench-mode-bank`: assembly = C = host):
+**Results (2026-10-19, photos in `incoming/Test 34/`):** pops whenever Rings is at polyphony "all" with Clouds on; Clouds sounded pumpy, tails sometimes cut abruptly. Test 33's synth Clouds was not intentional.
+
+| Step | Page | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 nothing, no Clouds | 2 | 6 | 0 | 0 | 0 | 6 | 261 | 284 | 297 | 0 | 0 |
+| 2 master Clouds alone | 2 | 31 | 0 | 0 | 0 | 31 | 263 | 339 | 359 | 0 | 1002 |
+| 3 Rings six + master Clouds | 0 | **471** | 2014 | 559 | 527 | 33 | 41 | 60 | 2906 | 231 | 231 |
+| 3 | 2 | 2031 | 0 | 0 | 1866 | 165 | 264 | 334 | 346 | 397 | **1094** |
+| 4 + synth Clouds | 0 | **445** | 1982 | 627 | 853 | 16 | 122 | 60 | 3029 | 231 | 231 |
+| 4 | 2 | 1968 | 0 | 0 | 1812 | 156 | 262 | 336 | 346 | 295 | **1071** |
+
+- **The kernel bench:** new kernel warm 26.1 cycles per mode and sample (24.0 simulated), cold 28.4 idle / 33.4 under load; the old kernel cold 29.7 / 34.6. The prefetch buys ~1.3 cycles (4%): the misses are not the main excess under load, and the model the user plays doesn't run the mode bank at all (page 2's 1 and 2 read 0: a string model; its cost is the "rest" at 186 MHz read).
+- **The interval detector works:** 9 read 1094 and 1071 (9% and 7% of the blocks dropped over the last calls), 8 counted overruns (397, 295); the clock on page 0 read 471 and 445 (18% and 11% dropped over its second). With nothing playing it read 1002: no false trips.
+- **The budget, per processed block:** Rings six voices 2014 = 292k cycles = **50% of a period**; the master Clouds 527 less the idle synth share = ~70k = 12%; the firmware's own work on top. The pumping and cut tails are the dropped blocks themselves (chunks of audio missing), not the grain cap.
+- **Conclusion:** Rings at polyphony "all" (six voices) plus Clouds on the master does not fit this CPU at full quality, and the remaining sound-identical savings are single-digit percent. See the Test 35 proposal. `op1_246_rings_seq13.op1` is the same without the readout. Changes, all sound-identical (`sim-fx` checksums unchanged, `sim-engine` `ef8618dd`, `bench-mode-bank`: assembly = C = host):
 - **The mode bank kernel** (`src/mode_bank_bfin.S`) prefetches the mode two ahead at each mode pass (`PREFETCH`, the data cache fills while the current mode's 32 samples run) and 64-bit-aligns its loop tops. Simulated cost 24.0 cycles per mode and sample (23.7 before: the prefetch and an MNOP per mode).
 - **The governor** counts an overrun when the mean call interval over ~64 calls is 2% above the nominal period as well as on a skipped block (Test 33: the counter can't see dropped blocks; the interval can; the nominal period and a 2% margin are far above the jitter that caught Test 32's learnt-period version). `test-governor` passes with the thread-behind interval modelled.
 - **The probe's page 2:** 5-7 bench the kernel from the screen thread on 28 modes x 32 samples (cycles per mode and sample x 10): 5 the new kernel warm (a second run), 6 the new kernel cold (after a 64 KB sweep evicts the modes), 7 the old kernel cold. 8 is the master's overruns (both kinds), 9 the master's mean call interval in permille of the nominal period (1000 = real time; 1130 = 13% of the blocks dropped). The instruction cache tests are gone (known: 16 KB, a miss 100-190 cycles).
