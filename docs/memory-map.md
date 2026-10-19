@@ -204,3 +204,11 @@ Fallbacks:
 - crt0 `0xffa00000` (SP init at `0xffa00054`). CPLB init `0xffa09410`. Cache control helpers `0x1aa1720–0x1aa1830`.
 - Display buffer users: `0x193e85e` (MDMA), `0x1941558`, `0x197649a`, `0x1a2fbd0`, `0x1a30030`.
 - Big array getter `0x191b320` → `0x02040000`.
+
+## Master compressor / drive (mixer page 4), 2026-10-19
+
+Looked at for CPU: the user asked whether switching it off would buy anything.
+- The page's four settings are copied by `MasterController`'s knob handler (`0x19da2bc`, subscreen 3 = `kCompressor`, jump table `0x18e336c`) to **`0xff80189c`** (4 x int16); subscreen 0 goes to `0xff801928`, 1 (EQ) to `0xff8017cc`, 2 (FX) to `0xff8016c4`.
+- `0x1a29d30` (called from `0x19dc25e`, `0x1a4474c`, `0x1a5447e`) converts the four to software floats (`0x1aa7050` = int to IEEE float) into a vector at `0x1ab333c`, when `[0x1ab31d0]` is non-zero (an object pointer, by the look of it; not an on/off).
+- No SDRAM code reads `0xff80189c` or the vector apart from those: the DSP is in the Core's L1 code (`0xffa0xxxx`, a third of it XTEA-encrypted), where neither address shows in the plain bytes. There is no bypass flag, and L1 can't be patched without the key (`docs/app-boot-chain.md`).
+- Expected cost anyway: a stereo compressor/drive at 44.1 kHz is of the order of 50-200 cycles a sample, 1-4% of the CPU; the firmware's whole idle share is ~23-25% (Test 16). Not a lever for the Rings + Clouds gap (20-30%).
