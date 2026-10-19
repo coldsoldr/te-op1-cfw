@@ -1,6 +1,6 @@
 # Handover: OP-1 custom firmware
 
-Last updated 2026-10-17 (end of session). Read this first in a fresh session; it's self-contained, and the docs it links to have the detail.
+Last updated 2026-10-19. Read this first in a fresh session; it's self-contained, and the docs it links to have the detail. **The 2026-10-19 session's findings and decisions are in `docs/handover-2026-10-19.md`** (Rings + Clouds CPU question closed: polyphony 4 works, the manual advises against the combination; seq14 = Marbles/Grids key transport, Test 36 awaiting; `manual/modules.html`). seq13 is on the device.
 
 **Where things stand (2026-10-17):**
 - **On the device:** whatever the user last flashed. Known good: `op1_246_rings_clouds4.op1` (Rings MULTI + Clouds on phone/"multi", Tests 17–19). Recovery is always COM at power-on + flash clouds4.
