@@ -1313,3 +1313,20 @@ Rings' cost is per voice (~8% of a period each), so the question is how many voi
 2. If 1 pops: polyphony 2, two notes. The same readings.
 3. If 1 is clean: Clouds at density high with polyphony 4. The same readings.
 The clean case is the documented limit: the engine stays as it is, the user picks the polyphony.
+
+## Test 36: Marbles and Grids run from the keys (`op1_246_rings_seq14.op1`)
+
+**Not flashed yet.** seq13 plus the sequencer transport the user asked for (2026-10-19): Marbles (tombola, synth) and Grids (pattern, drums) no longer run on their own while the sequencer is on. As the OP-1's own sequencers:
+- **Hold a key (or chord) to run.** The run starts on the key press: Marbles' clock and deja vu loops restart there, Grids' bar starts there (step 1 on the press). A tape armed to record on the first key therefore starts with the sequence.
+- **Shift while holding latches** (hold): the run goes on after the keys go up.
+- **The next key press takes over** (Marbles: a new root in scale mode or a new chord in keys mode; Grids: nothing changes but the transport) and clears the latch, so its release stops the run. The last key up stops it.
+- Marbles: a key pressed with shift already down still plays through (sounds as itself, no transport). Grids: keys don't sound themselves any more (no fill-on-hold, no play-through); the assign capture still auditions its key.
+- Checks: `sim-seq` and `sim-grids` pass with the transport cases added; `op1-seq` builds; hooks are function starts; `verify_bootloader.py` passes.
+
+**Procedure:**
+1. Synth, tombola sequencer on (Marbles): nothing should play until a key is held. Hold a key: it plays; move up the keyboard: the playback pitches up (scale mode); release: it stops. Hold a chord, press shift, release the keys: it keeps running. Press a new key: it takes over; release: it stops.
+2. Arm the tape to record, hold a key: the recording and the sequence should start together.
+3. Drums, pattern sequencer on (Grids): the same transport with any drum key; the bar's first step should land on the key press; shift while holding latches.
+4. Note anything odd: a stuck note, a run that doesn't stop, the first note late.
+
+**If something is wrong:** power off; flash seq13 through the te-boot menu, or recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1`.

@@ -5,10 +5,11 @@
 //   - 16ths by default: steps land on the sixteenth grid; 16 per bar;
 //   - every note-on is matched by a note-off; nothing sounds after
 //     AllNotesOff;
-//   - holding a part's key fills it up (more hits while held);
+//   - the transport: silent with no key held; a press starts the bar on
+//     its own tick; shift while held latches; a new press takes over and
+//     its release stops;
 //   - assigning a part's key moves its notes to that key; an accent key
 //     takes the accents; the part's own key forgets it;
-//   - keys that aren't parts play straight through;
 //   - the recorded bar (for print) holds exactly the keys played in it.
 // Part of the Grids port; Grids (c) 2011-2012 Emilie Gillet, GPL v3.
 
@@ -88,7 +89,12 @@ int main() {
   seq.Init(0x21);
   seq.mutable_ui()->fill[0] = seq.mutable_ui()->fill[1] = seq.mutable_ui()->fill[2] = 0xa000;
 
-  // Defaults: 16ths, keys 0 / 2 / 8.
+  // Nothing plays until a key is held.
+  Run(384 * 2);
+  Check(out.ons == 0, "transport: silent with no key held");
+
+  // Defaults: 16ths, keys 0 / 2 / 8; key 20 held from tick 0 (the grid's origin).
+  seq.KeyDown(20);
   out.check_grid = true;
   Run(384 * 8);
   out.check_grid = false;
@@ -98,17 +104,37 @@ int main() {
   Check(out.count(0) > 0 && out.count(2) > 0 && out.count(8) > 0, "BD, SD and HH play on keys 0, 2, 8");
   Check(out.stray == 0, "no stray note-offs");
 
-  // Fill while held: hold the SD key (2) for 4 bars.
-  const int sd_before = out.count(2);
-  Run(384 * 4);
-  const int sd_plain = out.count(2) - sd_before;
-  seq.KeyDown(2);
-  const int sd_held_start = out.count(2);
-  Run(384 * 4);
-  const int sd_held = out.count(2) - sd_held_start;
-  seq.KeyUp(2);
-  printf("SD hits in 4 bars: %d plain, %d while its key is held\n", sd_plain, sd_held);
-  Check(sd_held > sd_plain, "holding a part's key fills it up");
+  // The transport: the key up stops it; a press restarts the bar on its
+  // own tick (a step there: the bar's first); shift while held latches; a
+  // new press takes over and its release stops.
+  seq.KeyUp(20);
+  Run(2);
+  const int ons_stopped = out.ons;
+  Run(384 * 2);
+  Check(out.Sounding() == 0 && out.ons == ons_stopped, "transport: the key up stops it");
+  tick += 7;   // off the old grid
+  seq.KeyDown(20);
+  const int ons_press = out.ons;
+  Run(1);
+  Check(out.ons > ons_press && seq.step() == 0, "transport: a press plays the bar's first step on its tick");
+  Run(384 * 2);
+  Check(out.count(20) == 0, "transport: the key doesn't sound itself");
+  seq.set_shift_held(true);
+  Run(1);
+  seq.set_shift_held(false);
+  seq.KeyUp(20);
+  const int ons_latched = out.ons;
+  Run(384 * 2);
+  Check(out.ons > ons_latched + 4, "transport: shift while held latches");
+  seq.KeyDown(21);
+  Run(384);
+  seq.KeyUp(21);
+  Run(2);
+  const int ons_after = out.ons;
+  Run(384 * 2);
+  Check(out.Sounding() == 0 && out.ons == ons_after, "transport: a new press takes over, its release stops");
+  seq.KeyDown(20);   // held for the rest
+  Run(384);
 
   // Assign: white -> BD, then key 5; then off.
   seq.OnClick(GRIDS_WHITE, 1);
@@ -134,14 +160,6 @@ int main() {
   Check(seq.ui().accent_key[1] == 3 && out.count(3) > k3, "SD accents play the accent key");
   seq.OnClick(GRIDS_GREEN, -1);
   Check(seq.ui().accent_key[1] == kNoKey, "shift + green forgets the accent keys");
-
-  // Play-through: key 20 isn't a part.
-  const int k20 = out.count(20);
-  seq.KeyDown(20);
-  Run(1);
-  seq.KeyUp(20);
-  Run(1);
-  Check(out.count(20) == k20 + 1, "other keys play straight through");
 
   // The recorded bar: run whole bars and compare with what played.
   seq.AllNotesOff(&out);

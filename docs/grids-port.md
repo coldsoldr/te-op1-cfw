@@ -232,7 +232,7 @@ Clicks (orange reserved for the swap):
 | white | **assign**: cycles BD → SD → HH → RND → off. While a part is selected, the next key press sets that part's sound (swallowed) | RND voice on/off |
 | orange | **swap** Grids ↔ stock pattern | **print**: freeze the current bar into the stock `drumseq` data (§6.1) |
 
-**Held keys** (KeyDown/KeyUp hooks). Options, decision for the user:
+**Held keys: decided 2026-10-19 (seq14, Test 36): the keys are the transport**, as the OP-1's own drum sequencers. Grids runs while a key is held, its bar starting on the key press; shift pressed while a key is held latches it; the next key press clears the latch; the last key up stops it. Keys don't sound themselves (no pass-through, no fill-on-hold); an assign still captures and auditions its key. The host polls the shift flag (`0x01dd7f78`) before each Tick. The earlier options, for the record:
 1. **Pass-through** (recommended default): KeyDown returns 0, so keys sound directly. You finger-drum over Grids.
 2. **Assign** (after the white click): the key becomes the selected part's sound; returns 1.
 3. **Fill on hold** (optional performance mode): holding a part's own key raises that part's fill by +64 (or to max) while held, like riding the fill knob. Holding any other key adds it as an extra part that follows HH's pattern.

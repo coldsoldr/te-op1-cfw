@@ -28,6 +28,7 @@ const uint32_t kNoteOff = 0x01a85840;         // (MidiNote*)
 const uint32_t kTombolaPlayer = 0x01dfc254;
 const uint32_t kInstrument = 0x01de4c40;      // 0 synth, 1 drum
 const uint32_t kRandomState = 0xff802bc8;     // the OP-1's LCG
+const uint32_t kShiftHeld = 0x01dd7f78;       // byte: MainInterface's shift flag
 const uint32_t kNodeFind = 0x019eb8ac;
 const uint32_t kScreenDraw = 0x01a3b4c8;
 const uint32_t kNew = 0x01a5e3b0;
@@ -164,6 +165,7 @@ extern "C" void MarblesTick(void* player, int32_t t) {
     return;
   }
   OpSink sink;
+  Seq()->set_shift_held(Read<uint8_t>(kShiftHeld) != 0);
   Seq()->Tick(t, &sink);
 }
 

@@ -61,8 +61,11 @@ void MarblesSeq::Init(uint32_t seed) {
   abs_tick_ = 0xffffffffu;   // the first tick is tick 0 (+ its phase)
   synced_ = false;
   period_ = 0;
+  t_offset_ = 0;
+  running_ = false;
   held_keys_ = pool_mask_ = 0;
   root_ = kRootDefault;
+  latched_ = shift_ = restart_ = false;
   through_on_ = through_off_ = through_sounding_ = 0;
   gates_ = 0;
   for (int i = 0; i < fx::kNumChannels; ++i) voltages_[i] = 0;
@@ -91,7 +94,15 @@ void MarblesSeq::KeyDown(int32_t key, bool play_through) {
     through_on_ = through_on_ | bit;
     return;
   }
-  if (!held_keys_) pool_mask_ = 0;   // a new chord
+  // The transport: a press with no key held starts a new chord; it also
+  // (re)starts the run unless one is going (held or latched); it always
+  // clears the latch, so the chord it starts ends on its last key up.
+  const bool was_running = held_keys_ != 0 || latched_;
+  latched_ = false;
+  if (!held_keys_) {
+    pool_mask_ = 0;   // a new chord
+    if (!was_running) restart_ = true;
+  }
   held_keys_ = held_keys_ | bit;
   pool_mask_ = pool_mask_ | bit;
   root_ = key;
@@ -135,9 +146,53 @@ void MarblesSeq::Release(int voice, NoteSink* sink) {
 }
 
 void MarblesSeq::Tick(int32_t t, NoteSink* sink) {
-  // The tick's place on the grid: t is its phase in half a beat. Longer
-  // divisions (a beat and up, triplets) are counted from the first tick:
-  // the firmware's bar position isn't known.
+  // Played-through keys first: their offs, then their ons (they sound
+  // whether or not the run is going).
+  const uint32_t offs = through_off_;
+  if (offs) {
+    through_off_ = through_off_ & ~offs;
+    for (int32_t k = 0; k < kNumKeys; ++k) {
+      if ((offs >> k) & 1 && (through_sounding_ >> k) & 1) sink->NoteOff(k);
+    }
+    through_sounding_ &= ~offs;
+  }
+  const uint32_t ons = through_on_;
+  if (ons) {
+    through_on_ = through_on_ & ~ons;
+    for (int32_t k = 0; k < kNumKeys; ++k) {
+      if ((ons >> k) & 1) {
+        if ((through_sounding_ >> k) & 1) sink->NoteOff(k);
+        sink->NoteOn(k, 127);
+      }
+    }
+    through_sounding_ |= ons;
+  }
+
+  // The transport: shift pressed while keys are held latches the run.
+  if (shift_ && held_keys_) latched_ = true;
+  const bool running = held_keys_ != 0 || latched_;
+  if (restart_) {
+    // The run starts on this tick: the grid, the clock and the loops from
+    // here (the tape armed on the first key starts with the sequence).
+    restart_ = false;
+    t_offset_ = t;
+    abs_tick_ = 0xffffffffu;
+    synced_ = false;
+    reset_ = true;
+  }
+  if (!running) {
+    for (int voice = 0; voice < 3; ++voice) Release(voice, sink);
+    gates_ = 0;
+    running_ = false;
+    return;
+  }
+  running_ = true;
+
+  // The tick's place on the grid: t is its phase in half a beat, counted
+  // from the key press that started the run. Longer divisions (a beat and
+  // up, triplets) are counted from that tick too: the firmware's bar
+  // position isn't known.
+  t = (t - t_offset_ + kTicksPerHalfBeat) % kTicksPerHalfBeat;
   abs_tick_ += 1;
   const int32_t phase = static_cast<int32_t>(abs_tick_ % kTicksPerHalfBeat);
   if (phase != t) abs_tick_ += static_cast<uint32_t>((t - phase + kTicksPerHalfBeat) % kTicksPerHalfBeat);
@@ -202,27 +257,6 @@ void MarblesSeq::Tick(int32_t t, NoteSink* sink) {
   const uint8_t rising = gates & ~gates_;
   gates_ = gates;
 
-  // Played-through keys first: their offs, then their ons.
-  const uint32_t offs = through_off_;
-  if (offs) {
-    through_off_ = through_off_ & ~offs;
-    for (int32_t k = 0; k < kNumKeys; ++k) {
-      if ((offs >> k) & 1 && (through_sounding_ >> k) & 1) sink->NoteOff(k);
-    }
-    through_sounding_ &= ~offs;
-  }
-  const uint32_t ons = through_on_;
-  if (ons) {
-    through_on_ = through_on_ & ~ons;
-    for (int32_t k = 0; k < kNumKeys; ++k) {
-      if ((ons >> k) & 1) {
-        if ((through_sounding_ >> k) & 1) sink->NoteOff(k);
-        sink->NoteOn(k, 127);
-      }
-    }
-    through_sounding_ |= ons;
-  }
-
   for (int voice = 0; voice < 3; ++voice) {
     if ((falling | rising) >> voice & 1) Release(voice, sink);
   }
@@ -258,6 +292,8 @@ void MarblesSeq::AllNotesOff(NoteSink* sink) {
   through_sounding_ = 0;
   through_on_ = through_off_ = 0;
   gates_ = 0;
+  latched_ = false;   // the keys still held keep it running; a latch doesn't
+  running_ = false;
 }
 
 void MarblesSeq::Knob(int32_t k, int32_t delta_q16) {

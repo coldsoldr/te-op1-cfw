@@ -6,8 +6,16 @@
 // velocity. A note's pitch comes from:
 //   - scale: the root (the last key pressed) + X in semitones (0..2 V =
 //     2 octaves, quantized by Marbles' steps and scale);
-//   - keys: the held keys (latched: a new chord starts when a key goes down
-//     with none held), X picking one of them.
+//   - keys: the held keys (a new chord starts when a key goes down with
+//     none held), X picking one of them.
+//
+// Transport, as the OP-1's own sequencers (the user's request, Test 36):
+// Marbles runs while a key is held, from the key press (the clock and the
+// deja vu loops restart there, so a tape armed to record on the first key
+// starts with the sequence); shift pressed while keys are held latches it
+// (it keeps running after the keys go up); the next key press takes over
+// (a new root or chord, the latch cleared), and the last key up stops it.
+// A key pressed with shift already down plays through instead.
 //
 // Platform-free: the host (op1/marbles_op1.cc, tests/sim_seq.cc) passes the
 // ticks, keys, knobs and clicks in, and receives notes through a NoteSink
@@ -75,9 +83,13 @@ class MarblesSeq {
   void KeyDown(int32_t key, bool play_through);
   void KeyUp(int32_t key);
 
+  // Shift's state, polled by the host before each Tick (the latch).
+  void set_shift_held(bool held) { shift_ = held; }
+
   // One sequencer tick; t = the tick's phase in half a beat (0..47), as
   // the OP-1 passes it.
   void Tick(int32_t t, NoteSink* sink);
+  bool running() const { return running_; }
   void AllNotesOff(NoteSink* sink);
 
   // Encoder k (0..3: blue, green, white, orange) on the shown page: T page
@@ -122,11 +134,16 @@ class MarblesSeq {
   uint32_t abs_tick_;
   bool synced_;
   int32_t period_;
+  int32_t t_offset_;              // the tick phase the run started on
+  bool running_;
 
   // Keys (written by KeyDown/KeyUp on the key thread, read by Tick).
   volatile uint32_t held_keys_;   // physically down
-  volatile uint32_t pool_mask_;   // the latched chord
+  volatile uint32_t pool_mask_;   // the chord (held, or latched)
   volatile int32_t root_;
+  volatile bool latched_;         // shift was pressed while keys were held
+  volatile bool shift_;
+  volatile bool restart_;         // a key started a run: restart on the next tick
 
   volatile uint32_t through_on_;  // played-through keys to start / stop
   volatile uint32_t through_off_;

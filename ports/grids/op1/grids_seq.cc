@@ -36,7 +36,10 @@ void GridsSeq::Init(uint16_t seed) {
   step_base_ = sequencer_.step_count();
   step_ = 0;
   for (int i = 0; i < kPrintSteps; ++i) recording_[i] = bar_[i] = 0;
-  held_parts_ = through_on_ = through_off_ = through_sounding_ = 0;
+  held_parts_ = held_keys_ = through_on_ = through_off_ = through_sounding_ = 0;
+  latched_ = shift_ = restart_ = false;
+  running_ = false;
+  t_offset_ = 0;
   for (int i = 0; i < 32; ++i) sources_[i] = 0;
   shown_state_ = 0;
   Apply();
@@ -63,11 +66,8 @@ void GridsSeq::Apply() {
   d->chaos = To8(ui_.chaos);
   d->swing = To8(ui_.swing);
   d->resolution = ui_.resolution;
-  const uint32_t held = held_parts_;
   for (int i = 0; i < 3; ++i) {
-    int32_t fill = To8(ui_.fill[i]);
-    if ((held >> i) & 1) fill += kFillBoost;
-    d->density[i] = static_cast<uint8_t>(fill > 255 ? 255 : fill);
+    d->density[i] = To8(ui_.fill[i]);
     d->euclid_length[i] = To8(ui_.length[i]);
     d->key[i] = ui_.key[i];
     // Accents always go through the accent key, which is the part's own
@@ -101,20 +101,18 @@ void GridsSeq::KeyDown(int32_t key) {
     default:
       break;
   }
-  for (int i = 0; i < 3; ++i) {
-    if (ui_.key[i] == k) {
-      held_parts_ = held_parts_ | (1u << i);   // fill while held
-      return;
-    }
-  }
-  through_on_ = through_on_ | (1u << key);
+  // The transport: a press with no key held starts the run (its bar from
+  // this press) unless one is going (held or latched); it always clears
+  // the latch, so the run ends on its last key up.
+  const bool was_running = held_keys_ != 0 || latched_;
+  latched_ = false;
+  if (!held_keys_ && !was_running) restart_ = true;
+  held_keys_ = held_keys_ | (1u << key);
 }
 
 void GridsSeq::KeyUp(int32_t key) {
   if (key < 0 || key >= kNumKeys) return;
-  for (int i = 0; i < 3; ++i) {
-    if (ui_.key[i] == key) held_parts_ = held_parts_ & ~(1u << i);
-  }
+  held_keys_ = held_keys_ & ~(1u << key);
   if ((through_sounding_ | through_on_) & (1u << key)) through_off_ = through_off_ | (1u << key);
 }
 
@@ -139,6 +137,25 @@ void GridsSeq::Tick(int32_t t, NoteOut* out) {
     }
     through_sounding_ |= ons;
   }
+
+  // The transport: shift pressed while keys are held latches the run.
+  if (shift_ && held_keys_) latched_ = true;
+  const bool running = held_keys_ != 0 || latched_;
+  if (restart_) {
+    // The bar starts on this tick (the tape armed on the first key starts
+    // with it).
+    restart_ = false;
+    t_offset_ = t;
+    sequencer_.Start();
+    step_base_ = sequencer_.step_count();
+  }
+  if (!running) {
+    if (running_) AllNotesOff(out);
+    running_ = false;
+    return;
+  }
+  running_ = true;
+  t = (t - t_offset_ + 48) % 48;
 
   Apply();
   const uint32_t count = sequencer_.step_count();
@@ -181,7 +198,9 @@ void GridsSeq::AllNotesOff(NoteOut* out) {
   through_sounding_ = 0;
   through_on_ = through_off_ = 0;
   shown_state_ = 0;
-  // The next bar starts at the next t == 0.
+  latched_ = false;   // the keys still held keep it running; a latch doesn't
+  running_ = false;
+  // The next bar starts at the next t == 0 of the run.
   sequencer_.Start();
   step_base_ = sequencer_.step_count();
 }

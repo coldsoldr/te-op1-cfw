@@ -37,6 +37,7 @@ const uint32_t kPatternSetLength = 0x01a08030;  // (pd, length 1..16)
 const uint32_t kPatternSetStart = 0x01a08080;   // (pd, start 0..15)
 const uint32_t kPatternSave = 0x0193ef3c;     // (pd): mark dirty, wake the saver
 const uint32_t kPatternNotes = 0x08;          // PatternData: 16 steps x 24 keys, a byte each
+const uint32_t kShiftHeld = 0x01dd7f78;       // byte: MainInterface's shift flag
 const uint32_t kNodeFind = 0x019eb8ac;
 const uint32_t kScreenDraw = 0x01a3b4c8;
 const uint32_t kNew = 0x01a5e3b0;
@@ -181,6 +182,7 @@ extern "C" void GridsTick(void* player, int32_t t) {
     return;
   }
   OpOut out;
+  Seq()->set_shift_held(Read<uint8_t>(kShiftHeld) != 0);
   Seq()->Tick(t, &out);
 }
 
@@ -257,7 +259,6 @@ typedef void* (*SvgFileLoadFn)(void* file);
 const uint32_t kGetLineStyle = 0x01a3b854;
 const uint32_t kGetFillStyle = 0x01a3b96c;
 const uint32_t kSetTransform = 0x019ead58;    // (node, const int32 m[9]), Q10
-const uint32_t kShiftHeld = 0x01dd7f78;       // byte: MainInterface's shift flag
 
 const char* const kNodeIds[] = {
   "dot", "assign", "ind0", "ind1", "ind2", "ind3", "playhead", "mode_drums", "mode_euclid",

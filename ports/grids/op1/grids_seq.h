@@ -13,8 +13,13 @@
 //     pressed becomes its sound (pressing a part's own key for its accent
 //     forgets the accent key). Shift + white: random voice on/off.
 //     Orange belongs to the host (swap; shift: print).
-//   - Keys: holding a part's key fills that part up while held; other keys
-//     play straight through (from the next Tick, as tombola plays keys).
+//   - Keys are the transport, as the OP-1's own drum sequencers (the
+//     user's request, Test 36): Grids runs while a key is held, its bar
+//     starting on the key press (a tape armed to record on the first key
+//     starts with the bar); shift pressed while a key is held latches it;
+//     the next key press clears the latch, and the last key up stops it.
+//     Keys don't sound themselves, except the one an assign captures (an
+//     audition, from the next Tick).
 //   - Accents: louder on the part's key, or on its accent key once one is
 //     assigned.
 //   - The last bar's steps are kept as 16 key masks for "print".
@@ -37,7 +42,6 @@ enum GridsClick { GRIDS_BLUE = 0, GRIDS_GREEN = 1, GRIDS_WHITE = 2 };
 
 const int kPrintSteps = 16;        // stock pattern holds 16 sixteenths
 const uint8_t kRandomKey = 12;     // the random voice's key when on
-const uint8_t kFillBoost = 96;     // a held part's extra fill
 
 class NoteOut {
  public:
@@ -67,8 +71,12 @@ class GridsSeq {
   void KeyDown(int32_t key);
   void KeyUp(int32_t key);
 
+  // Shift's state, polled by the host before each Tick (the latch).
+  void set_shift_held(bool held) { shift_ = held; }
+
   // One sequencer tick (t = 0..47).
   void Tick(int32_t t, NoteOut* out);
+  bool running() const { return running_; }
   // Note-offs for everything sounding; the next bar starts at the next
   // t == 0.
   void AllNotesOff(NoteOut* out);
@@ -103,7 +111,13 @@ class GridsSeq {
   uint32_t bar_[kPrintSteps];
 
   // Keys (written on the key thread, read by Tick).
-  volatile uint32_t held_parts_;     // bit p: part p's key is held
+  volatile uint32_t held_parts_;     // bit p: part p's key is held (unused: 0)
+  volatile uint32_t held_keys_;      // the transport keys down
+  volatile bool latched_;            // shift was pressed while keys were held
+  volatile bool shift_;
+  volatile bool restart_;            // a key started a run: the bar restarts
+  bool running_;
+  int32_t t_offset_;                 // the tick phase the run started on
   volatile uint32_t through_on_;
   volatile uint32_t through_off_;
   uint32_t through_sounding_;

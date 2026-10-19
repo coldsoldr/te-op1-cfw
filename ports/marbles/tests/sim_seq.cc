@@ -11,7 +11,10 @@
 //     root's two octaves;
 //   - X deja vu locked with length 4 repeats T2's pitches every 4 notes;
 //   - with full jitter the clock stays near the grid (pulled back);
-//   - a key played through (shift) sounds as itself.
+//   - a key played through (shift) sounds as itself;
+//   - the transport: nothing plays with no key held; a press starts the
+//     run on its own tick; shift while held latches; a new press takes
+//     over and its release stops.
 
 #include <cstdint>
 #include <cstdio>
@@ -106,7 +109,13 @@ int main() {
   sink.Clear();
   seq.Init(0x12345678);
 
-  // Defaults: scale mode, root 7, 1/8.
+  // Nothing plays until a key is held.
+  Run(384);   // a bar: the press lands on every division's grid
+  Check(sink.ons == 0, "transport: silent with no key held");
+
+  // Defaults: scale mode, 1/8; key 7 held from a bar line (the grid the
+  // checks below measure against starts at the press).
+  seq.KeyDown(7, false);
   int on = 0, off = 0;
   Run(4000, &on, &off);
   printf("default: %d notes, T2 on grid %d, off grid %d, pitches %d..%d\n", sink.ons, on, off,
@@ -138,32 +147,63 @@ int main() {
   Run(2000, &on, &off);
   Check(seq.division_ticks() == 64 && off <= 1 && on > 20, "T2 on the 1/4 triplet grid");
 
-  // Keys mode: chord 2, 5, 9 (latched), released.
+  // The transport: the key up stops it (notes off, then silence); a new
+  // press restarts on its own tick (the first note on that tick).
   seq.mutable_settings()->rate = 0x8000;
+  seq.KeyUp(7);
+  Run(2);
+  const int ons_stopped = sink.ons;
+  Run(1000);
+  Check(sink.Sounding() == 0 && sink.ons == ons_stopped, "transport: the key up stops it");
+  tick += 5;   // off the old grid
+  seq.KeyDown(7, false);
+  const int ons_press = sink.ons;
+  Run(1);
+  Check(sink.ons > ons_press, "transport: a press plays its first note on its own tick");
+  on = off = 0;
+  Run(2000, &on, &off);
+  Check(on == 0 && off > 10, "transport: the grid restarts from the press (off the old grid)");
+  // Latch: shift while the key is held; the key up doesn't stop it.
+  seq.set_shift_held(true);
+  Run(1);
+  seq.set_shift_held(false);
+  seq.KeyUp(7);
+  const int ons_latched = sink.ons;
+  Run(1000);
+  Check(sink.ons > ons_latched + 5, "transport: shift while held latches");
+  // A new press takes over and clears the latch; its release stops.
+  seq.KeyDown(9, false);
+  Run(500);
+  seq.KeyUp(9);
+  Run(2);
+  const int ons_after = sink.ons;
+  Run(1000);
+  Check(sink.Sounding() == 0 && sink.ons == ons_after, "transport: a new press takes over, its release stops");
+
+  // Keys mode: chord 2, 5, 9 held.
   seq.OnClick(CLICK_WHITE, 1);
   Check(seq.settings().pitch_source == PITCH_KEYS, "white: keys mode");
   seq.KeyDown(2, false);
   seq.KeyDown(5, false);
   seq.KeyDown(9, false);
-  seq.KeyUp(2);
-  seq.KeyUp(5);
-  seq.KeyUp(9);
-  seq.AllNotesOff(&sink);
   sink.pool_seen = 0;
   sink.record = true;
   Run(3000);
   sink.record = false;
   printf("keys: pool seen %03lx\n", static_cast<unsigned long>(sink.pool_seen));
   Check(sink.pool_seen != 0 && (sink.pool_seen & ~((1u << 2) | (1u << 5) | (1u << 9))) == 0,
-        "keys mode plays only the latched chord");
+        "keys mode plays only the held chord");
   // A new chord replaces it.
+  seq.KeyUp(2);
+  seq.KeyUp(5);
+  seq.KeyUp(9);
+  Run(2);
   seq.KeyDown(12, false);
-  seq.KeyUp(12);
   sink.pool_seen = 0;
   sink.record = true;
   Run(2000);
   sink.record = false;
-  Check(sink.pool_seen == (1u << 12), "a new chord replaces the latched one");
+  Check(sink.pool_seen == (1u << 12), "a new chord replaces the old one");
   seq.OnClick(CLICK_WHITE, 1);
 
   // X deja vu locked, length 4: T2's pitches repeat every 4 notes.
@@ -221,6 +261,7 @@ int main() {
   // Cycles per tick, default settings with deja vu on.
   harness::EnableCycleCounter();
   seq.Init(7);
+  seq.KeyDown(7, false);
   seq.mutable_settings()->t_deja_vu = DEJA_VU_ON;
   seq.mutable_settings()->x_deja_vu = DEJA_VU_ON;
   uint64_t total = 0, worst = 0;
