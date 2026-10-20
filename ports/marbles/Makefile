@@ -125,3 +125,17 @@ $(BUILD)/sim_seq.elf: $(SEQ_SRC) $(PORT_HDR) op1/marbles_seq.h | $(BUILD)
 sim-seq: $(BUILD)/sim_seq $(BUILD)/sim_seq.elf
 	$(BUILD)/sim_seq
 	$(BFIN_RUN) $(BUILD)/sim_seq.elf
+
+# marbles.svg for the package: the redesigned screen
+# (docs/module-briefs/designs/marbles.svg, drawn in the device subset) checked
+# by the fx screens' generator for the ids op1/marbles_op1.cc needs (eng0/eng1
+# are static, checked as well). The old op1/gen_marbles_svg.py (with its
+# idP2.. subpath split) is no longer used.
+empty :=
+space := $(empty) $(empty)
+comma := ,
+MARBLES_MARKS   := $(foreach l,0 1 2,$(foreach c,0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15,h$(l)$(c)))
+MARBLES_DESIGN  := ../../docs/module-briefs/designs/marbles.svg
+MARBLES_SVG_IDS := eng0,eng1,page1ind,page2ind,src_scale,src_keys,chipT,chipX,chip_model,chip_scale,loop_t,loopX,bar0,bar1,bar2,bar3,leg0_t,leg1_t,leg2_t,leg0X,leg1X,leg2X,$(subst $(space),$(comma),$(MARBLES_MARKS))
+op1/marbles.svg: ../fx/op1/gen_fx_svg.py $(MARBLES_DESIGN)
+	$(PYTHON) ../fx/op1/gen_fx_svg.py $(MARBLES_DESIGN) $@ --ids $(MARBLES_SVG_IDS)

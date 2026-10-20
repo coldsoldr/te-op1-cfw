@@ -14,7 +14,9 @@ Takes an image linked for the free SDRAM region (ports/rings/op1/link.ld) and:
      {address, kind, stock, value}: kind 0 replaces a 32-bit word, kinds 1
      and 2 replace the 16-bit immediate of an instruction with the low or high
      half of `value` (an address in the image; the linker can't emit masked
-     halves in data). Patches must land in the app's own blocks.
+     halves in data), kind 3 retargets a CALL, and kind 4 replaces a 16-bit
+     instruction with the halfword the image holds at `value`. Patches must
+     land in the app's own blocks.
 Every patch checks the stock value first, like tools/patch_app.py.
 
 The image must stay inside 0x02c00000-0x02ffffff (docs/memory-map.md) and
@@ -45,9 +47,9 @@ PHASE_NOTE_OFF = (0x01911168, 0x01a1b5ec)
 
 PT_LOAD = 1
 
-PATCH_WORD32, PATCH_IMM16_LO, PATCH_IMM16_HI, PATCH_CALL24 = 0, 1, 2, 3
+PATCH_WORD32, PATCH_IMM16_LO, PATCH_IMM16_HI, PATCH_CALL24, PATCH_HALF16 = 0, 1, 2, 3, 4
 PATCH_KIND_NAMES = {PATCH_WORD32: 'word', PATCH_IMM16_LO: 'imm16 lo', PATCH_IMM16_HI: 'imm16 hi',
-                    PATCH_CALL24: 'call'}
+                    PATCH_CALL24: 'call', PATCH_HALF16: 'insn16'}
 MAX_PATCHES = 64
 
 
@@ -85,7 +87,9 @@ def read_patch_table(segments, table, count):
     addresses = [e[0] for e in entries]
     if len(set(addresses)) != len(addresses):
         raise LdrError('patch table patches an address twice')
-    return entries
+    # kind 4: the new halfword is the image's data at `value`.
+    return [(a, k, s, struct.unpack('<H', read_image(segments, v, 2))[0] if k == PATCH_HALF16 else v)
+            for a, k, s, v in entries]
 
 
 def patch_bytes(entry):
@@ -100,6 +104,10 @@ def patch_bytes(entry):
         return struct.pack('<H', stock), struct.pack('<H', half)
     if kind == PATCH_CALL24:
         return call24(address, stock), call24(address, value)
+    if kind == PATCH_HALF16:
+        if address & 1 or stock > 0xffff or value > 0xffff:
+            raise LdrError('{:#x}: bad insn16 patch'.format(address))
+        return struct.pack('<H', stock), struct.pack('<H', value)
     raise LdrError('{:#x}: unknown patch kind {}'.format(address, kind))
 
 

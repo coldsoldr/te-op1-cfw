@@ -235,15 +235,17 @@ extern "C" const char* GridsSeqName(int32_t index) {
   return reinterpret_cast<SeqNameFn>(op1grids::kStockSeqName)(index);
 }
 
-// The screen: stock pattern, or Grids' (grids.svg, the user's "Panel +
-// kit" design, docs/grids-screen-brief.md; mappings in its handover README,
-// kept as ports/grids/op1/grids-screen.md): the map with its dot, the kit
-// pieces lighting on their hits (bigger on accents, lit while a part's key
-// fills it), the assign arrow, the four bars (the fill page while shift is
-// held), the playhead and the state icons. No driven element is inside a
-// moved group: transforms are in screen coordinates. Colours are read from
-// the file's example state (gen_grids_svg.py checks it): part_hh lit,
-// part_sd idle, rnd_on off.
+// The screen: stock pattern, or Grids' (grids.svg, the frameless redesign
+// aligned with the fx screens: docs/module-briefs/designs/grids.md, made
+// with ports/fx/op1/gen_fx_svg.py from docs/module-briefs/designs/grids.svg):
+// the map with its dot, the kit pieces lighting on their hits (bigger on
+// accents, lit while a part's key fills it), the assign arrow, the three bars
+// beside the kit and the orange bar top right (the fill page while shift is
+// held), the playhead and the state icons in the top strip. The engine dots
+// (eng0 pattern, eng1 grids) are static. No driven element is inside a
+// moved group: transforms are in screen coordinates; dot, assign and the
+// state icons are groups, driven as a whole. Colours are read from the
+// file's example state: part_hh lit, part_sd idle, rnd_on off.
 namespace {
 
 typedef void* (*NodeFindFn)(void* document, const char* id, int32_t assert_missing);
@@ -270,15 +272,20 @@ static_assert(sizeof(kNodeIds) / sizeof(kNodeIds[0]) == N_COUNT, "node ids");
 // The kit pieces in part order (BD, SD, HH), their centres' y, and the
 // assign arrow's offset towards each (drawn pointing at HH).
 const char* const kPartIds[3] = { "part_bd", "part_sd", "part_hh" };
-const int32_t kPartCentreY[3] = { 90, 56, 23 };
+const int32_t kPartCentreY[3] = { 107, 74, 42 };
+const int32_t kPartCentreX = 150;
+// The bars' left ends: ind0..ind2 beside the kit, ind3 the orange bar.
+const int32_t kBarX[4] = { 200, 200, 200, 232 };
 const int32_t kAssignDy[3] = { 65, 32, 0 };
 
 struct Colour {
   uint8_t rgba[4];
 };
 
-// gen_grids_svg.py splits a path with several subpaths into one path per
-// subpath (the OP-1 joins subpaths with a line): id, idP2, idP3, ...
+// The old gen_grids_svg.py split a path with several subpaths into one path
+// per subpath (the OP-1 joins subpaths with a line): id, idP2, idP3, ...
+// The redesign draws those as groups instead, so each id is one node (its
+// group) and no P2 exists; the lookup stays for any older file.
 const int32_t kMaxParts = 9;
 
 struct Element {
@@ -405,11 +412,11 @@ void GridsInit(void* self) {
   screen_ready = true;
 }
 
-// A bar: u (Q16) as a width about the left end (x = 202), at least 0.02.
-void Bar(const Element& node, int32_t u_q16) {
+// A bar: u (Q16) as a width about its left end x0, at least 0.02.
+void Bar(const Element& node, int32_t u_q16, int32_t x0) {
   int32_t s = u_q16 >> 6;   // Q10
   if (s < 20) s = 20;
-  SetTransform(node, s, 0x400, 202 * (0x400 - s), 0);
+  SetTransform(node, s, 0x400, x0 * (0x400 - s), 0);
 }
 
 void GridsDraw(void* self, const GridsSeq* g) {
@@ -417,9 +424,9 @@ void GridsDraw(void* self, const GridsSeq* g) {
   const bool euclid = u.mode == op1grids::OUTPUT_MODE_EUCLIDEAN;
   const bool shift = Read<uint8_t>(kShiftHeld) != 0;
 
-  // The map's dot: x 23 + 72 X, y 93 - 72 Y.
+  // The map's dot (a crosshair drawn at 32,106): x 32 + 64 X, y 106 - 64 Y.
   SetVisible(nodes[N_DOT], !euclid);
-  SetTransform(nodes[N_DOT], 0x400, 0x400, (u.x * 72) >> 6, -((u.y * 72) >> 6));
+  SetTransform(nodes[N_DOT], 0x400, 0x400, (u.x * 64) >> 6, -((u.y * 64) >> 6));
 
   // The kit: lit on the last step's hits and while a part's key is held;
   // 1.25 x about the centre on an accent.
@@ -430,7 +437,7 @@ void GridsDraw(void* self, const GridsSeq* g) {
     Write(part_line[p], hit ? lit_line : idle_line);
     Write(part_fill[p], hit ? lit_fill : idle_fill);
     if ((state >> (p + 3)) & 1 && ((state >> p) & 1)) {
-      SetTransform(parts[p], 1280, 1280, -37632, -256 * kPartCentreY[p]);   // 147 x -0.25
+      SetTransform(parts[p], 1280, 1280, -256 * kPartCentreX, -256 * kPartCentreY[p]);   // c x -0.25
     } else {
       SetTransform(parts[p], 0x400, 0x400, 0, 0);
     }
@@ -460,10 +467,10 @@ void GridsDraw(void* self, const GridsSeq* g) {
     v[2] = u.chaos;
     v[3] = u.swing;
   }
-  for (int32_t i = 0; i < 4; ++i) Bar(nodes[N_IND0 + i], v[i]);
+  for (int32_t i = 0; i < 4; ++i) Bar(nodes[N_IND0 + i], v[i], kBarX[i]);
 
-  // The playhead: 10 px per sixteenth, 5 per thirty-second.
-  const int32_t step_px = u.resolution == op1grids::RESOLUTION_16TH ? 10 : 5;
+  // The playhead: 16 px per sixteenth, 8 per thirty-second.
+  const int32_t step_px = u.resolution == op1grids::RESOLUTION_16TH ? 16 : 8;
   SetTransform(nodes[N_PLAYHEAD], 0x400, 0x400, g->step() * step_px * 1024, 0);
 
   // State icons.

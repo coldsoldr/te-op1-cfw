@@ -1,14 +1,14 @@
-// Clouds in place of the OP-1's phone effect (HANDOVER §3): the master
-// effect (stereo) and the live instrument's effect (mono: a synth slot or
-// the drum kit; only the live one exists), one CloudsCore each.
-//
-// Each position plays Clouds or stock phone, by its values[4] (op1/
-// clouds_settings.h; 0, every stock preset, is Clouds). Stock phone is
-// called as the vtable would; its object is left alone while Clouds plays.
+// Clouds as an engine of the OP-1's reverb category (op1/clouds_fx.h; until
+// 2026-10 it replaced phone): the master effect (stereo) and the live
+// instrument's effect (mono: a synth slot or the drum kit; only the live one
+// exists), one CloudsCore each. The host (../fx/op1/fx_host.cc) decides
+// which positions play Clouds, from the marker in their values, and calls
+// stock spring otherwise.
 //
 // A position (re)starts after a pause (an effect switched off isn't called:
-// a gap over 5 ms), after playing phone, and for the synth when the slot
-// or the drum kit changes. A restart zeroes the CloudsCore (~360 KB) kClearBytes per call,
+// a gap over 5 ms), after the host played something else there (stop), and
+// for the mono position when the slot or the drum kit changes. A restart
+// zeroes the CloudsCore (~360 KB) kClearBytes per call,
 // passing the input through, then initialises it: one call doing it all
 // takes longer than the 5 ms gap on the device (SDRAM), and the next call
 // would restart again, starving the app (clouds1 hung at boot).
@@ -25,9 +25,8 @@
 // share of 0.40 so the screen keeps its frame rate next to Rings: Clouds
 // sounded thin. The user prefers the sound; the share stays at its default.)
 //
-// Simulator builds (-DOP1_SIM, tests/sim_fx.cc): no firmware. Both entries
-// play Clouds on the values the call passes, with phone's measured ranges;
-// the synth FX page clicks work on sim_synth_values.
+// Simulator builds (-DOP1_SIM, tests/sim_fx.cc): no firmware; the host's
+// entries play Clouds on the values the call passes.
 
 #include "op1/clouds_fx.h"
 
@@ -37,16 +36,6 @@
 #include "src/core/governor.h"
 #include "src/core/profile.h"
 #include "src/core/halfband.h"
-
-namespace op1fx {
-
-uint32_t measured_cycles;
-
-#ifdef OP1_SIM
-int16_t sim_synth_values[8];
-#endif
-
-}  // namespace op1fx
 
 namespace {
 
@@ -62,38 +51,6 @@ const uint32_t kBlockCounter = 0xff8016e0;    // +1 per audio block (the firmwar
 const uint32_t kNominalPeriod = 566 * 1024;   // Test 16: 64 samples at 44.1 kHz
 const int32_t kSettleCalls = 16;              // no governor updates after a restart
 const uint32_t kClearBytes = 8192;            // of the core zeroed per call (~45 calls)
-
-// Firmware (docs/clouds-port.md §5, docs/next-projects.md §1).
-const uint32_t kFxRanges = 0x01de5c50;        // {min, max, x} int16, 48 bytes per type
-const int32_t kPhoneType = 3;
-const uint32_t kFxProducers = 0x01aaad60;     // effect object per position (synth, drum, master)
-const uint32_t kLiveMode = 0xff801038;        // live instrument: 0 synth, 1 drum
-const uint32_t kCoreSlot = 0x01aaac0c;        // the synth slot the core plays
-const uint32_t kCoreDrum = 0x01aaac10;        // the drum kit the core plays
-const uint32_t kEditedDrum = 0xff8016d8;      // the drum kit being edited
-const uint32_t kDrumPage = 0x01aab9f4;        // 2 = FX page
-const uint32_t kDrumFxTypes = 0xff801754;     // effect type per drum kit
-const int32_t kNumDrums = 8;
-const uint32_t kCurrentSlot = 0xff8016d4;     // the synth slot being edited
-const uint32_t kSynthPage = 0x01b4ee88;       // 2 = FX page
-const int32_t kFxPage = 2;
-const uint32_t kSlotFxTypes = 0xff801734;     // effect type per synth slot
-const uint32_t kSynthFxValues = 0xff801444;   // + slot x 16
-const uint32_t kDrumFxValues = 0xff8015c4;    // + instrument x 16
-const int32_t kNumSlots = 8;
-const uint32_t kPatches = 0x01ddd7e8;         // Patch objects: 8 synth slots, then the drum kits
-const uint32_t kPatchSize = 0x38;
-const uint32_t kSetFxValues = 0x019ff664;     // Patch::SetFx...(patch, values)
-const uint32_t kMasterFxValues = 0xff8016c4;
-const uint32_t kMasterSubscreen = 0x01aad5f0; // MasterController's subscreen_
-const int32_t kMasterFxSubscreen = 2;         // its knob case copies 0xff8016c4
-const uint32_t kPhoneStereoVtable = 0x01911314;
-
-typedef void (*SetValuesFn)(void* patch, const int16_t* values);
-
-// Phone's encoder ranges (FX Ranges table, read with bfin-elf-gdb), used
-// when the table doesn't look valid and in the simulator.
-const int16_t kPhoneRanges[4][2] = { { 204, 20480 }, { 3072, 17408 }, { 1536, 16896 }, { 0, 32767 } };
 
 template <typename T>
 T Read(uint32_t address) {
@@ -125,30 +82,8 @@ Instance master_fx;
 
 op1clouds::SoftLimitTable soft_limit;
 
-EncoderRange ranges[4];
-bool ranges_ready;
-
-void InitRanges() {
-  for (int32_t k = 0; k < 4; ++k) {
-    int32_t min = kPhoneRanges[k][0];
-    int32_t max = kPhoneRanges[k][1];
-#ifndef OP1_SIM
-    const uint32_t entry = kFxRanges + kPhoneType * 48 + k * 6;
-    const int32_t table_min = Read<int16_t>(entry);
-    const int32_t table_max = Read<int16_t>(entry + 2);
-    if (table_max > table_min && table_max - table_min >= 8192) {
-      min = table_min;
-      max = table_max;
-    }
-#endif
-    op1clouds::InitRange(&ranges[k], min, max);
-  }
-  ranges_ready = true;
-}
-
-const EncoderRange* Ranges() {
-  if (!ranges_ready) InitRanges();
-  return ranges;
+Instance* InstanceAt(int32_t position) {
+  return position == op1fx::POSITION_MASTER ? &master_fx : &synth_fx;
 }
 
 // One step of a restart: zeroes the next kClearBytes of the core, and
@@ -240,10 +175,12 @@ void Render(Instance* in, int16_t* l, int16_t* r) {
   OP1CLOUDS_PROFILE_ADD(PROFILE_RESAMPLE_MIX, profile_t);
 }
 
-// Clouds on one call. `values`: the position's 8 values, `s` their
-// settings. A call that restarts leaves the input as it is.
+// Clouds on one call. `live`: the encoders as passed (the LFO's copy),
+// `values`: the position's 8 stored values, `s` their settings. A call that
+// restarts leaves the input as it is.
 void Process(Instance* in, int32_t channels, int32_t slot, int16_t* l, int16_t* r,
-             const int16_t* values, const FxSettings& s) {
+             const int16_t* live, const int16_t* values, const FxSettings& s,
+             const EncoderRange* ranges) {
   const uint32_t start = op1::Cycles();
   const uint32_t interval = start - in->last_call;
   if (in->running && (interval > kGapCycles || slot != in->slot)) in->running = false;
@@ -286,7 +223,7 @@ void Process(Instance* in, int32_t channels, int32_t slot, int16_t* l, int16_t* 
   }
 
   int32_t v[op1clouds::kNumParams];
-  op1clouds::ParamValues(Ranges(), values, s, v);
+  op1clouds::ParamValues(ranges, live, s, v);
   op1clouds::CloudsParams* p = in->core.mutable_parameters();
   op1clouds::ApplyParams(v, p);
   p->freeze = in->freeze;
@@ -308,163 +245,33 @@ void Process(Instance* in, int32_t channels, int32_t slot, int16_t* l, int16_t* 
   in->mark = op1fx::measured_cycles;
 }
 
-#ifndef OP1_SIM
-// The live instrument, whose effect the mono process is running: a synth
-// slot 0..7, or kNumSlots + the drum kit; -1 if neither (the firmware's
-// mode word, as its own "drum mode" test 0x1a27e0c reads it).
-int32_t LiveSlot() {
-  const int32_t mode = Read<int32_t>(kLiveMode);
-  if (mode == 0) {
-    const int32_t slot = Read<int32_t>(kCoreSlot);
-    return slot >= 0 && slot < kNumSlots ? slot : -1;
-  }
-  if (mode == 1) {
-    const int32_t drum = Read<int32_t>(kCoreDrum);
-    return drum >= 0 && drum < kNumDrums ? kNumSlots + drum : -1;
-  }
-  return -1;
-}
 
-// A slot's effect values (a synth slot, or kNumSlots + a drum kit).
-int16_t* SlotValues(int32_t slot) {
-  const uint32_t a = slot < kNumSlots ? kSynthFxValues + slot * 16 : kDrumFxValues + (slot - kNumSlots) * 16;
-  return reinterpret_cast<int16_t*>(a);
-}
-#endif
-
-}  // namespace
-
-extern "C" void CloudsFxMono(void* self, int16_t* buf, const int16_t* params) {
-#ifdef OP1_SIM
-  const int32_t slot = 0;
-  const int16_t* values = params;
-#else
-  const int32_t slot = LiveSlot();
-  const int16_t* values = slot >= 0 ? SlotValues(slot) : params;
-#endif
+void EngineProcess(int32_t position, int32_t slot, int16_t* l, int16_t* r, const int16_t* live,
+                   const int16_t* values, const EncoderRange* ranges) {
   const FxSettings s = op1clouds::DecodeSettings(values);
-  if (slot < 0 || s.engine != op1clouds::FX_CLOUDS) {
-    synth_fx.running = false;
-#ifndef OP1_SIM
-    reinterpret_cast<op1fx::FxMonoFn>(op1fx::kPhoneMonoProcess)(self, buf, params);
-#endif
-    return;
-  }
-  Process(&synth_fx, 1, slot, buf, nullptr, values, s);
+  Process(InstanceAt(position), r ? 2 : 1, slot, l, r, live, values, s, ranges);
 }
 
-extern "C" void CloudsFxStereo(void* self, int16_t* l, int16_t* r, const int16_t* params) {
-  // The master's values are the ones the call passes (0xff8016c4, Test 16).
-  const FxSettings s = op1clouds::DecodeSettings(params);
-  if (s.engine != op1clouds::FX_CLOUDS) {
-    master_fx.running = false;
-#ifndef OP1_SIM
-    reinterpret_cast<op1fx::FxStereoFn>(op1fx::kPhoneStereoProcess)(self, l, r, params);
-#endif
-    return;
-  }
-  Process(&master_fx, 2, 0, l, r, params, s);
-}
+void EngineStop(int32_t position) { InstanceAt(position)->running = false; }
 
-namespace op1fx {
+void EngineEnter(int16_t* values, const EncoderRange*) { op1clouds::EnterSettings(values); }
 
-#ifdef OP1_SIM
-int16_t sim_master_values[8];
-
-bool SynthFxPageIsPhone() { return true; }
-bool DrumFxPageIsPhone() { return false; }
-bool MasterFxPageIsPhone() { return true; }
-
-namespace {
-int16_t* EditedValues(int32_t* slot) {
-  *slot = 0;
-  return sim_synth_values;
-}
-int16_t* EditedDrumValues(int32_t* slot) {
-  *slot = -1;
-  return nullptr;
-}
-void Save(int32_t, const int16_t*) {}
-int16_t* MasterValues() { return sim_master_values; }
-}  // namespace
-#else
-namespace {
-
-int32_t EditedSlot() {
-  const int32_t slot = Read<int32_t>(kCurrentSlot);
-  if (slot < 0 || slot >= kNumSlots) return -1;
-  if (Read<int32_t>(kSynthPage) != kFxPage) return -1;
-  if (Read<int32_t>(kSlotFxTypes + slot * 4) != kPhoneType) return -1;
-  return slot;
-}
-
-int16_t* EditedValues(int32_t* slot) {
-  *slot = EditedSlot();
-  return *slot >= 0 ? SlotValues(*slot) : nullptr;
-}
-
-// The drum kit being edited, as kNumSlots + its index, if its FX page is
-// shown and its effect is phone; else -1.
-int32_t EditedDrum() {
-  const int32_t drum = Read<int32_t>(kEditedDrum);
-  if (drum < 0 || drum >= kNumDrums) return -1;
-  if (Read<int32_t>(kDrumPage) != kFxPage) return -1;
-  if (Read<int32_t>(kDrumFxTypes + drum * 4) != kPhoneType) return -1;
-  return kNumSlots + drum;
-}
-
-int16_t* EditedDrumValues(int32_t* slot) {
-  *slot = EditedDrum();
-  return *slot >= 0 ? SlotValues(*slot) : nullptr;
-}
-
-// Saved with the preset as the stock knob handlers save the effect values
-// (synth 0x1a50690, drum 0x19775b4: the drum kits' Patch objects follow
-// the synth slots').
-void Save(int32_t slot, const int16_t* values) {
-  reinterpret_cast<SetValuesFn>(kSetFxValues)(reinterpret_cast<void*>(kPatches + slot * kPatchSize),
-                                              values);
-}
-
-// The master page shows the effect, and the master effect is phone (by
-// its object's vtable: where the master effect's type is kept isn't known
-// yet).
-int16_t* MasterValues() {
-  if (Read<int32_t>(kMasterSubscreen) != kMasterFxSubscreen) return nullptr;
-  const uint32_t object = Read<uint32_t>(kFxProducers + 2 * 4);
-  if (!object || Read<uint32_t>(object) != kPhoneStereoVtable) return nullptr;
-  return reinterpret_cast<int16_t*>(kMasterFxValues);
-}
-
-}  // namespace
-
-bool SynthFxPageIsPhone() { return EditedSlot() >= 0; }
-bool DrumFxPageIsPhone() { return EditedDrum() >= 0; }
-bool MasterFxPageIsPhone() { return MasterValues() != nullptr; }
-#endif
-
-namespace {
-
-// A click on a position's values: whether it was consumed, and in *changed
-// whether the values changed (to be saved).
-bool ClickOn(Instance* in, int16_t* values, Click click, int32_t direction, bool* changed) {
+// blue = next mode (shift: back), green = freeze, white = page.
+bool EngineClick(int32_t position, int16_t* values, const EncoderRange* ranges, op1fx::Click click,
+                 int32_t direction, bool* changed) {
   *changed = false;
-  if (click == CLICK_ORANGE) {
-    op1clouds::ToggleEngine(values);
-    *changed = true;
-    return true;
-  }
-  if (op1clouds::DecodeSettings(values).engine != op1clouds::FX_CLOUDS) return false;
   switch (click) {
-    case CLICK_BLUE:
+    case op1fx::CLICK_BLUE:
       op1clouds::StepMode(values, direction);
       break;
-    case CLICK_GREEN:
+    case op1fx::CLICK_GREEN: {
       // Freeze isn't saved: it holds the live buffer.
+      Instance* in = InstanceAt(position);
       in->freeze = !in->freeze;
       return true;
-    case CLICK_WHITE:
-      op1clouds::SwapPage(Ranges(), values);
+    }
+    case op1fx::CLICK_WHITE:
+      op1clouds::SwapPage(ranges, values);
       break;
     default:
       return false;
@@ -475,61 +282,27 @@ bool ClickOn(Instance* in, int16_t* values, Click click, int32_t direction, bool
 
 }  // namespace
 
-bool SynthFxClick(Click click, int32_t direction) {
-  int32_t slot;
-  int16_t* values = EditedValues(&slot);
-  if (!values) return false;
-  bool changed;
-  const bool consumed = ClickOn(&synth_fx, values, click, direction, &changed);
-  if (changed) Save(slot, values);
-  return consumed;
-}
+namespace op1clouds {
 
-bool DrumFxClick(Click click, int32_t direction) {
-  int32_t slot;
-  int16_t* values = EditedDrumValues(&slot);
-  if (!values) return false;
-  bool changed;
-  const bool consumed = ClickOn(&synth_fx, values, click, direction, &changed);
-  if (changed) Save(slot, values);
-  return consumed;
-}
-
-// The master's values are the live array its state is kept in; its knob
-// case writes them the same way, with no save call of its own.
-bool MasterFxClick(Click click, int32_t direction) {
-  int16_t* values = MasterValues();
-  if (!values) return false;
-  bool changed;
-  return ClickOn(&master_fx, values, click, direction, &changed);
-}
-
-bool GetScreenInfo(int32_t position, int32_t index, ScreenInfo* info) {
-  const int16_t* values;
+const op1fx::Engine kCloudsEngine = {
+  kCloudsEngineId, "clouds.svg", EngineProcess, MigrateSettings, EngineStop, EngineEnter, EngineClick,
 #ifdef OP1_SIM
-  values = position == 3 ? sim_master_values : sim_synth_values;
-  (void)index;
+  nullptr, nullptr,   // no screen in the simulator
 #else
-  if (position == 3) {
-    values = reinterpret_cast<const int16_t*>(kMasterFxValues);
-  } else if (position == 0 && index >= 0 && index < kNumSlots) {
-    values = SlotValues(index);
-  } else if (position == 1 && index >= 0 && index < kNumDrums) {
-    values = SlotValues(kNumSlots + index);
-  } else {
-    return false;
-  }
+  ScreenInit, ScreenUpdate,
 #endif
-  const FxSettings s = op1clouds::DecodeSettings(values);
-  if (s.engine != op1clouds::FX_CLOUDS) return false;
-  const Instance* in = position == 3 ? &master_fx : &synth_fx;
+};
+
+void GetScreenInfo(int32_t screen_position, const int16_t* encoders, const int16_t* values,
+                   const op1fx::EncoderRange* ranges, ScreenInfo* info) {
+  const FxSettings s = DecodeSettings(values);
+  const Instance* in = screen_position == op1fx::kScreenMaster ? &master_fx : &synth_fx;
   info->page = s.page;
-  info->mode = op1clouds::kModeOrder[s.mode_index];
+  info->mode = kModeOrder[s.mode_index];
   info->freeze = in->freeze;
-  op1clouds::ParamValues(Ranges(), values, s, info->values);
-  info->pitch_q16 = op1clouds::PitchQ16(info->values[2]);
+  ParamValues(ranges, encoders, s, info->values);
+  info->pitch_q16 = PitchQ16(info->values[2]);
   info->load_percent = in->running ? static_cast<int32_t>(in->own_avg / (kNominalPeriod / 100)) : 0;
-  return true;
 }
 
-}  // namespace op1fx
+}  // namespace op1clouds

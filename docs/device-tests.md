@@ -1330,3 +1330,241 @@ The clean case is the documented limit: the engine stays as it is, the user pick
 4. Note anything odd: a stuck note, a run that doesn't stop, the first note late.
 
 **If something is wrong:** power off; flash seq13 through the te-boot menu, or recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1`.
+
+## Test 37: effect categories, Clouds in reverb (`op1_246_rings_fx1.op1`)
+
+**Not flashed yet.** seq14 plus the first step of the effect categories (the user's decision, 2026-10-19; `docs/fx-categories.md`). No new effect yet: this build proves the host, the renames and the Clouds move.
+- **The FX list shows the categories:** spring as **reverb**, cwo as **modulation**, punch as **dirt**; delay keeps its name; phone is **phone** again (not "multi"). The stored names are unchanged, so presets and saves keep the stock names.
+- **Phone is stock phone only.** Clouds is no longer on it.
+- **Clouds is an engine of reverb:** on the reverb (spring) FX page, the orange click steps spring → Clouds → spring (shift: back). Entering Clouds starts it afresh in granular, page 1. Clouds' clicks are unchanged (blue mode, green freeze, white page). Its encoders now use spring's ranges, so the knobs' travel can feel slightly different.
+- **Factory presets stay stock:** the engine marker is `values[4]` bit 15, which no stock preset sets. A step back to spring puts spring's factory values in `values[4..7]`.
+- **Not carried over:** slots saved with Clouds on phone open as plain phone.
+- Encoder-click releases are swallowed only when the press was ours (before: every click release on a phone FX page).
+- Checks: `sim-fx` passes, its seven checksums identical to the phone-hosted build's on phone's ranges (the move doesn't change the sound); marker, orange cycle and master click tests added. `op1-seq` and `op1-cpuprobe` build with no undefined symbols and no constructors. The 36 word hooks are function starts, and the spring words match stock in the dump. `verify_bootloader.py` passes. Against seq14 only `OP1_vdk.ldr` differs.
+
+**Procedure:**
+1. **The list:** open an effect list (synth FX, drum FX, master FX). Do "reverb", "modulation" and "dirt" fit and read correctly? Is "modulation" cut off? A photo, please.
+2. **Stock is stock:** pick reverb, modulation, dirt and delay in turn. Each should show and sound exactly like stock spring, cwo, punch and delay. Phone too.
+3. **Clouds on the synth:** synth FX = reverb, orange click. The Clouds screen should appear and Clouds should play (granular). Check blue, green and white as before. Orange again: back to the spring screen and sound.
+4. **Clouds on the master:** master FX = reverb, orange click, and the same checks. Also the drum FX page.
+5. **Persistence:** with Clouds on a synth slot, switch slots and come back, then power-cycle. Does the slot come back as Clouds? Same question for the master.
+6. **LFO:** with an effect LFO on the synth, does reverb/Clouds stay Clouds? (Spring's LFO range reaches the marker words; we read the stored values to avoid that.)
+7. Note anything odd: a crash on the reverb page, a wrong screen, clicks doing the wrong thing.
+
+**If something is wrong:** power off; flash seq14 through the te-boot menu, or recovery: hold COM at power-on and flash `op1_246_rings_clouds4.op1`.
+
+**Result (the user, 2026-10-19):**
+1. Everything fits nicely in the list.
+2. Reverb, modulation, dirt and delay sound the same as stock.
+3. Clouds works on reverb.
+4. A Clouds slot persists.
+5. **Assigning an effect LFO with Clouds as the effect crashed the OP-1, and since then it doesn't boot:** "Invalid synth patch phase:classic … error 24". An LFO on the effect by itself was fine. Separately, the LFO didn't animate the Clouds screen.
+
+**Why:**
+- **error 24 is the synth patch check's effect-value range test** (`patch.cpp:390`, check `0x1a037a8`). For each of the 8 effect values it calls `0x1a1df4e(type, k, &value)`, which tests the FX Ranges table (`0x1de5c50`). The first failure returns 24, and the caller stops in the fatal-error handler `0x1919aa8`, which disables interrupts, prints and halts.
+- **fx1's marker set bit 15 of `values[4]`, a negative value, outside spring's 0..32767 for `values[4..7]`.** So any synth slot saved with Clouds fails the check at boot. The LFO assignment most likely went through the same check when the patch was saved.
+- **No animation:** the mono entry read the slot's stored values for everything, so the effect LFO's modulated copy (`0xff801724`) never reached Clouds' sound or screen.
+
+## Test 38: recovery and the in-range marker (`op1_246_rings_fx2.op1`)
+
+**Not flashed yet.** fx1 with three fixes:
+- **The patch check no longer rejects effect values.** One instruction in the check's loop, `CC = R0 == 0` at `0x1a040ac` (`0x0c00`), becomes `CC = R0 < R0` (`0x0880`, never true). It's a new patch kind (`kHalf16`, `tools/inject_app.py` "insn16"); the LDR's bytes were disassembled before and after. **This is what lets the OP-1 boot again with the saved slot.** It's the first instruction patch of SDRAM code; immediate patches of SDRAM code are proven (the list query).
+- **The marker stays within 0..32767:** `values[4]` bits 12-14 = 6 (0x6000..0x6fff), bits 8-11 the engine id. Factory values (0, 4000, 8000) don't match it. Clouds' settings are repacked so every word stays in range (`clouds_settings.h`); the precision is the same, except the hidden page's fourth value, which keeps 11 bits.
+- **fx1's values are converted** wherever the host meets them: Clouds keeps its mode, page and hidden values; anything else becomes stock spring. The conversion is in RAM: the next knob turn or click on that slot's FX page saves it. Until then the old values stay in the database, which the patched check now accepts.
+- **The effect LFO reaches Clouds:** the encoders come from the passed (LFO) copy; the engine and settings still come from the stored values. The screen shows the encoders as last played.
+- Checks: `sim-fx` passes with its seven checksums unchanged. New tests: the marker within range, the scenario encoding round trip, and fx1's values migrated (Clouds kept; an unknown engine becomes stock). `op1-seq` and `op1-cpuprobe` build with no undefined symbols and no constructors. The 36 word hooks are function starts. `verify_bootloader.py` passes. Against seq14 only `OP1_vdk.ldr` differs.
+
+**Procedure:**
+1. Hold COM at power-on and flash fx2 through the te-boot menu ("1. Upload firmware"). **Does it boot?** If it stops with another "Invalid … patch" message, photograph it and stop there.
+2. Go to the slot that had Clouds: is it still Clouds (reverb, Clouds screen)? Turn a knob on its FX page once (that saves the converted values), then power-cycle: does it boot and stay Clouds?
+3. **The LFO:** on that synth, assign an effect LFO. Does Clouds' screen move with the LFO (position, size, pitch or density, whichever it modulates)? Does it sound modulated? No crash?
+4. Repeat 3 with stock spring (reverb, orange back to spring) to make sure the LFO on spring still works.
+5. If you used Clouds on the drum or master FX in Test 37, check those boot and play too.
+
+**If something is wrong:** power off; hold COM at power-on and flash fx2 again. **Until the slot has been re-saved (step 2), only fx2 boots:** stock, clouds4 and seq14 all have the original patch check, so the saved slot would stop their boot too. The fallback beyond that would be te-boot's factory reset, which also wipes the display gamma files (`docs/brick-safety.md`): ask first.
+
+**Result (the user, 2026-10-19):** 1. Boots. 2. The slot is still Clouds and survives a power cycle after a knob turn. 3. The Clouds screen follows the LFO and the sound is modulated, with no crash. 4. The LFO on spring works. 5. Everything is working correctly. **fx2 is the new baseline**, and the user's database has been re-saved, so builds with the stock patch check boot again.
+
+## Test 39: plate (reverb) and crush (dirt) (`op1_246_rings_fx3.op1`)
+
+**Not flashed yet.** fx2 plus the first two new engines.
+- **Plate** (reverb: spring → plate → clouds): Dattorro's figure-of-eight plate at 22.05 kHz behind Clouds' halfband filters (`ports/fx/src/plate/`, `docs/plate-port.md`; five assembly kernels, bit-exact against C).
+  - Page 1: blue decay, green damp, white pre-delay (0–200 ms), orange mix.
+  - Page 2: blue size (8 steps), green diffusion, white motion, orange low cut.
+  - Clicks: white swaps the pages, green freezes (not saved).
+  - Mix 0 is exactly the dry signal and mix 1 the wet, equal power between. Clouds' crossfade, in contrast, has the dry at −3 dB at its mix 0.
+- **Crush** (dirt: punch → crush): sample-rate and bit reduction at 44.1 kHz.
+  - Blue: rate, 44.1 kHz → 500 Hz.
+  - Green: bits, 16 → 2.
+  - White: jitter.
+  - Orange: mix.
+  - No clicks apart from orange.
+- **Simulated cost:**
+
+  | Engine | Stereo | Mono |
+  |---|---|---|
+  | Plate | 11.4 MHz | 8.3 MHz |
+  | Crush | 2.5 MHz | 2.4 MHz |
+
+  - About 5.3 MHz of the plate's stereo cost is the half-rate resampling and the mix, the same as Clouds'.
+  - The device has cost Clouds 2–4× its simulated figure (cold caches, Tests 30–31), so the plate may well need 20–40 MHz on the master.
+- **Checks:**
+  - `sim-fx` passes with Clouds' seven checksums unchanged. New tests:
+    - plate: the restart call and mix 0 are dry, a burst leaves a tail (mono and stereo), and two page swaps round-trip in range;
+    - the orange click cycles stock → plate → Clouds on the synth and the master.
+  - `op1-seq` and `op1-cpuprobe` build with no undefined symbols and no constructors.
+  - The image ends at about 1.27 MB of region A's 4 MB.
+  - All 42 hook targets are symbols in the image.
+  - `verify_bootloader.py` passes.
+  - Against fx2, only `OP1_vdk.ldr` differs, and `content/display/plate.svg` and `crush.svg` are added.
+
+**Procedure:**
+1. Hold COM at power-on and flash fx3 through the te-boot menu. **Does it boot?** Is the Clouds slot from Test 38 still Clouds?
+2. **Plate on a synth:** FX page → reverb, orange click once (spring → plate). Does the plate screen show, with the engine dots on the second dot?
+   - **Page 1:** turn each knob. Do the tail (blue decay), the highs' envelope (green damp), the gap before the tail (white pre-delay) and the mix bar follow? Do they sound as named?
+   - Mix fully down: is the sound exactly dry, with no level drop?
+3. **Page 2:** white click.
+   - Does the page indicator move, and do size, diffusion ticks, motion and low cut show and act?
+   - On a size step there is a deliberate dip of about 30 ms in the wet signal. Is it smooth, or a click?
+   - White again: is page 1 back as you left it?
+4. **Freeze:** green click. Does the indicator turn green and the tail hold indefinitely? Click again to release.
+5. **Loudness:** decay near the top with a loud held chord. Does it get harsh or distorted? The core saturates above about −10 dBFS input at decay > .9; tell me how it sounds.
+6. **Master:** plate on the master FX. Does it play cleanly with a few synth voices? Any crackle?
+7. **Crush:** a synth FX page → dirt, orange click once (punch → crush). Do rate, bits, jitter and mix sound and show as named? Shift + orange: back to punch?
+8. **Cycling and saving:**
+   - Orange on the reverb: spring → plate → clouds → spring.
+   - Leave a slot on plate (page 2 shown) and another on crush, then power-cycle. Do both come back as left?
+9. **LFO:** an effect LFO on the plate. Does the screen follow, with no crash?
+
+**If something is wrong:** power off; hold COM at power-on and flash fx2 again. fx2 has the same patch check and marker. A slot saved on plate loads there as stock spring, because fx2's reverb host turns an unknown engine into stock. fx2 has no dirt host, so a slot saved on crush would give stock punch crush's words in `values[4..7]`. If fx3 still runs, switch such slots back to punch before going back.
+
+## Test 40: one new engine per build (`op1_246_rings_fx4.op1` … `fx10.op1`)
+
+**Not flashed yet.** Each build is the previous one plus one engine, so the first build that misbehaves names the engine at fault. **Do Test 39 (fx3) first.**
+
+| Build | Adds | Category (orange order) |
+|---|---|---|
+| fx4 | **drive** | dirt: punch → drive → crush |
+| fx5 | **ensemble** | modulation: cwo → ensemble |
+| fx6 | **hall** | reverb: spring → plate → hall → clouds |
+| fx7 | **fold** | dirt: punch → drive → fold → crush |
+| fx8 | **shift** | modulation: cwo → ensemble → shift |
+| fx9 | **tape** (saturation) | dirt: punch → drive → tape → fold → crush |
+| fx10 | **tape echo** | delay: delay → tape echo (all nine engines) |
+
+Tape's screen is `tapesat.svg`, because the stock `tape.svg` is the tape screen's own and must not be replaced (the packaging now refuses any stock name).
+
+**New in all of them: cwo and delay are hosted.** Their process and screen words now go through the host (8 new hooks). With no engine selected they call the stock code, so stock **cwo and delay must look and sound exactly as before**, on the synth, drum and master FX. That's step 1 of each build's test.
+
+**Simulated cost** (whole engine; the half-rate ones include about 5.3 MHz stereo for resampling and mixing):
+
+| Engine | Stereo | Mono | Rate |
+|---|---|---|---|
+| drive | 3.6 MHz | 2.6 MHz | 2× oversampled |
+| ensemble | 8.2 MHz | 4.6 MHz | half |
+| hall | 11.9 MHz | 8.7 MHz | half |
+| fold | 3.5 MHz | 2.4 MHz | ADAA at 1× |
+| shift | 4.9 MHz | 3.8 MHz | full |
+| tape | 5.2 MHz | 3.2 MHz | 2× oversampled |
+| tape echo | 9.2 MHz | 5.9 MHz | half |
+
+The device has cost 1.5–4× the simulated figures.
+
+**Checks, every build:**
+- `sim-fx` passes for each engine on its host: mix 0 gives the dry signal (bit-exact for drive, fold and shift), mix 1 changes the sound, each engine is within its budget, and the orange click steps through the engines in order. Clouds' seven checksums are unchanged.
+- No undefined symbols and no constructors.
+- All 50 hook targets are symbols in the image, and the image ends below `0x02da0800`.
+- `verify_bootloader.py` passes.
+- Against fx2, only `OP1_vdk.ldr` and the engines' SVGs differ.
+
+**Procedure, per build** (flash with COM held at power-on, te-boot menu):
+1. **Boot and stock:** does it boot? Do stock cwo, delay, punch and spring sound and look unchanged?
+2. **The new engine:** find it by orange clicks in its category. Does its screen show, with its engine dot lit?
+   - Do the four knobs act and show as named?
+   - Mix fully down: is the sound exactly dry?
+3. **Its clicks:**
+   - **hall:** white swaps pages; green freezes (decay at the top shows ∞ too).
+   - **shift:** blue toggles frequency shift ↔ ring mod; the arrow and ring icons light in turn.
+   - **tape echo:** blue steps the head pattern (head 3; 2+3; 1+2+3; 1+3; shift: back), and the lit heads follow. Green holds: the loop turns green and the input is cut.
+4. **Master:** put it on the master FX with a few voices playing. Any crackle?
+5. **Save:** leave a slot on it and power-cycle. Does it come back?
+
+**Per-engine things to listen and look for:**
+- **drive:** the wet lags the dry by 9 samples, so at a partial mix and low drive there can be a slight comb (first notch about 2.5 kHz). Is it audible? Tone is a tilt drawn as a line through a pivot. The screen flips that line with a negative scale; if the line vanishes or draws wrong at a dark setting, tell me.
+- **ensemble:** mix 50% is the classic chorus; 100% is pure vibrato. Voices up = ensemble, about 2–4 dB quieter. Is it wide on the master?
+- **hall:** size is 16 steps, crossfaded rather than muted. Do size changes sound smooth? At infinite decay (the top) with input still coming in, the tail builds until it saturates, by design.
+- **fold:** the level is only roughly compensated: quiet input comes up and hot input goes down at high fold.
+- **tape:** wobble is wow at the bottom of the knob and flutter at the top (about 17 cents peak). Age darkens it, with a small bump at 90 Hz and no hiss. The screen's reels shake with the wobble. Also check that the stock **tape** screen (the tape page) still looks normal.
+- **tape echo:** 30 ms – 1.5 s. Turning time while it repeats should bend the pitch like tape, with no clicks. Feedback self-oscillates above about 0.9 of the knob, and age adds wow, darkening and drive. At full feedback with age 0, the wet can carry a small steady DC; it's bounded.
+- **shift:** ring mode is about 6 dB quieter than shift mode. Fine near 0 Hz (the knob is cubic: ±2 kHz at the ends).
+
+**If something is wrong:** power off; hold COM at power-on and flash the previous build (fx3 back to fx2). Slots saved on an engine a build doesn't have load as that category's stock effect. The engine's words stay in `values[4..7]`, and only spring is known to ignore them, so where the newer build still runs, click such slots back to stock first.
+
+**Results (2026-10-20, the user):**
+- **fx3:** crush is perfect. Plate sounds great, but its freeze icon renders strangely. Both work on synth and master.
+- **fx4:** drive sounds great. Its white (tone) line looks strange; the user will revisit it in the design.
+- **fx5:** ensemble looks and sounds great; the green (depth) bar renders slightly wrong.
+- **fx6:** hall is perfect, apart from the green early-reflections icon.
+- **fx7:** fold is perfect.
+- **fx8:** shift sounds great, but most of its elements render wrong.
+- **fx9:** **doesn't boot**: "Can't find SVG object 'track1'". The package on disk was the first fx9 attempt, which had replaced the stock `tape.svg` with the tape engine's. The rebuild with `tapesat.svg` had been refused because `build_package.py` won't overwrite an existing file, and the check of its output was missed. All the other packages match their work dirs; fx9 was rebuilt, and the packaging now removes the old package and compares the package's contents with the work dir.
+- **Overall:** an engine's settings were lost when the orange click moved away from it and back: each engine started afresh at its defaults.
+- **Rendering cause:** every element reported is a polyline that **doubles straight back on itself**: the snowflakes (plate, hall), the early stems (hall), the H bars (ensemble depth, shift spread), shift's comb and arrow. The OP-1 draws those wrong. Fold's sharpest turns (27°) draw correctly. tapesat's reels had one too (not seen, fx9 didn't boot).
+- fx10 not flashed.
+
+## Test 41: settings kept per engine, redrawn shapes (`op1_246_rings_fx11.op1`, `fx12.op1`)
+
+**Not flashed yet.** fx11 is fx9's set (everything except tape echo); fx12 has all nine engines. Both add:
+- **Each engine remembers its settings.** Every synth slot, drum kit and the master keeps each engine's values, stock's too, while the OP-1 is on. The orange click brings them back. An engine not played since power-up starts at its defaults. Only the shown engine's values are saved with the preset, so after a power cycle the others start afresh. Loading another preset into a slot doesn't clear what the slot remembers for its other engines.
+- **No stroke doubles back.** The stems are 1 px wide (up, across, down); freeze is a six-pointed star; the depth and spread bars are thin outlined bars; shift's arrow has an outlined head; the tape reels' hubs are triangles. `gen_fx_svg.py` now refuses any turn under 10°.
+
+Checks: sim-fx passes (with new checks: Clouds' values and stock's knob come back after orange clicks). No undefined symbols, 50/50 hooks, `verify_bootloader.py` PASS, each package's contents identical to its work dir, the stock `tape.svg` intact.
+
+**Procedure:**
+1. **fx11 boots** (fx9's failure). Is the stock **tape** page normal?
+2. **Settings:** on a synth slot, set plate's knobs, orange to hall, change those, orange back: plate as you left it? On to stock spring: its knobs as they were? The same on the master.
+3. **Shapes:** plate and hall's freeze star (green when frozen), hall's early stems, ensemble's depth bar, shift's comb, spread bar and arrow. Do they draw cleanly?
+4. **Tape** (dirt, fx11): the Test 40 tape notes; the reels shake with wobble.
+5. **fx12:** tape echo, the Test 40 notes and procedure.
+
+**If something is wrong:** COM at power-on, flash fx8 (good in Test 40).
+
+**Result (2026-10-20, the user):** "everything is looking amazing".
+
+## Test 42: the beta, with op1repacker's mods (`op1_246_beta.op1`)
+
+**Not flashed yet.** fx12 (the same `OP1_vdk.ldr`) plus three of op1repacker 0.2.6's content-only mods, applied to a copy of fx12's work dir (`op1repacker modify work_beta --options iter presets-iter filter gfx-tape-invert`):
+- **iter:** the `synth_types` row (11, 'iter'). The hidden engine is playable.
+- **presets-iter:** 11 community iter presets (folder `iter`). Non-sampler factory presets total 171, within the 176 budget. Their effects are filter ×5, phone ×3, punch ×2 and cwo ×1, all with stock values (none carries the engine marker), so they play as stock dirt and modulation.
+- **filter:** the `fx_types` row (2, 'filter'). It shows as "filter"; it isn't hosted.
+- **gfx-tape-invert** ("tape at the top"): `tape.svg` moved by the tool's patch. It is well-formed XML with the same ids as stock.
+
+The conflicts noted in `docs/next-projects.md` are gone: Rings lives on phase, not iter, and Clouds lives in reverb, not filter.
+
+Checks: against fx12 only `op1_factory.db` and `tape.svg` differ; `verify_bootloader.py` PASS; the package's contents are identical to `work_beta`.
+
+**Procedure:** boot; the tape page has the tape at the top (and still works: record, play, loop); iter is in the synth list with its 11 presets; filter is in the effect list on synth and master; the categories and Rings/Clouds/Marbles/Grids as in fx12.
+
+**If something is wrong:** COM at power-on, flash fx12.
+
+## Test 43: the aligned module screens (`op1_246_beta2.op1`)
+
+**Not flashed yet.** beta2 = fx13 (all nine engines, with the redesigned Rings, Clouds, Marbles and Grids screens from `docs/module-briefs/designs/`, approved by the user 2026-10-20) plus the same op1repacker mods as beta (identical `op1_factory.db` and `tape.svg`). Each module's code was updated to the new ids. The device SVGs are generated by `ports/fx/op1/gen_fx_svg.py` with 0 warnings and hold every id the code looks up. Host tests pass: sim-fx (Clouds' checksums unchanged), sim-grids, Marbles' sim-seq and test, and Rings' screen maths. Packaging: 50/50 hooks, no undefined symbols, `verify_bootloader.py` PASS, and the package's contents are identical to `work_beta2`. Clouds' CPU meter is gone from the screen.
+
+**Procedure:** boot. Then on each screen:
+- Rings: the model dots (blue click) and the voice ticks (green click); brightness and damping fill as bars; position dot.
+- Clouds (reverb, 4th dot): the mode dots, page squares, freeze star, position across the width, pitch.
+- Marbles: the page squares, the moving model/scale dot, marks and brackets.
+- Grids: the dot and the assign arrow move (group transforms), the state icons, the bars.
+
+Look for anything static or misplaced.
+
+**If something is wrong:** COM at power-on, flash `op1_246_beta.op1`.
+
+## Test 44: drive's valve (`op1_246_beta3.op1`)
+
+**Not flashed yet.** beta3 = beta2 with drive's white bias line replaced by a valve (`docs/fx-briefs/designs/drive-valve.md`, approved 2026-10-20). As bias rises, the filament and glow blend from cold to hot, and up to three heat lines appear. The blend goes byte by byte between colours read from the file: cold from eng0's dim line and fill, hot from the valve's envelope (new id `envelope`). It doesn't depend on the style's byte order. This is the first screen that writes computed in-between colours. Against beta2 only `OP1_vdk.ldr` and `drive.svg` differ. Checks: 50/50 hooks, no undefined symbols, `verify_bootloader.py` PASS, and the package's contents are identical to `work_beta3`.
+
+**Procedure:** dirt → drive. Turn white from 0 to the top: does the filament go from dim to white, the glow build, and the heat lines appear one by one (at 1/4, 1/2 and 3/4)? Everything else on drive is as before. If the colours come out wrong (odd hues, flicker), the fallback is 5 fixed steps (drive-valve.md).
+
+**If something is wrong:** COM at power-on, flash `op1_246_beta2.op1`.

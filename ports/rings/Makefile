@@ -110,10 +110,12 @@ $(BUILD)/op1_fxprobe.elf: $(OP1_ENGINE_SRC) op1/fx_probe.cc $(OP1_HDR) op1/link.
 #   make op1-clouds   the engine plus Clouds on the phone effect
 #                     (../clouds/op1/clouds_fx.cc) -> build/op1_clouds.elf
 CLOUDS := ../clouds
-CLOUDS_SRC := $(CLOUDS)/op1/clouds_fx.cc $(CLOUDS)/op1/clouds_screen.cc $(CLOUDS)/src/core/clouds_core.cc               $(CLOUDS)/src/core/granular_player.cc $(CLOUDS)/src/core/reverb_stereo.cc               $(CLOUDS)/src/core/diffuser_fixed.cc $(CLOUDS)/src/core/clouds_tables.cc $(CLOUDS)/src/core/halfband.cc               $(CLOUDS)/src/core/grain_kernels_bfin.S $(CLOUDS)/src/core/reverb_stereo_bfin.S               $(CLOUDS)/src/core/diffuser_bfin.S $(CLOUDS)/src/core/halfband_bfin.S
-CLOUDS_HDR := $(wildcard $(CLOUDS)/op1/*.h $(CLOUDS)/src/core/*.h)
+FX_DIR := ../fx
+include ../fx/engines.mk
+CLOUDS_SRC := $(FX_SRC) $(CLOUDS)/op1/clouds_fx.cc $(CLOUDS)/op1/clouds_screen.cc $(CLOUDS)/src/core/clouds_core.cc               $(CLOUDS)/src/core/granular_player.cc $(CLOUDS)/src/core/reverb_stereo.cc               $(CLOUDS)/src/core/diffuser_fixed.cc $(CLOUDS)/src/core/clouds_tables.cc $(CLOUDS)/src/core/halfband.cc               $(CLOUDS)/src/core/grain_kernels_bfin.S $(CLOUDS)/src/core/reverb_stereo_bfin.S               $(CLOUDS)/src/core/diffuser_bfin.S $(CLOUDS)/src/core/halfband_bfin.S
+CLOUDS_HDR := $(wildcard $(CLOUDS)/op1/*.h $(CLOUDS)/src/core/*.h) $(FX_HDR)
 $(BUILD)/op1_clouds.elf: $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(OP1_HDR) $(CLOUDS_HDR) op1/link.ld $(PORT_HDR) | $(BUILD)
-	$(BFIN_CXX) $(OP1_CXXFLAGS) -I$(CLOUDS) -I.. -Wno-class-memaccess -DOP1_CLOUDS -DOP1CLOUDS_SAMPLE_RATE=22050 	  $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
+	$(BFIN_CXX) $(OP1_CXXFLAGS) -I$(CLOUDS) -I.. -Wno-class-memaccess -DOP1_CLOUDS $(FX_FLAGS) -DOP1CLOUDS_SAMPLE_RATE=22050 	  $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
 	$(BFIN_BIN)/bfin-elf-size -A $@
 
 op1-probe: $(BUILD)/op1_probe.elf
@@ -124,7 +126,7 @@ op1-clouds: $(BUILD)/op1_clouds.elf
 #   make op1-seqprobe the Clouds image plus the tombola sequencer probe
 #                     (op1/seq_probe.cc) -> build/op1_seqprobe.elf
 $(BUILD)/op1_seqprobe.elf: $(OP1_ENGINE_SRC) $(CLOUDS_SRC) op1/seq_probe.cc $(OP1_HDR) $(CLOUDS_HDR) op1/link.ld $(PORT_HDR) | $(BUILD)
-	$(BFIN_CXX) $(OP1_CXXFLAGS) -I$(CLOUDS) -I.. -Wno-class-memaccess -DOP1_CLOUDS -DOP1CLOUDS_SAMPLE_RATE=22050 -DOP1_SEQ_PROBE 	  $(OP1_ENGINE_SRC) $(CLOUDS_SRC) op1/seq_probe.cc $(OP1_LDFLAGS) -o $@ -lgcc
+	$(BFIN_CXX) $(OP1_CXXFLAGS) -I$(CLOUDS) -I.. -Wno-class-memaccess -DOP1_CLOUDS $(FX_FLAGS) -DOP1CLOUDS_SAMPLE_RATE=22050 -DOP1_SEQ_PROBE 	  $(OP1_ENGINE_SRC) $(CLOUDS_SRC) op1/seq_probe.cc $(OP1_LDFLAGS) -o $@ -lgcc
 	$(BFIN_BIN)/bfin-elf-size -A $@
 
 op1-seqprobe: $(BUILD)/op1_seqprobe.elf
@@ -135,7 +137,7 @@ MARBLES := ../marbles
 MARBLES_SRC := $(MARBLES)/op1/marbles_op1.cc $(MARBLES)/op1/marbles_seq.cc                $(MARBLES)/src/t_generator_fx.cc $(MARBLES)/src/x_y_generator_fx.cc                $(MARBLES)/src/output_channel_fx.cc $(MARBLES)/src/quantizer_fx.cc $(MARBLES)/src/tables_fx.cc
 MARBLES_HDR := $(wildcard $(MARBLES)/op1/*.h $(MARBLES)/src/*.h)
 $(BUILD)/op1_marbles.elf: $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(OP1_HDR) $(CLOUDS_HDR) $(MARBLES_HDR) op1/link.ld $(PORT_HDR) | $(BUILD)
-	$(BFIN_CXX) $(OP1_CXXFLAGS) -I$(CLOUDS) -I$(MARBLES) -I.. -Wno-class-memaccess -DOP1_CLOUDS -DOP1CLOUDS_SAMPLE_RATE=22050 	  -DOP1_MARBLES $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
+	$(BFIN_CXX) $(OP1_CXXFLAGS) -I$(CLOUDS) -I$(MARBLES) -I.. -Wno-class-memaccess -DOP1_CLOUDS $(FX_FLAGS) -DOP1CLOUDS_SAMPLE_RATE=22050 	  -DOP1_MARBLES $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
 	$(BFIN_BIN)/bfin-elf-size -A $@
 
 op1-marbles: $(BUILD)/op1_marbles.elf
@@ -146,7 +148,7 @@ GRIDS := ../grids
 GRIDS_SRC := $(GRIDS)/op1/grids_op1.cc $(GRIDS)/op1/grids_seq.cc $(GRIDS)/src/pattern_generator.cc              $(GRIDS)/src/drum_sequencer.cc $(GRIDS)/src/grids_tables.cc
 GRIDS_HDR := $(wildcard $(GRIDS)/op1/*.h $(GRIDS)/src/*.h)
 $(BUILD)/op1_seq.elf: $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(GRIDS_SRC) $(OP1_HDR) $(CLOUDS_HDR) $(MARBLES_HDR) $(GRIDS_HDR) op1/link.ld $(PORT_HDR) | $(BUILD)
-	$(BFIN_CXX) $(OP1_CXXFLAGS) -I$(CLOUDS) -I$(MARBLES) -I$(GRIDS) -I.. -Wno-class-memaccess -DOP1_CLOUDS 	  -DOP1CLOUDS_SAMPLE_RATE=22050 -DOP1_MARBLES -DOP1_GRIDS 	  $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(GRIDS_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
+	$(BFIN_CXX) $(OP1_CXXFLAGS) -I$(CLOUDS) -I$(MARBLES) -I$(GRIDS) -I.. -Wno-class-memaccess -DOP1_CLOUDS $(FX_FLAGS) 	  -DOP1CLOUDS_SAMPLE_RATE=22050 -DOP1_MARBLES -DOP1_GRIDS 	  $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(GRIDS_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
 	$(BFIN_BIN)/bfin-elf-size -A $@
 
 op1-seq: $(BUILD)/op1_seq.elf
@@ -155,7 +157,7 @@ op1-seq: $(BUILD)/op1_seq.elf
 #                     white click on a Rings page = timing readout)
 CPU_PROBE_SRC := op1/cpu_probe.cc op1/mode_bank_old_bfin.S
 $(BUILD)/op1_cpuprobe.elf: $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(GRIDS_SRC) $(CPU_PROBE_SRC) $(OP1_HDR) $(CLOUDS_HDR) $(MARBLES_HDR) $(GRIDS_HDR) op1/link.ld $(PORT_HDR) | $(BUILD)
-	$(BFIN_CXX) $(OP1_CXXFLAGS) -I$(CLOUDS) -I$(MARBLES) -I$(GRIDS) -I.. -Wno-class-memaccess -DOP1_CLOUDS \
+	$(BFIN_CXX) $(OP1_CXXFLAGS) -I$(CLOUDS) -I$(MARBLES) -I$(GRIDS) -I.. -Wno-class-memaccess -DOP1_CLOUDS $(FX_FLAGS) \
 	  -DOP1CLOUDS_SAMPLE_RATE=22050 -DOP1_MARBLES -DOP1_GRIDS -DOP1_CPU_PROBE -DOP1CLOUDS_PROFILE \
 	  $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(GRIDS_SRC) $(CPU_PROBE_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
 	$(BFIN_BIN)/bfin-elf-size -A $@
@@ -236,10 +238,14 @@ $(BUILD)/test_screen_math: tests/test_screen_math.cc $(OP1_HDR) | $(BUILD)
 test-screen: $(BUILD)/test_screen_math
 	$<
 
-#   rings.svg for the package: the screen spec's SVG (incoming/rings.svg) with
-#   the ids op1/screen.cc needs (op1/gen_rings_svg.py)
-op1/rings.svg: op1/gen_rings_svg.py ../../incoming/rings.svg
-	$(PYTHON) op1/gen_rings_svg.py ../../incoming/rings.svg $@
+#   rings.svg for the package: the redesigned screen
+#   (docs/module-briefs/designs/rings.svg, drawn in the device subset) checked
+#   by the fx screens' generator for the ids op1/screen.cc needs. The old
+#   op1/gen_rings_svg.py (from incoming/rings.svg) is no longer used.
+RINGS_DESIGN  := ../../docs/module-briefs/designs/rings.svg
+RINGS_SVG_IDS := eng0,eng1,model0,model1,model2,model3,model4,model5,voice0,voice1,voice2,voice3,voice4,voice5,ring0,ring1,ring2,ring3,ring4,ring5,pluck0,pluck1,pluck2,pluck3,pluck4,pluck5,pluck6,pluck7,pluck8,pluck9,pluck10,pluck11,pluck12,pluck13,pluck14,pluck15,pluck16,pluck17,pluck18,pluck19,pluck20,pluck21,pluck22,pluck23,brightness,damping,posdot
+op1/rings.svg: ../fx/op1/gen_fx_svg.py $(RINGS_DESIGN)
+	$(PYTHON) ../fx/op1/gen_fx_svg.py $(RINGS_DESIGN) $@ --ids $(RINGS_SVG_IDS)
 
 #   make test-fm      the fixed-point FM voice against upstream's float FMVoice
 TEST_FM_SRC := tests/test_fm_voice.cc src/fm_voice_fixed.cc src/fixed_tables.cc \

@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OP-1 Effects Shortlist</title>
+<style>
+:root {
+  --bg: #f4f3ef; --panel: #ffffff; --ink: #1d1d1f; --muted: #66666e; --line: #dddcd6;
+  --blue: #2463d8; --green: #1f9d55; --white: #8a8a92; --orange: #e8590c;
+  --ok: #1f9d55; --warn: #c27c00; --bad: #c92a2a;
+  --chip: #efeee9; --bar: #e6e5df; --code: #f0efe9;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111114; --panel: #1b1b20; --ink: #ececf0; --muted: #9a9aa6; --line: #2c2c34;
+    --blue: #4c8dff; --green: #3fcf7f; --white: #e8e8ee; --orange: #ff7a2e;
+    --ok: #3fcf7f; --warn: #f0b429; --bad: #ff6b6b;
+    --chip: #25252c; --bar: #26262e; --code: #23232a;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111114; --panel: #1b1b20; --ink: #ececf0; --muted: #9a9aa6; --line: #2c2c34;
+  --blue: #4c8dff; --green: #3fcf7f; --white: #e8e8ee; --orange: #ff7a2e;
+  --ok: #3fcf7f; --warn: #f0b429; --bad: #ff6b6b;
+  --chip: #25252c; --bar: #26262e; --code: #23232a;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 1080px; margin: 0 auto; padding: 32px 16px 64px; }
+h1 { font-size: 30px; margin: 0 0 4px; letter-spacing: -0.02em; }
+h2 { font-size: 20px; margin: 44px 0 12px; letter-spacing: -0.01em; }
+h3 { font-size: 18px; margin: 0; }
+p { margin: 8px 0; }
+.sub { color: var(--muted); margin: 0 0 20px; }
+code { background: var(--code); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+a { color: var(--blue); }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.tldr li { margin: 6px 0; }
+.chip { display: inline-block; background: var(--chip); border-radius: 999px; padding: 2px 10px; font-size: 12px; margin: 2px 4px 2px 0; white-space: nowrap; }
+.badge { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  border-radius: 6px; padding: 2px 8px; border: 1px solid currentColor; }
+.ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; margin: 14px 0; border-top: 4px solid var(--accent, var(--line)); }
+.card-head { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; justify-content: space-between; }
+.meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px 16px; margin: 12px 0; font-size: 13px; }
+.meta div span { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.flow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 10px 0; font-size: 12px; }
+.flow .n { background: var(--chip); border-radius: 6px; padding: 3px 8px; }
+.flow .a { color: var(--muted); }
+.enc-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 8px 0; }
+.enc { border-radius: 10px; padding: 10px 8px; text-align: center; border: 1px solid var(--line); background: var(--bg); min-width: 0; }
+.enc .dot { width: 26px; height: 26px; border-radius: 50%; margin: 0 auto 6px; border: 3px solid var(--c); position: relative; }
+.enc .dot::after { content: ""; position: absolute; left: 50%; top: 2px; width: 2px; height: 8px; background: var(--c); transform: translateX(-50%); }
+.enc b { display: block; font-size: 13px; color: var(--c); overflow-wrap: anywhere; }
+.enc small { display: block; color: var(--muted); font-size: 11px; line-height: 1.3; margin-top: 2px; }
+.b { --c: var(--blue); } .g { --c: var(--green); } .w { --c: var(--white); } .o { --c: var(--orange); }
+.pg { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-top: 10px; }
+.clicks { font-size: 13px; margin-top: 8px; }
+.clicks span { white-space: nowrap; margin-right: 12px; }
+.clicks i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--c); margin-right: 4px; vertical-align: -1px; }
+.bars { display: grid; gap: 8px; }
+.barrow { display: grid; grid-template-columns: 170px 1fr 92px; gap: 10px; align-items: center; font-size: 13px; }
+.track { position: relative; height: 16px; background: var(--bar); border-radius: 4px; }
+.fill { position: absolute; top: 0; bottom: 0; border-radius: 4px; opacity: .9; }
+.mark { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--bad); }
+.legend { font-size: 12px; color: var(--muted); margin-top: 10px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.tablewrap { overflow-x: auto; }
+.note { border-left: 3px solid var(--warn); padding: 6px 12px; background: var(--panel); border-radius: 0 8px 8px 0; margin: 10px 0; font-size: 14px; }
+footer { color: var(--muted); font-size: 12px; margin-top: 40px; }
+@media (max-width: 560px) {
+  .barrow { grid-template-columns: 1fr; gap: 3px; }
+  .enc-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  h1 { font-size: 24px; }
+}
+</style>
+</head>
+<body>
+<main>
+
+<h1>New effects for the OP-1: shortlist</h1>
+<p class="sub">Stereo reverb candidates plus saturation, distortion and a couple of other good finds. Research notes from 19 Oct 2026, checked against what the device measurements say the Blackfin BF524 can sustain.</p>
+
+<div class="panel tldr">
+  <h3>Summary</h3>
+  <ul>
+    <li><b>Reverb, build first: Dattorro plate</b> (<span class="ok">low risk</span>). Clouds' reverb is a cut-down Dattorro/Griesinger tank, and its assembly kernel and 22.05 kHz halfband path are already proven on the device. The full plate adds proper decorrelated stereo taps, tank modulation, pre-delay and a freeze. Estimated <b>~12–25 MHz on the device</b>, compared with Clouds' 85.</li>
+    <li><b>Reverb, second mode: 8-line FDN "hall"</b> with a real <i>size</i> control and a different character from the plate. It can share the plate's host and buffer, at a similar cost.</li>
+    <li><b>Saturation: one "DIRT" effect with four modes</b> (Drive, Tape, Fold, Crush), on the MULTI pattern. It has no big buffers, so the cache misses that hurt Clouds don't apply. Estimated <b>~3–12 MHz</b>.</li>
+    <li><b>Other good finds:</b> a stereo <b>chorus/ensemble</b> (the stock OP-1 has none, and the code is already in the Rings and Plaits sources) and a <b>frequency shifter / ring modulator</b> from Warps.</li>
+    <li><b>Nothing from the plugin world can be dropped in as-is.</b> The BF524 has no FPU, so float or double code (Airwindows, CloudSeed, Freeverb) gets rewritten in fixed point. In practice, "porting" means taking the topology and re-implementing it in the 16-bit MAC style of <code>reverb_stereo_bfin.S</code>.</li>
+  </ul>
+</div>
+
+<h2>Constraints these choices follow</h2>
+<div class="grid">
+  <div class="panel"><b>CPU</b><p>About 300 MHz is free when idle. Heavy Rings leaves only ~40–75 MHz. Work that touches SDRAM buffers runs <b>2–4× the simulator</b> (Tests 30–34: 16 KB caches, a miss costs 100–190 cycles). Keep the number of delay-line streams small and the per-call code small.</p></div>
+  <div class="panel"><b>Stereo means the master slot</b><p>The synth and drum FX positions are mono (one object shared at <code>0xffb00600</code>). Only the master position (<code>0xffb00790</code>) is stereo. Each design here also runs mono, at ~0.6× the cost, for the synth slot.</p></div>
+  <div class="panel"><b>Code we already have</b><p>The 16-bit MAC reverb kernel with mirrored writes, the diffuser kernel, the 2:1 halfband decimator/interpolator (in assembly, bit-exact), the governor, Rings' soft-limit table, and the orange-click swap host pattern.</p></div>
+  <div class="panel"><b>Licences</b><p>Mutable Instruments (MIT), Airwindows (MIT), el-visio's Dattorro C (MIT), fverb (BSD-2) and the Freeverb topology (public domain) are all fine to use. Plateau (Valley, GPL-3), MVerb (GPL) and zita-rev1 (GPL) are fine as reading material only, unless the firmware is GPL too.</p></div>
+</div>
+
+<h2>Estimated device cost (master, stereo)</h2>
+<div class="panel">
+  <div class="bars" id="bars"></div>
+  <p class="legend">Bars show estimated device MHz ranges, worked out as simulator estimate × 1.5–4 depending on buffer use. They are <b>estimates, not measurements</b>. The red line is ~40 MHz, the low end of what's left with Rings model 6 at four voices. The grey row is the measured Clouds master cost, for comparison.</p>
+</div>
+
+<h2>Reverbs</h2>
+
+<div class="card" style="--accent: var(--blue)">
+  <div class="card-head"><h3>1 · PLATE: Dattorro figure-of-eight</h3><span class="badge ok">Recommended first</span></div>
+  <p>This is the classic 1997 JAES plate ("Effect Design Part 1"). The input goes through a band-limiting filter and four input allpass diffusers, then into a two-half tank that cross-feeds in a figure of eight. Each half has a modulated allpass, a delay, a damping low-pass, a decay allpass and a second delay. <b>Seven output taps per side</b>, read from different points in both halves, give wide, decorrelated stereo from the mono sum. That's the main audible step up from Clouds' 2-tap version.</p>
+  <div class="flow"><span class="n">L+R → pre-delay</span><span class="a">→</span><span class="n">bandwidth LP</span><span class="a">→</span><span class="n">4× input AP</span><span class="a">→</span><span class="n">tank A: modAP → del → damp → AP → del</span><span class="a">⇄</span><span class="n">tank B (same)</span><span class="a">→</span><span class="n">7+7 taps → L / R</span></div>
+  <div class="meta">
+    <div><span>Source</span>Dattorro paper (CCRMA); <a href="https://github.com/el-visio/dattorro-verb">el-visio/dattorro-verb</a> (MIT, C); <a href="https://github.com/jpcima/fverb">fverb</a> (BSD-2, stereo variant)</div>
+    <div><span>Memory</span>~22.5k samples at the paper's 29.8 kHz, so ~16.7k at 22.05 kHz: a <b>32K × int16 buffer (64 KB)</b></div>
+    <div><span>Cost (sim → device)</span>~260–300 cycles per stereo sample at 22.05 kHz ≈ 6 MHz sim, <b>~12–25 MHz device</b></div>
+    <div><span>Reuse</span>The Clouds reverb kernel's layout scheme (fixed offsets, mirrored writes) and the halfband path</div>
+  </div>
+  <div class="pg">Page 1</div>
+  <div class="enc-row">
+    <div class="enc b"><div class="dot"></div><b>DECAY</b><small>tank gain 0.2–0.98</small></div>
+    <div class="enc g"><div class="dot"></div><b>DAMP</b><small>tank low-pass: bright to dark</small></div>
+    <div class="enc w"><div class="dot"></div><b>PRE-DELAY</b><small>0–200 ms</small></div>
+    <div class="enc o"><div class="dot"></div><b>MIX</b><small>dry/wet, equal power</small></div>
+  </div>
+  <div class="pg">Page 2</div>
+  <div class="enc-row">
+    <div class="enc b"><div class="dot"></div><b>SIZE</b><small>tank delay scale, in steps (no sweep artefacts)</small></div>
+    <div class="enc g"><div class="dot"></div><b>DIFFUSION</b><small>input AP gains: sparse to dense</small></div>
+    <div class="enc w"><div class="dot"></div><b>MOTION</b><small>tank modulation depth</small></div>
+    <div class="enc o"><div class="dot"></div><b>LOW CUT</b><small>input high-pass, keeps the tail clean</small></div>
+  </div>
+  <div class="clicks"><span class="b"><i></i>blue: mode (plate/hall)</span><span class="g"><i></i>green: freeze (decay 1, input off)</span><span class="w"><i></i>white: page</span><span class="o"><i></i>orange: swap with the stock host</span></div>
+</div>
+
+<div class="card" style="--accent: var(--green)">
+  <div class="card-head"><h3>2 · HALL: 8-line feedback delay network</h3><span class="badge ok">Second mode</span></div>
+  <p>This is Jot's FDN, laid out as in Signalsmith's "Let's write a reverb": a few short diffuser steps (each with a channel shuffle and a Hadamard mix) for the early density, then eight delays with a <b>Householder</b> feedback matrix. Householder costs only N adds, one multiply and N subtracts, with no N² multiply. Each line has a one-pole damping filter. Even-numbered lines feed L and odd-numbered lines feed R. Unlike the plate, the line lengths scale cleanly, so <b>SIZE goes from a small room to a big hall</b>. The character is smoother and less "ringy" than a plate.</p>
+  <div class="flow"><span class="n">L/R → pre-delay</span><span class="a">→</span><span class="n">3× diffuser step (shuffle + Hadamard)</span><span class="a">→</span><span class="n">8 delays</span><span class="a">→</span><span class="n">damp ×8</span><span class="a">→</span><span class="n">Householder</span><span class="a">↺</span><span class="n">even → L, odd → R</span></div>
+  <div class="meta">
+    <div><span>Source</span>Jot/Chaigne FDN; J.O. Smith <i>PASP</i> (FDN chapter); Signalsmith talk/code (licence not stated: read it, write our own)</div>
+    <div><span>Memory</span>8 lines up to ~150 ms at 22.05 kHz plus diffusers, ~30k samples (<b>~60 KB</b>)</div>
+    <div><span>Cost (sim → device)</span>~220–280 cycles per stereo sample at 22.05 kHz, <b>~10–25 MHz device</b>. A 4-line version costs about half.</div>
+    <div><span>Streams</span>16 for the tank plus 6 for the diffusers, about the same as Clouds' reverb (~22)</div>
+  </div>
+  <div class="pg">Page 1</div>
+  <div class="enc-row">
+    <div class="enc b"><div class="dot"></div><b>SIZE</b><small>room → hall (line scale)</small></div>
+    <div class="enc g"><div class="dot"></div><b>DECAY</b><small>RT60 0.3–20 s, ∞ at the top</small></div>
+    <div class="enc w"><div class="dot"></div><b>DAMP</b><small>HF decay ratio</small></div>
+    <div class="enc o"><div class="dot"></div><b>MIX</b><small>dry/wet</small></div>
+  </div>
+  <div class="pg">Page 2</div>
+  <div class="enc-row">
+    <div class="enc b"><div class="dot"></div><b>PRE-DELAY</b><small>0–200 ms</small></div>
+    <div class="enc g"><div class="dot"></div><b>EARLY</b><small>early/late balance</small></div>
+    <div class="enc w"><div class="dot"></div><b>MOTION</b><small>line modulation (chorused tail)</small></div>
+    <div class="enc o"><div class="dot"></div><b>WIDTH</b><small>mono → wide (L/R matrix)</small></div>
+  </div>
+  <div class="clicks"><span class="b"><i></i>blue: mode</span><span class="g"><i></i>green: freeze</span><span class="w"><i></i>white: page</span><span class="o"><i></i>orange: swap</span></div>
+</div>
+
+<div class="card" style="--accent: var(--white)">
+  <div class="card-head"><h3>Optional extras on the reverb host</h3><span class="badge warn">Later</span></div>
+  <div class="tablewrap"><table>
+    <tr><th>Extra</th><th>How</th><th>Extra cost</th><th>Note</th></tr>
+    <tr><td><b>Shimmer</b></td><td>Clouds' pitch shifter (+12 st) in the tank's feedback path</td><td>+~5–10 MHz (the shifter is still in C: ~120 instructions per sample)</td><td>Very popular. Move the shifter to assembly first.</td></tr>
+    <tr><td><b>Gated / reverse</b></td><td>Envelope gate on the tail; or a reverse-envelope read of the pre-delay buffer</td><td>~1 MHz</td><td>1980s drums, which suits the drum side of the master</td></tr>
+    <tr><td><b>Freeverb mode</b></td><td>8 combs + 4 allpasses per side (public domain topology)</td><td>~15–30 MHz device</td><td>Famous, but more metallic and costlier than the FDN for the same density. Not recommended.</td></tr>
+  </table></div>
+</div>
+
+<h2>Saturation and distortion: "DIRT", one host with four modes</h2>
+<p>One effect, with the mode on the blue click, the same pattern as MULTI and Clouds. None of the modes uses a large buffer, so they mostly avoid the cache misses that hurt the reverbs. The real problem with distortion here is <b>aliasing</b>. The plan is to run each shaper at 88.2 kHz between the existing halfband interpolator and decimator (2× oversampling, already in assembly). Where that isn't enough, first-order ADAA (antiderivative antialiasing) goes on top.</p>
+
+<div class="grid">
+  <div class="card" style="--accent: var(--orange); margin:0">
+    <div class="card-head"><h3>DRIVE</h3><span class="badge ok">Build first</span></div>
+    <p>Soft clip with pre/post tilt EQ and a bias for even harmonics. The core is Plaits' <code>Overdrive</code> (MIT, already in <code>mutableinstruments/plaits/dsp/fx/overdrive.h</code>), with its gain staging that keeps the level roughly constant. Use a table soft clip like Rings' limiter, not float maths.</p>
+    <div class="meta"><div><span>Device cost</span>~5–10 MHz (2× OS)</div><div><span>Refs</span>Parker, Zavalishin & Le Bivic, DAFx-16 (ADAA)</div></div>
+    <div class="enc-row">
+      <div class="enc b"><div class="dot"></div><b>DRIVE</b><small>0–+36 dB</small></div>
+      <div class="enc g"><div class="dot"></div><b>TONE</b><small>post tilt</small></div>
+      <div class="enc w"><div class="dot"></div><b>BIAS</b><small>odd → even</small></div>
+      <div class="enc o"><div class="dot"></div><b>MIX</b><small>auto level</small></div>
+    </div>
+  </div>
+
+  <div class="card" style="--accent: var(--orange); margin:0">
+    <div class="card-head"><h3>TAPE</h3><span class="badge ok">Good fit</span></div>
+    <p>Gentle saturation, a head-bump low shelf, high-frequency loss, wow and flutter, and optional hiss. Beads' <code>WowAndFlutter</code> (MIT, in the repo) handles the motion. The saturation follows Airwindows ToTape's approach (MIT), rewritten in fixed point. It fits the OP-1's tape metaphor.</p>
+    <div class="meta"><div><span>Device cost</span>~9–16 MHz (see TAPE in depth below)</div><div><span>Memory</span>~2 × 1k samples</div></div>
+    <div class="enc-row">
+      <div class="enc b"><div class="dot"></div><b>SATURATE</b><small>tape drive</small></div>
+      <div class="enc g"><div class="dot"></div><b>WOBBLE</b><small>wow → flutter</small></div>
+      <div class="enc w"><div class="dot"></div><b>AGE</b><small>HF loss + hiss</small></div>
+      <div class="enc o"><div class="dot"></div><b>MIX</b><small>dry/wet</small></div>
+    </div>
+  </div>
+
+  <div class="card" style="--accent: var(--orange); margin:0">
+    <div class="card-head"><h3>FOLD</h3><span class="badge warn">Watch aliasing</span></div>
+    <p>A wavefolder: either Warps' <code>ALGORITHM_FOLD</code> (MIT, in the repo) or a Lockhart/Serge folder model with first-order ADAA. It's harsh and synthy, and best on the synth slot. It needs 2× oversampling plus ADAA, since folding multiplies aliasing.</p>
+    <div class="meta"><div><span>Device cost</span>~6–12 MHz</div><div><span>Refs</span>Esqueda et al., "Lockhart and Serge wavefolders", Appl. Sci. 2017</div></div>
+    <div class="enc-row">
+      <div class="enc b"><div class="dot"></div><b>FOLD</b><small>gain into folder</small></div>
+      <div class="enc g"><div class="dot"></div><b>SYMMETRY</b><small>DC offset</small></div>
+      <div class="enc w"><div class="dot"></div><b>TONE</b><small>post low-pass</small></div>
+      <div class="enc o"><div class="dot"></div><b>MIX</b><small>dry/wet</small></div>
+    </div>
+  </div>
+
+  <div class="card" style="--accent: var(--orange); margin:0">
+    <div class="card-head"><h3>CRUSH</h3><span class="badge ok">Trivial</span></div>
+    <p>Bit-depth and sample-rate reduction. Plaits' <code>SampleRateReducer</code> (MIT, in the repo) does an optionally anti-aliased sample-and-hold. Requantising a 16-bit signal costs almost nothing. Jitter makes it sound like a dying sampler.</p>
+    <div class="meta"><div><span>Device cost</span>~1–3 MHz</div><div><span>Memory</span>none</div></div>
+    <div class="enc-row">
+      <div class="enc b"><div class="dot"></div><b>RATE</b><small>44.1k → 500 Hz</small></div>
+      <div class="enc g"><div class="dot"></div><b>BITS</b><small>16 → 2</small></div>
+      <div class="enc w"><div class="dot"></div><b>JITTER</b><small>random clock</small></div>
+      <div class="enc o"><div class="dot"></div><b>MIX</b><small>dry/wet</small></div>
+    </div>
+  </div>
+</div>
+<div class="clicks" style="margin-top:12px"><span class="b"><i></i>blue: next mode (shift: back)</span><span class="g"><i></i>green: pre/post-EQ toggle (or bypass)</span><span class="w"><i></i>white: single page; free</span><span class="o"><i></i>orange: swap with the stock host</span></div>
+
+<div class="card" style="--accent: var(--orange)">
+  <div class="card-head"><h3>TAPE in depth: sources and chain</h3><span class="badge ok">Reference + cheap code</span></div>
+  <p>Two sources, used together: Chowdhury's paper is the physical reference for the curves and parameter ranges, and Airwindows gives code light enough to rewrite in fixed point.</p>
+  <div class="tablewrap"><table>
+    <tr><th>Source</th><th>Licence</th><th>What we take</th><th>What we leave</th></tr>
+    <tr><td><b>Chowdhury, "Real-Time Physical Modelling for Analog Tape Machines"</b>, DAFx-19 (<a href="https://dafx.de/paper-archive/details/Z5Ow_E5YHVxvndTAyeEuzA">paper</a>, <a href="https://github.com/jatinchowdhury18/AnalogTapeModel">ChowTapeModel</a>)</td>
+      <td>Paper: CC-BY 3.0. Plugin code: GPLv3 (read only).</td>
+      <td>The play-head loss formulas (spacing loss <code>e<sup>−kd</sup></code>, thickness loss, gap <code>sinc</code>; <code>k = 2πf/v</code>), which give the HF roll-off and head bump at each tape speed. Also the measured TC-260 constants and the way it measures wow and flutter from a real machine.</td>
+      <td>The hysteresis solver. It runs Jiles-Atherton with an RK4 step on every sample at <b>16× oversampling</b>, with a coth function at each step: far beyond budget with no FPU.</td></tr>
+    <tr><td><b>Airwindows ToTape9 / IronOxide5</b> (<a href="https://github.com/airwindows/airwindows">airwindows/airwindows</a>, <code>plugins/LinuxVST/src/</code>; <a href="https://www.airwindows.com/totape9/">ToTape9 page</a>)</td>
+      <td>MIT</td>
+      <td>The saturation core: ToTape9 clamps to ±2.306 and applies an odd polynomial approximating sin(); IronOxide clamps to π/2 and takes sin(). Both become a lookup table, like Rings' soft limiter. Also ToTape9's "tiny hysteresis" (a small clamped integrator with feedback) and its head bump (two biquads per channel).</td>
+      <td>Two chains of averaging filters (up to ~124 additions per channel per sample; 1–2 biquads do the same job as a steep low-pass), the "Dubly" compander (log() calls), the look-ahead clipper and the dither.</td></tr>
+    <tr><td><b>Beads <code>WowAndFlutter</code></b> (<code>mutableinstruments/beads/dsp/fx/wow_and_flutter.h</code>)</td>
+      <td>MIT, in the repo</td>
+      <td>The whole stage: a small modulated delay with a randomly drifting rate.</td>
+      <td>Nothing</td></tr>
+  </table></div>
+  <div class="pg">Proposed chain</div>
+  <div class="flow"><span class="n">1 · wow + flutter (Beads)</span><span class="a">→</span><span class="n">2 · tiny hysteresis (ToTape9, fixed point)</span><span class="a">→</span><span class="n">3 · table saturation, 2× oversampled (existing halfband)</span><span class="a">→</span><span class="n">4 · head bump + HF loss: 2–3 biquads fitted to Chowdhury's curves, tape speed as a preset</span><span class="a">→</span><span class="n">5 · optional hiss</span></div>
+  <div class="meta">
+    <div><span>Cost (estimate)</span>~70 cycles per channel per sample ≈ 6 MHz sim, <b>~9–16 MHz device</b></div>
+    <div><span>Memory</span>~2 × 1k samples (flutter delay)</div>
+    <div><span>Controls</span>As in the TAPE card above: SATURATE, WOBBLE, AGE (HF loss + hiss), MIX</div>
+  </div>
+</div>
+
+<h2>Other good finds</h2>
+<div class="grid">
+  <div class="card" style="--accent: var(--blue); margin:0">
+    <div class="card-head"><h3>ENSEMBLE: chorus / string ensemble</h3><span class="badge ok">Cheap, stereo</span></div>
+    <p>The stock OP-1 has no chorus. Rings (<code>fx/chorus.h</code>, <code>fx/ensemble.h</code>) and Plaits (<code>fx/ensemble.h</code>) already contain MIT, FxEngine-based versions that share the reverb's coding style. The ensemble mode uses three phase-spread taps per side for the Solina sound.</p>
+    <div class="meta"><div><span>Device cost</span>~4–8 MHz</div><div><span>Memory</span>~2k samples</div></div>
+    <div class="enc-row">
+      <div class="enc b"><div class="dot"></div><b>RATE</b><small>LFO speed</small></div>
+      <div class="enc g"><div class="dot"></div><b>DEPTH</b><small>mod amount</small></div>
+      <div class="enc w"><div class="dot"></div><b>VOICES</b><small>chorus → ensemble</small></div>
+      <div class="enc o"><div class="dot"></div><b>MIX</b><small>dry/wet</small></div>
+    </div>
+  </div>
+  <div class="card" style="--accent: var(--green); margin:0">
+    <div class="card-head"><h3>SHIFT: frequency shifter / ring mod</h3><span class="badge warn">Medium effort</span></div>
+    <p>Warps' quadrature transform (MIT, <code>warps/dsp/quadrature_transform.h</code>) gives a Bode-style frequency shifter. Shifting L up and R down gives instant width, and adding feedback gives barber-pole sweeps. Warps' diode ring modulator model is in the same module.</p>
+    <div class="meta"><div><span>Device cost</span>~8–15 MHz (IIR Hilbert pair per side)</div><div><span>Memory</span>none</div></div>
+    <div class="enc-row">
+      <div class="enc b"><div class="dot"></div><b>SHIFT</b><small>±2 kHz, fine near 0</small></div>
+      <div class="enc g"><div class="dot"></div><b>FEEDBACK</b><small>barber-pole</small></div>
+      <div class="enc w"><div class="dot"></div><b>SPREAD</b><small>L up / R down</small></div>
+      <div class="enc o"><div class="dot"></div><b>MIX</b><small>dry/wet</small></div>
+    </div>
+  </div>
+</div>
+
+<h2>Looked at and rejected</h2>
+<div class="panel tablewrap">
+<table>
+  <tr><th>Candidate</th><th>Licence</th><th>Why not</th></tr>
+  <tr><td>CloudSeed (Valdemar Erlingsson)</td><td>MIT (original)</td><td>Lush, but it runs dozens of float delay lines, multitap early reflections and per-line modulation. That would be several times Clouds' cost on this CPU.</td></tr>
+  <tr><td>Valley Plateau</td><td>GPL-3</td><td>A Dattorro tank with oversampling and many filters: heavy, and GPL. Our own plate gets most of the sound.</td></tr>
+  <tr><td>zita-rev1</td><td>GPL</td><td>High-quality 8-line FDN, but GPL. The FDN hall above follows the same idea.</td></tr>
+  <tr><td>Airwindows reverbs (Galactic, Verbity…)</td><td>MIT</td><td>Double-precision code throughout. With no FPU, a fixed-point rewrite is a new design. Use them as reference only.</td></tr>
+  <tr><td>Convolution reverb</td><td>n/a</td><td>Even a short IR is far beyond budget without an assembly FFT.</td></tr>
+  <tr><td>Spring model (dispersive allpass chains)</td><td>papers</td><td>The stock OP-1 already has <i>spring</i>. It's the obvious host for the new reverb's orange-click swap, not something to duplicate.</td></tr>
+  <tr><td>Beads / Elements reverbs</td><td>MIT</td><td>Same Griesinger topology as Clouds' (only the delay lengths differ). We already have it.</td></tr>
+</table>
+</div>
+
+<h2>Open decisions for you</h2>
+<div class="panel">
+  <ol>
+    <li><b>Hosts:</b> which stock effects do the new ones swap with on the orange click? A natural fit would be <i>spring</i> ↔ PLATE/HALL and <i>punch</i> or <i>nitro</i> ↔ DIRT. Phone is already Clouds, and filter is kept free for op1repacker.</li>
+    <li><b>Reverb order:</b> plate first, then hall as a mode (proposed), or hall only?</li>
+    <li><b>DIRT scope for v1:</b> all four modes, or Drive + Crush first (the cheapest to prove the host)?</li>
+    <li><b>Manual note:</b> as with Rings + Clouds, any of these next to Rings at "all" eats into the same budget. Should the reverb get the governor treatment (dropping to the 4-line FDN or skipping modulation under load)?</li>
+  </ol>
+</div>
+
+<h2>Sources</h2>
+<div class="panel" style="font-size:13px">
+  <ul>
+    <li>J. Dattorro, "Effect Design Part 1: Reverberator and Other Filters", JAES 1997: <a href="https://ccrma.stanford.edu/~dattorro/EffectDesignPart1.pdf">ccrma.stanford.edu/~dattorro</a></li>
+    <li><a href="https://github.com/el-visio/dattorro-verb">el-visio/dattorro-verb</a> (MIT) · <a href="https://github.com/jpcima/fverb">jpcima/fverb</a> (BSD-2) · <a href="https://github.com/ValleyAudio/ValleyRackFree">ValleyRackFree</a> (GPL-3) · <a href="https://github.com/FigBug/mverb/wiki">MVerb</a></li>
+    <li>J.O. Smith, <i>Physical Audio Signal Processing</i>: <a href="https://www.dsprelated.com/freebooks/pasp/FDN_Reverberation.html">FDN reverberation</a>, <a href="https://www.dsprelated.com/freebooks/pasp/Choice_Lossless_Feedback_Matrix.html">lossless feedback matrices</a></li>
+    <li><a href="https://github.com/Signalsmith-Audio/reverb-example-code">Signalsmith reverb example code</a> (licence not stated)</li>
+    <li><a href="https://github.com/ValdemarOrn/CloudSeed">CloudSeed</a></li>
+    <li>Parker, Zavalishin, Le Bivic, "Reducing the Aliasing of Nonlinear Waveshaping Using Continuous-Time Convolution", <a href="https://dafx.de/paper-archive/details/vem_XXF5qBbfiWOH2RVVAA">DAFx-16</a> · <a href="https://ccrma.stanford.edu/~jatin/Notebooks/adaa.html">ADAA notebook (Chowdhury)</a> · <a href="https://www.vicanek.de/articles/AADistortion.pdf">Vicanek, ADAA vs oversampling</a></li>
+    <li>Esqueda et al., <a href="https://dafx.de/paper-archive/details/zmNQ8s5sZVhM_ObMB_D8tg">Virtual Analog Buchla 259 Wavefolder</a> (DAFx-17) · <a href="https://www.mdpi.com/2076-3417/7/12/1328">Lockhart and Serge wavefolders</a> (Appl. Sci. 2017)</li>
+    <li>Airwindows (MIT): <a href="https://www.airwindows.com/">airwindows.com</a> · <a href="https://github.com/airwindows/airwindows">source</a> · <a href="https://www.airwindows.com/totape9/">ToTape9</a></li>
+    <li>J. Chowdhury, "Real-Time Physical Modelling for Analog Tape Machines", <a href="https://dafx.de/paper-archive/details/Z5Ow_E5YHVxvndTAyeEuzA">DAFx-19</a> · <a href="https://github.com/jatinchowdhury18/AnalogTapeModel">ChowTapeModel</a> (GPLv3)</li>
+    <li>Local: <code>mutableinstruments/</code> clouds, rings, plaits, beads, warps (MIT). Device numbers: <code>docs/device-tests.md</code> Tests 16, 28–34; <code>docs/clouds-port.md</code></li>
+  </ul>
+</div>
+
+<footer>Cost figures are estimates scaled from the measured Clouds and Rings reverb kernels and the 2–4× device factor. Measure each new effect with a cpuprobe build before relying on these numbers.</footer>
+</main>
+<script>
+(function () {
+  var rows = [
+    ["Clouds master (measured)", 85, 100, "var(--white)", true],
+    ["PLATE (Dattorro)", 12, 25, "var(--blue)"],
+    ["HALL (8-line FDN)", 10, 25, "var(--green)"],
+    ["HALL, 4-line", 6, 13, "var(--green)"],
+    ["DIRT · Drive", 5, 10, "var(--orange)"],
+    ["DIRT · Tape", 9, 16, "var(--orange)"],
+    ["DIRT · Fold", 6, 12, "var(--orange)"],
+    ["DIRT · Crush", 1, 3, "var(--orange)"],
+    ["ENSEMBLE", 4, 8, "var(--blue)"],
+    ["SHIFT", 8, 15, "var(--green)"]
+  ];
+  var max = 110, box = document.getElementById("bars");
+  rows.forEach(function (r) {
+    var row = document.createElement("div"); row.className = "barrow";
+    var lbl = document.createElement("div"); lbl.textContent = r[0];
+    var tr = document.createElement("div"); tr.className = "track";
+    var f = document.createElement("div"); f.className = "fill";
+    f.style.left = (r[1] / max * 100) + "%";
+    f.style.width = Math.max((r[2] - r[1]) / max * 100, 1.2) + "%";
+    f.style.background = r[3];
+    if (r[4]) f.style.opacity = ".45";
+    var m = document.createElement("div"); m.className = "mark"; m.style.left = (40 / max * 100) + "%";
+    tr.appendChild(f); tr.appendChild(m);
+    var v = document.createElement("div"); v.textContent = "~" + r[1] + "–" + r[2] + " MHz";
+    row.appendChild(lbl); row.appendChild(tr); row.appendChild(v); box.appendChild(row);
+  });
+})();
+</script>
+</body>
+</html>

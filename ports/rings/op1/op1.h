@@ -104,6 +104,9 @@ const uint32_t kWord32 = 0;
 const uint32_t kImm16Lo = 1;
 const uint32_t kImm16Hi = 2;
 const uint32_t kCall24 = 3;
+// kHalf16 replaces a 16-bit instruction at `address` (stock = its encoding)
+// with the halfword at `value` in the image.
+const uint32_t kHalf16 = 4;
 
 // Image header at the start of the injected region, read by
 // tools/inject_app.py to find the entry points.

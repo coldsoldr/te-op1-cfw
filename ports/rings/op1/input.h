@@ -11,14 +11,14 @@ extern "C" int32_t RingsShiftKeyDown(void* controller, int32_t key);
 extern "C" int32_t RingsKeyUp(void* controller, int32_t key);
 
 #ifdef OP1_CLOUDS
-// The master controller's (Clouds on the master FX page).
-extern "C" int32_t CloudsMasterKeyDown(void* controller, int32_t key);
-extern "C" int32_t CloudsMasterShiftKeyDown(void* controller, int32_t key);
-extern "C" int32_t CloudsMasterKeyUp(void* controller, int32_t key);
-// The drum controller's (Clouds on the drum FX page).
-extern "C" int32_t CloudsDrumKeyDown(void* controller, int32_t key);
-extern "C" int32_t CloudsDrumShiftKeyDown(void* controller, int32_t key);
-extern "C" int32_t CloudsDrumKeyUp(void* controller, int32_t key);
+// The master controller's (the effect categories on the master FX page).
+extern "C" int32_t FxMasterKeyDown(void* controller, int32_t key);
+extern "C" int32_t FxMasterShiftKeyDown(void* controller, int32_t key);
+extern "C" int32_t FxMasterKeyUp(void* controller, int32_t key);
+// The drum controller's (the effect categories on the drum FX page).
+extern "C" int32_t FxDrumKeyDown(void* controller, int32_t key);
+extern "C" int32_t FxDrumShiftKeyDown(void* controller, int32_t key);
+extern "C" int32_t FxDrumKeyUp(void* controller, int32_t key);
 #endif
 
 #endif  // OP1RINGS_OP1_INPUT_H_

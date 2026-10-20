@@ -201,14 +201,17 @@ extern "C" void MarblesCtlKnob(void* controller, int32_t k, int16_t* delta) {
   Seq()->Knob(k & 3, k >= 4 ? raw >> kFineShift : raw);
 }
 
-// The screen: stock tombola, or Marbles' (marbles.svg, the user's "Dots"
-// design, docs/marbles-screen-brief.md v2; mappings in its handover README,
-// kept as ports/marbles/op1/marbles-screen.md): the last 16 clock steps as
-// marks in three lanes (raised by pitch), the deja vu loop brackets, the
-// legend (icons per page, level bars) and the chips. No driven element is
-// inside a moved group, so transforms are in screen coordinates. Colours
-// are read from the file's example state (gen_marbles_svg.py checks it):
-// loop_t bright green, loop_x dim green; src_scale selected, src_keys not.
+// The screen: stock tombola, or Marbles' (marbles.svg, made by
+// ports/fx/op1/gen_fx_svg.py from the redesign aligned with the fx screens,
+// docs/module-briefs/designs/marbles.md): the engine dots (eng0 tombola,
+// eng1 marbles: static, as this screen shows only while Marbles plays), the
+// page squares, the pitch source icons and the bias bar along the top; the
+// model / scale dot row; the last 16 clock steps as marks in three lanes
+// (raised by pitch) with the deja vu loop brackets; the legend (icons per
+// page, level bars) along the bottom. No driven element is inside a moved
+// group, so transforms are in screen coordinates. Colours are read from the
+// file's example state: loop_t bright green, loopX dim green (#13704D);
+// src_scale selected, src_keys not; page1ind lit, page2ind not.
 namespace {
 
 typedef void* (*NodeFindFn)(void* document, const char* id, int32_t assert_missing);
@@ -225,18 +228,22 @@ const uint32_t kGetLineStyle = 0x01a3b854;    // (screen, id) -> RGBA bytes
 const uint32_t kGetFillStyle = 0x01a3b96c;
 const uint32_t kSetTransform = 0x019ead58;    // (node, const int32 m[9]), Q10
 
-// The Dots design's elements (ports/marbles/op1/marbles-screen.md), with
-// gen_marbles_svg.py's renames: an id may not contain "_x" (the parser
-// decodes "_xHH_" escapes in ids and asserts without the closing "_":
-// marbles5/6 didn't boot), so loop_x -> loopX and leg<i>_x -> leg<i>X.
+// The design's elements (docs/module-briefs/designs/marbles.md). An id may
+// not contain "_x" (the parser decodes "_xHH_" escapes in ids and asserts
+// without the closing "_": marbles5/6 didn't boot), so loopX and leg<i>X.
+// Bias (bar3, top right) has no legend icon: three icon pairs.
 const char* const kNodeIds[] = {
   "loop_t", "loopX", "bar0", "bar1", "bar2", "bar3", "chipT", "chipX", "chip_model", "chip_scale",
-  "leg0_t", "leg1_t", "leg2_t", "leg3_t", "leg0X", "leg1X", "leg2X", "leg3X" };
+  "leg0_t", "leg1_t", "leg2_t", "leg0X", "leg1X", "leg2X", "page1ind", "page2ind" };
+const int32_t kLegends = 3;
 enum {
   N_LOOP_T, N_LOOP_X, N_BAR0, N_CHIP_T = N_BAR0 + 4, N_CHIP_X, N_CHIP_MODEL, N_CHIP_SCALE,
-  N_LEG_T, N_LEG_X = N_LEG_T + 4, N_COUNT = N_LEG_X + 4 };
+  N_LEG_T, N_LEG_X = N_LEG_T + kLegends, N_PAGE1 = N_LEG_X + kLegends, N_PAGE2, N_COUNT };
 static_assert(sizeof(kNodeIds) / sizeof(kNodeIds[0]) == N_COUNT, "node ids");
-const char* const kSourceIds[2] = { "src_scale", "src_keys" };   // PitchSource order
+// PitchSource order. src_keys is a group: GetLineStyle on a group gives
+// every child the first child's style, so it is recoloured as one (the
+// design has one subpath per path: no src_keysP2.. parts any more).
+const char* const kSourceIds[2] = { "src_scale", "src_keys" };
 const int32_t kLanes = 3;
 const int32_t kColumns = op1marbles::kHistory;
 
@@ -251,14 +258,12 @@ bool screen_ready;
 void* nodes[N_COUNT];
 void* marks[kLanes][kColumns];
 uint8_t* loop_line[2];
-// gen_marbles_svg.py splits a path with several subpaths into one path per
-// subpath (the OP-1 joins subpaths with a line): id, idP2, idP3, ... The
-// keyboard icon (src_keys) has four.
-const int32_t kMaxParts = 9;
-uint8_t* source_line[2][kMaxParts];
-int32_t source_parts[2];
+uint8_t* source_line[2];
+uint8_t* page_ind_line[2];
+uint8_t* page_ind_fill[2];
 Colour bright, dim;              // the deja vu brackets (green)
 Colour source_on, source_off;    // the pitch source icons
+Colour ind_line_on, ind_line_off, ind_fill_on, ind_fill_off;   // the page squares
 
 void*& DocumentOf(void* screen) { return *reinterpret_cast<void**>(screen); }
 
@@ -333,34 +338,24 @@ void MarblesInit(void* self) {
   }
   for (int32_t i = 0; i < N_COUNT; ++i) nodes[i] = Find(document, kNodeIds[i]);
   StyleFn line = reinterpret_cast<StyleFn>(kGetLineStyle);
+  StyleFn fill = reinterpret_cast<StyleFn>(kGetFillStyle);
   loop_line[0] = line(self, "loop_t");
   loop_line[1] = line(self, "loopX");
-  for (int32_t i = 0; i < 2; ++i) {
-    // kSourceIds[i], then "<id>P2" .. "<id>P9" while they exist.
-    char name[24];
-    int32_t n = 0;
-    while (kSourceIds[i][n] && n < 20) {
-      name[n] = kSourceIds[i][n];
-      ++n;
-    }
-    name[n] = 0;
-    source_parts[i] = 0;
-    for (int32_t p = 0; p < kMaxParts; ++p) {
-      if (p) {
-        name[n] = 'P';
-        name[n + 1] = static_cast<char>('1' + p);
-        name[n + 2] = 0;
-        if (!Find(document, name)) break;   // GetLineStyle asserts on a missing id
-      }
-      source_line[i][source_parts[i]++] = line(self, name);
-    }
-  }
-  // The file's default state: loop_t bright (locked), loop_x dim (on),
-  // src_scale selected, src_keys not.
+  for (int32_t i = 0; i < 2; ++i) source_line[i] = line(self, kSourceIds[i]);
+  page_ind_line[0] = line(self, "page1ind");
+  page_ind_line[1] = line(self, "page2ind");
+  page_ind_fill[0] = fill(self, "page1ind");
+  page_ind_fill[1] = fill(self, "page2ind");   // #010101, not "none"
+  // The file's default state: loop_t bright (locked), loopX dim (on),
+  // src_scale selected, src_keys not; page1ind lit, page2ind not.
   Read(&bright, loop_line[0]);
   Read(&dim, loop_line[1]);
-  Read(&source_on, source_line[0][0]);
-  Read(&source_off, source_line[1][0]);
+  Read(&source_on, source_line[0]);
+  Read(&source_off, source_line[1]);
+  Read(&ind_line_on, page_ind_line[0]);
+  Read(&ind_fill_on, page_ind_fill[0]);
+  Read(&ind_line_off, page_ind_line[1]);
+  Read(&ind_fill_off, page_ind_fill[1]);
   screen_ready = true;
 }
 
@@ -377,30 +372,37 @@ void MarblesDraw(void* self, const MarblesSeq* m) {
   const op1marbles::Settings& s = m->settings();
   const bool page_t = s.page == op1marbles::PAGE_T;
 
-  // History: show the marks of the steps that played, raised by their
-  // height (18 px of travel).
+  // Page squares: T, X.
+  Write(page_ind_line[0], page_t ? ind_line_on : ind_line_off);
+  Write(page_ind_fill[0], page_t ? ind_fill_on : ind_fill_off);
+  Write(page_ind_line[1], page_t ? ind_line_off : ind_line_on);
+  Write(page_ind_fill[1], page_t ? ind_fill_off : ind_fill_on);
+
+  // History: show the marks (groups) of the steps that played, raised by
+  // their height (14 px of travel; columns 16 px apart, lanes 24 px).
   for (int32_t lane = 0; lane < kLanes; ++lane) {
     const uint16_t gates = m->history_gates(lane);
     for (int32_t c = 0; c < kColumns; ++c) {
       const bool on = (gates >> c) & 1;
       SetVisible(marks[lane][c], on);
-      if (on) SetTransform(marks[lane][c], 0x400, 0x400, 0, -(m->history_height(lane, c) * 18 * 1024 / 255));
+      if (on) SetTransform(marks[lane][c], 0x400, 0x400, 0, -(m->history_height(lane, c) * 14 * 1024 / 255));
     }
   }
 
-  // Loop brackets: the last `length` columns (anchor x = 239), hidden when
-  // off, dim when on, bright when locked.
+  // Loop brackets: the last `length` columns (anchor x = 276, the right
+  // end), hidden when off, dim when on, bright when locked.
   const int32_t n = m->length_steps();
   const int32_t modes[2] = { s.t_deja_vu, s.x_deja_vu };
   for (int32_t i = 0; i < 2; ++i) {
     void* bracket = nodes[N_LOOP_T + i];
     SetVisible(bracket, modes[i] != op1marbles::DEJA_VU_OFF);
     Write(loop_line[i], modes[i] == op1marbles::DEJA_VU_LOCKED ? bright : dim);
-    SetTransform(bracket, n * 64, 0x400, 239 * (0x400 - n * 64), 0);
+    SetTransform(bracket, n * 64, 0x400, 276 * (0x400 - n * 64), 0);
   }
 
-  // Legend: the page's icons and the four bars (anchors x0 + 14).
-  for (int32_t i = 0; i < 4; ++i) {
+  // Legend: the page's three icons; the bars (bar0..2 along the bottom,
+  // bar3 = bias at the top right), each scaled about its left end.
+  for (int32_t i = 0; i < kLegends; ++i) {
     SetVisible(nodes[N_LEG_T + i], page_t);
     SetVisible(nodes[N_LEG_X + i], !page_t);
   }
@@ -418,19 +420,16 @@ void MarblesDraw(void* self, const MarblesSeq* m) {
     u[2] = s.steps;
     u[3] = s.x_bias;
   }
-  static const int32_t kBarAnchor[4] = { 18944, 98816, 178688, 258560 };   // 18.5 .. 252.5 px, Q10
+  static const int32_t kBarAnchor[4] = { 45056, 135168, 225280, 237568 };   // 44, 132, 220, 232 px, Q10
   for (int32_t i = 0; i < 4; ++i) ScaleX(nodes[N_BAR0 + i], u[i], kBarAnchor[i]);
 
-  // Chips: the model (page T) or scale (page X) marker; the pitch source.
+  // Chips: the model (page T, 7 dots) or scale (page X, 6 dots) row, its
+  // lit dot 10 px per step; the pitch source.
   SetVisible(nodes[N_CHIP_T], page_t);
   SetVisible(nodes[N_CHIP_X], !page_t);
-  SetTransform(nodes[N_CHIP_MODEL], 0x400, 0x400, s.t_model * 6827, 0);   // 6.67 px, Q10
-  SetTransform(nodes[N_CHIP_SCALE], 0x400, 0x400, s.scale * 8192, 0);     // 8 px
-  for (int32_t i = 0; i < 2; ++i) {
-    for (int32_t p = 0; p < source_parts[i]; ++p) {
-      Write(source_line[i][p], i == s.pitch_source ? source_on : source_off);
-    }
-  }
+  SetTransform(nodes[N_CHIP_MODEL], 0x400, 0x400, s.t_model * 10240, 0);   // 10 px, Q10
+  SetTransform(nodes[N_CHIP_SCALE], 0x400, 0x400, s.scale * 10240, 0);
+  for (int32_t i = 0; i < 2; ++i) Write(source_line[i], i == s.pitch_source ? source_on : source_off);
 
   reinterpret_cast<DrawFn>(kScreenDraw)(self);
 }

@@ -15,18 +15,19 @@
 // (stock phase ignores encoder clicks).
 //
 // In the Clouds image (-DOP1_CLOUDS) the same handlers take the clicks on
-// the synth FX page of a slot whose effect is phone: orange swaps Clouds
-// and phone, and while Clouds plays blue = next mode, green = freeze,
-// white = page (../clouds/op1/clouds_fx.cc, op1fx::SynthFxClick); and the
-// master controller's handlers (vtable 0x1910aac, same offsets) take them
-// on the master FX page when the master effect is phone.
+// the synth FX page of a slot whose effect is a category with engines
+// (../fx/op1/fx_host.cc, op1fx::SynthFxClick: orange = next engine, the
+// others the engine's, e.g. Clouds' blue = next mode, green = freeze,
+// white = page); and the master and drum controllers' handlers (vtables
+// 0x1910aac, 0x190fa64, same offsets) take them on their FX pages. A
+// release is swallowed when its press was consumed.
 
 #include "op1/input.h"
 
 #include <cstdint>
 
 #ifdef OP1_CLOUDS
-#include "op1/clouds_fx.h"
+#include "fx/op1/fx_host.h"
 #endif
 #ifdef OP1_CPU_PROBE
 #include "op1/cpu_probe.h"
@@ -115,10 +116,32 @@ void Step(int32_t slot, int32_t key, int32_t direction) {
 }
 
 #ifdef OP1_CLOUDS
-// A click on the synth FX page, for Clouds: whether it was consumed.
-bool FxClick(int32_t key, int32_t direction) {
+// The FX pages' consumed presses, per controller, until their release.
+enum { FX_SYNTH, FX_DRUM, FX_MASTER, kNumFxPages };
+bool fx_pressed[kNumFxPages][4];
+
+typedef bool (*FxClickFn)(op1fx::Click click, int32_t direction);
+
+// A press on an FX page: whether it was consumed.
+bool FxPress(int32_t page, FxClickFn fn, int32_t key, int32_t direction) {
   if (key < kClickBlue || key > kClickOrange) return false;
-  return op1fx::SynthFxClick(static_cast<op1fx::Click>(key - kClickBlue), direction);
+  const int32_t k = key - kClickBlue;
+  const bool consumed = fn(static_cast<op1fx::Click>(k), direction);
+  fx_pressed[page][k] = consumed;
+  return consumed;
+}
+
+// A release: whether its press was ours.
+bool FxRelease(int32_t page, int32_t key) {
+  if (key < kClickBlue || key > kClickOrange) return false;
+  const int32_t k = key - kClickBlue;
+  const bool ours = fx_pressed[page][k];
+  fx_pressed[page][k] = false;
+  return ours;
+}
+
+bool FxClick(int32_t key, int32_t direction) {
+  return FxPress(FX_SYNTH, op1fx::SynthFxClick, key, direction);
 }
 #else
 bool FxClick(int32_t, int32_t) { return false; }
@@ -155,8 +178,8 @@ extern "C" int32_t RingsKeyUp(void* controller, int32_t key) {
   const int32_t code = key & 0xff;
   if (code >= kClickBlue && code <= kClickOrange && MultiSlot() >= 0) return 1;
 #ifdef OP1_CLOUDS
-  // Likewise on the FX page of a phone slot.
-  if (code >= kClickBlue && code <= kClickOrange && op1fx::SynthFxPageIsPhone()) return 1;
+  // Likewise a click on an FX page that we took.
+  if (FxRelease(FX_SYNTH, code)) return 1;
 #endif
   return reinterpret_cast<KeyFn>(kStockKeyUp)(controller, key);
 }
@@ -164,52 +187,34 @@ extern "C" int32_t RingsKeyUp(void* controller, int32_t key) {
 #ifdef OP1_CLOUDS
 // The master FX page. Stock handles no encoder click here (its key cases
 // are 0x05..0x14 and 0x2d..0x2f): ours are consumed, the rest go to stock.
-extern "C" int32_t CloudsMasterKeyDown(void* controller, int32_t key) {
-  const int32_t code = key & 0xff;
-  if (code >= kClickBlue && code <= kClickOrange &&
-      op1fx::MasterFxClick(static_cast<op1fx::Click>(code - kClickBlue), 1)) {
-    return 1;
-  }
+extern "C" int32_t FxMasterKeyDown(void* controller, int32_t key) {
+  if (FxPress(FX_MASTER, op1fx::MasterFxClick, key & 0xff, 1)) return 1;
   return reinterpret_cast<KeyFn>(kStockMasterKeyDown)(controller, key);
 }
 
-extern "C" int32_t CloudsMasterShiftKeyDown(void* controller, int32_t key) {
-  const int32_t code = key & 0xff;
-  if (code >= kClickBlue && code <= kClickOrange &&
-      op1fx::MasterFxClick(static_cast<op1fx::Click>(code - kClickBlue), -1)) {
-    return 1;
-  }
+extern "C" int32_t FxMasterShiftKeyDown(void* controller, int32_t key) {
+  if (FxPress(FX_MASTER, op1fx::MasterFxClick, key & 0xff, -1)) return 1;
   return reinterpret_cast<KeyFn>(kStockMasterShiftKeyDown)(controller, key);
 }
 
-extern "C" int32_t CloudsMasterKeyUp(void* controller, int32_t key) {
-  const int32_t code = key & 0xff;
-  if (code >= kClickBlue && code <= kClickOrange && op1fx::MasterFxPageIsPhone()) return 1;
+extern "C" int32_t FxMasterKeyUp(void* controller, int32_t key) {
+  if (FxRelease(FX_MASTER, key & 0xff)) return 1;
   return reinterpret_cast<KeyFn>(kStockMasterKeyUp)(controller, key);
 }
 
 // The drum FX page, likewise (drum controller vtable 0x190fa64).
-extern "C" int32_t CloudsDrumKeyDown(void* controller, int32_t key) {
-  const int32_t code = key & 0xff;
-  if (code >= kClickBlue && code <= kClickOrange &&
-      op1fx::DrumFxClick(static_cast<op1fx::Click>(code - kClickBlue), 1)) {
-    return 1;
-  }
+extern "C" int32_t FxDrumKeyDown(void* controller, int32_t key) {
+  if (FxPress(FX_DRUM, op1fx::DrumFxClick, key & 0xff, 1)) return 1;
   return reinterpret_cast<KeyFn>(kStockDrumKeyDown)(controller, key);
 }
 
-extern "C" int32_t CloudsDrumShiftKeyDown(void* controller, int32_t key) {
-  const int32_t code = key & 0xff;
-  if (code >= kClickBlue && code <= kClickOrange &&
-      op1fx::DrumFxClick(static_cast<op1fx::Click>(code - kClickBlue), -1)) {
-    return 1;
-  }
+extern "C" int32_t FxDrumShiftKeyDown(void* controller, int32_t key) {
+  if (FxPress(FX_DRUM, op1fx::DrumFxClick, key & 0xff, -1)) return 1;
   return reinterpret_cast<KeyFn>(kStockDrumShiftKeyDown)(controller, key);
 }
 
-extern "C" int32_t CloudsDrumKeyUp(void* controller, int32_t key) {
-  const int32_t code = key & 0xff;
-  if (code >= kClickBlue && code <= kClickOrange && op1fx::DrumFxPageIsPhone()) return 1;
+extern "C" int32_t FxDrumKeyUp(void* controller, int32_t key) {
+  if (FxRelease(FX_DRUM, key & 0xff)) return 1;
   return reinterpret_cast<KeyFn>(kStockDrumKeyUp)(controller, key);
 }
 #endif

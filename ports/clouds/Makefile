@@ -171,25 +171,27 @@ profile: $(BUILD)/profile_core.elf
 
 #   make sim-fx       op1/clouds_fx.cc's mono and stereo entry points in the
 #                     simulator, at the OP-1's call rate (64 samples, 44.1 kHz)
-SIM_FX_SRC := tests/sim_fx.cc op1/clouds_fx.cc $(CORE_SRC) $(CORE_ASM)
-$(BUILD)/sim_fx.elf: $(SIM_FX_SRC) $(CORE_HDR) $(wildcard op1/*.h) | $(BUILD)
-	$(BFIN_CXX) $(SIM_CXXFLAGS) $(RATE22) $(SIM_FX_SRC) -o $@
+FX_DIR := ../fx
+include ../fx/engines.mk
+SIM_FX_SRC := tests/sim_fx.cc $(FX_SRC) op1/clouds_fx.cc $(CORE_SRC) $(CORE_ASM)
+$(BUILD)/sim_fx.elf: $(SIM_FX_SRC) $(CORE_HDR) $(wildcard op1/*.h ../fx/op1/* ../fx/src/*/*) | $(BUILD)
+	$(BFIN_CXX) $(SIM_CXXFLAGS) $(RATE22) -DOP1_CLOUDS $(FX_FLAGS) $(SIM_FX_SRC) -o $@
 
 sim-fx: $(BUILD)/sim_fx.elf
 	$(BFIN_RUN) $<
 
 #   make sim-fx-profile  the same with the core's stage timers (src/core/profile.h)
-$(BUILD)/sim_fx_prof.elf: $(SIM_FX_SRC) $(CORE_HDR) $(wildcard op1/*.h) | $(BUILD)
-	$(BFIN_CXX) $(SIM_CXXFLAGS) $(RATE22) -DOP1CLOUDS_PROFILE $(SIM_FX_SRC) -o $@
+$(BUILD)/sim_fx_prof.elf: $(SIM_FX_SRC) $(CORE_HDR) $(wildcard op1/*.h ../fx/op1/* ../fx/src/*/*) | $(BUILD)
+	$(BFIN_CXX) $(SIM_CXXFLAGS) $(RATE22) -DOP1_CLOUDS $(FX_FLAGS) -DOP1CLOUDS_PROFILE $(SIM_FX_SRC) -o $@
 
 sim-fx-profile: $(BUILD)/sim_fx_prof.elf
 	$(BFIN_RUN) $<
 
 #   make hot-set      the granular master's per-call code footprint
 #                     (tests/hot_set.cc, ../../tools/hot_set.py)
-HOT_SET_SRC := tests/hot_set.cc op1/clouds_fx.cc $(CORE_SRC) $(CORE_ASM)
-$(BUILD)/hot_set.elf: $(HOT_SET_SRC) $(CORE_HDR) $(wildcard op1/*.h) | $(BUILD)
-	$(BFIN_CXX) $(SIM_CXXFLAGS) $(RATE22) $(HOT_SET_SRC) -o $@
+HOT_SET_SRC := tests/hot_set.cc $(FX_SRC) op1/clouds_fx.cc $(CORE_SRC) $(CORE_ASM)
+$(BUILD)/hot_set.elf: $(HOT_SET_SRC) $(CORE_HDR) $(wildcard op1/*.h ../fx/op1/* ../fx/src/*/*) | $(BUILD)
+	$(BFIN_CXX) $(SIM_CXXFLAGS) $(RATE22) -DOP1_CLOUDS $(FX_FLAGS) $(HOT_SET_SRC) -o $@
 
 hot-set: $(BUILD)/hot_set.elf
 	$(BFIN_BIN)/bfin-elf-nm -n $< > $(BUILD)/hot_set.nm
