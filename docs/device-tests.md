@@ -1568,3 +1568,13 @@ Look for anything static or misplaced.
 **Procedure:** dirt → drive. Turn white from 0 to the top: does the filament go from dim to white, the glow build, and the heat lines appear one by one (at 1/4, 1/2 and 3/4)? Everything else on drive is as before. If the colours come out wrong (odd hues, flicker), the fallback is 5 fixed steps (drive-valve.md).
 
 **If something is wrong:** COM at power-on, flash `op1_246_beta2.op1`.
+
+**Result (2026-10-20, the user):** "The tube graphic looks amazing ... the glow is fantastic." Computed in-between colours written each frame work on the device (a per-byte blend between colours read from the file).
+
+## Test 45: iter's lab screen (`op1_246_beta4.op1`)
+
+**Not flashed yet.** beta4 = beta3 + op1repacker's `gfx-iter-lab`: `content/display/iter.svg` replaced by op1repacker's `iter-lab.svg`, which is the only file that differs from beta3. Checks: well-formed XML, no `_x` ids, no exponents, no arcs, ASCII ids. Every id of the stock iter.svg is present except the root's `Layer_1`. `verify_bootloader.py` PASS, and the package's contents are identical to `work_beta4`.
+
+**Procedure:** boot; pick iter (shift + T1). Does the lab screen show and animate with the knobs?
+
+**If something is wrong:** COM at power-on, flash `op1_246_beta3.op1`.
