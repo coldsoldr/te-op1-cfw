@@ -1,6 +1,3 @@
-# a word of thanks written by a human
-Below are the all the necessary details for installing and using the plugins shared here. All of this stands on the shoulders of the community, and so I extend an enormous thank you to all those involved. 
-
 # Ten plugins for the OP-1 (hundekraft kennel)
 
 Ten add-ons for the **original OP-1** running the [hundekraft](https://hundekraft.github.io/op1-workshop/) firmware: one synth engine, seven effects and two sequencers. Each is a single `.knl` file that you install over USB from the hundekraft workshop in your browser. Nothing is flashed by hand, and the OP-1 can always start without them.
@@ -63,7 +60,7 @@ The same rules hold on every plugin, so once you know one you know them all.
 
 ## rings
 
-<img src="screens/rings.png" width="480" alt="rings screen">
+<img src="screens/rings_dark.png" width="480" alt="rings screen">
 
 **Mutable Instruments Rings**, the Eurorack resonator, as a synth engine. A key strikes or bows a resonator and the resonator sings. There are six models, chosen on the blue knob's second page:
 
@@ -87,7 +84,7 @@ Fewer voices buy more detail: at polyphony 1 the single voice gets every mode or
 
 ## bitcrusher
 
-<img src="screens/bitcrusher.png" width="480" alt="bitcrusher screen">
+<img src="screens/bitcrusher_dark.png" width="480" alt="bitcrusher screen">
 
 A **bit crusher**. It lowers the sample rate (each sample is held for longer, which turns the sound gritty and adds metallic aliasing) and the bit depth (fewer levels, so it gets noisy and steppy). **Jitter** makes the sample clock unsteady, like a dying sampler. From a subtle 12-bit grit to 2-bit destruction.
 
@@ -102,7 +99,7 @@ A **bit crusher**. It lowers the sample rate (each sample is held for longer, wh
 
 ## drive
 
-<img src="screens/drive.png" width="480" alt="drive screen">
+<img src="screens/drive_dark.png" width="480" alt="drive screen">
 
 An **overdrive**. The signal is pushed into a soft clipper that rounds the peaks off, with a tone control after it and a **bias** that makes the clipping lopsided. Symmetric clipping adds odd harmonics, buzzy like a fuzz pedal; asymmetric clipping adds even harmonics, warmer like a valve. The level stays roughly constant as the drive goes up, and it runs oversampled so it stays clean of aliasing.
 
@@ -117,7 +114,7 @@ An **overdrive**. The signal is pushed into a soft clipper that rounds the peaks
 
 ## tape drive
 
-<img src="screens/tape_drive.png" width="480" alt="tape drive screen">
+<img src="screens/tape_drive_dark.png" width="480" alt="tape drive screen">
 
 A **tape machine in a box**: gentle saturation like recording hot to tape, a low head bump, high-frequency loss, **wow and flutter** (the pitch wobble of an uneven transport) and some hiss. Run a synth or the whole mix through it and it sounds like it came off a worn cassette or a reel-to-reel.
 
@@ -132,7 +129,7 @@ A **tape machine in a box**: gentle saturation like recording hot to tape, a low
 
 ## wavefolder
 
-<img src="screens/wavefolder.png" width="480" alt="wavefolder screen">
+<img src="screens/wavefolder_dark.png" width="480" alt="wavefolder screen">
 
 A **wavefolder**, the West Coast synth trick. Instead of clipping the peaks off it folds them back down, so a sine wave that is pushed harder grows extra wiggles in its tops and bottoms. Bright, metallic, vocal and very synthy, and it changes dramatically with the level you feed it. Best on a synth. Oversampled and antialiased.
 
@@ -147,7 +144,7 @@ A **wavefolder**, the West Coast synth trick. Instead of clipping the peaks off 
 
 ## freq shift
 
-<img src="screens/freq_shift.png" width="480" alt="freq shift screen">
+<img src="screens/freq_shift_dark.png" width="480" alt="freq shift screen">
 
 Two effects in one, picked on the green knob's second page:
 
@@ -165,7 +162,7 @@ Two effects in one, picked on the green knob's second page:
 
 ## ensemble
 
-<img src="screens/ensemble.png" width="480" alt="ensemble screen">
+<img src="screens/ensemble_dark.png" width="480" alt="ensemble screen">
 
 A **chorus / string ensemble**. Copies of the signal are delayed by a few milliseconds and the delays are swept by slow LFOs, so the copies drift in pitch against each other. With one copy per side it is a classic chorus, wide and shimmering. With three phase-spread copies per side it becomes the ensemble sound of 1970s string machines like the Solina: lush, thick and slowly swirling. The stock OP-1 has no chorus.
 
@@ -180,7 +177,7 @@ A **chorus / string ensemble**. Copies of the signal are delayed by a few millis
 
 ## tape echo
 
-<img src="screens/tape_echo.png" width="480" alt="tape echo screen">
+<img src="screens/tape_echo_dark.png" width="480" alt="tape echo screen">
 
 A **tape echo** in the style of a Space Echo or an Echoplex. The sound is recorded onto a loop of tape and played back by up to three heads at different distances, so the repeats fall in a rhythm. Each repeat goes back through the tape and comes out a little darker, more saturated and more wobbly than the one before. Turned up, the feedback self-oscillates into a dub howl. Changing the time while it repeats bends the pitch of the echoes, as speeding up a real tape does. The wow and flutter model is from Mutable Instruments Beads; the saturation is the same as tape drive's.
 
@@ -197,7 +194,7 @@ A **tape echo** in the style of a Space Echo or an Echoplex. The sound is record
 
 ## marbles
 
-<img src="screens/marbles.png" width="480" alt="marbles screen">
+<img src="screens/marbles_dark.png" width="480" alt="marbles screen">
 
 **Mutable Instruments Marbles**, the random sampler, as a synth sequencer. A random rhythm generator (**T**) fires three gates in time with the tempo, and random voltages (**X**) quantized to a scale give each gate its pitch: gate 1 plays voltage 1, gate 2 voltage 2, gate 3 voltage 3, so they overlap into chords. A fourth, smooth voltage sets the velocity. **Deja vu** is the memory: off, every step is fresh; on, the last loop repeats with the amount of variation the knob allows; locked, it repeats exactly.
 
@@ -225,7 +222,7 @@ Marbles is meant for the synth, but it is in the drum sequencer list too: on a k
 
 ## grids
 
-<img src="screens/grids.png" width="480" alt="grids screen">
+<img src="screens/grids_dark.png" width="480" alt="grids screen">
 
 **Mutable Instruments Grids**, the topographic drum sequencer. It holds a 5 × 5 map of 25 drum grooves, each a kick, snare and hat pattern of 32 steps where every hit has a level saying how essential it is. The map position morphs between the four nearest grooves, each part's **fill** decides how many of its hits play (low keeps only the strongest, high adds ghost notes), and **chaos** perturbs the levels for each bar. Hits above a threshold are accents. **Euclidean** mode replaces the map with three Euclidean rhythms.
 
