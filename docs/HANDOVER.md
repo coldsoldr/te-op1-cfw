@@ -454,7 +454,7 @@ Specced earlier (`docs/next-projects.md`):
 
 ## 6. Git
 
-- Branch `firmware-analysis-tooling`, remote `origin` (`<public repo URL>`). Commit only when the user asks.
+- Branch `firmware-analysis-tooling`, remote `origin` (the private GitHub repo). Commit only when the user asks.
 - **Uncommitted from 2026-10-16 (this session's work):**
   - modified: `docs/HANDOVER.md`, `docs/device-tests.md` (Test 16), `docs/next-projects.md`, `tools/decode_probe_beeps.py` (v4), `ports/rings/Makefile`, `ports/rings/op1/{engine.cc, patches.cc, patches.h}` (FX probe, under `OP1_FX_PROBE`; `make op1-engine` still builds multi4 byte-identical);
   - new: `ports/rings/op1/fx_probe.*`, `ports/rings/tests/host_fx_probe.cc`, `ports/clouds/`, `docs/clouds-port.md`, `docs/clouds-handover.md` (superseded), `docs/clouds-screen-brief.md`;
