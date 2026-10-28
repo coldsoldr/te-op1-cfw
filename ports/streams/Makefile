@@ -1,6 +1,6 @@
 # Streams port: copy check, reference and port renders, comparison, Blackfin
 # bit-exactness and cycle benchmarks. Run from this directory inside WSL:
-#   wsl -e bash -lc 'cd /mnt/i/GitHub/PersonalProjects/OP1.CustomFirmware/ports/streams && make ...'
+#   wsl -e bash -lc 'cd /mnt/<drive>/<repo>/ports/streams && make ...'
 #
 #   make tables      check the table generator against upstream (31089 Hz),
 #                    regenerate src/dsp/resources_44k.cc

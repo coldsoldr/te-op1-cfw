@@ -1,6 +1,6 @@
 # Marbles port: upstream reference, copy check, fixed-point port, comparison
 # and Blackfin benchmarks. Run inside WSL from this directory:
-#   wsl -e bash -lc 'cd /mnt/i/GitHub/PersonalProjects/OP1.CustomFirmware/ports/marbles && make ...'
+#   wsl -e bash -lc 'cd /mnt/<drive>/<repo>/ports/marbles && make ...'
 #
 #   make ref          upstream float Marbles at the port's rate  -> out/ref/*.bin
 #   make copy         the copy in upstream/ (op1marbles)          -> out/copy/*.bin

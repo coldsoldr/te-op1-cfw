@@ -177,7 +177,7 @@ The resolver:
 - **Build the image** (WSL):
 
   ```sh
-  cd /mnt/i/GitHub/PersonalProjects/OP1.CustomFirmware/ports/rings
+  cd /mnt/<drive>/<repo>/ports/rings
   make op1-seq FX_ENGINES="plate drive ensemble hall fold shift tape tape_echo"
   ```
 

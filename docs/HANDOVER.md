@@ -399,7 +399,7 @@ The detailed design, validation and numbers are in **`docs/clouds-port.md`**. Th
 
 **WSL Ubuntu 20.04:**
 - Toolchain in `~/op1-toolchain/bfin/bin/`: binutils 2.43, gdb 15.2, GCC 14.2 C/C++ with newlib.
-- Run make like this: `wsl -e bash -lc 'cd /mnt/i/GitHub/PersonalProjects/OP1.CustomFirmware/ports/clouds && make …'`.
+- Run make like this: `wsl -e bash -lc 'cd /mnt/<drive>/<repo>/ports/clouds && make …'`.
 - `ports/clouds` targets:
   - comparing with upstream: `ref`, `copy`, `copy-check`, `copyd` (double-precision diagnostic), `port`, `port44`, `compare`, `spec`;
   - checks: `test` (kernels: assembly = C), `test-governor`;

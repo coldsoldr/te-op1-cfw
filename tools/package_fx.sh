@@ -6,14 +6,15 @@
 set -e
 NAME=$1
 ENGINES=$2
-REPO=/i/GitHub/PersonalProjects/OP1.CustomFirmware
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+WREPO=$(wsl -e wslpath -a "$(cygpath -w "$REPO")" | tr -d '')
 cd $REPO
 F="op1 firmware"
 S=$(mktemp -d)   # scratch: nm output, symbol and hook lists
-wsl -e bash -lc "cd /mnt/i/GitHub/PersonalProjects/OP1.CustomFirmware/ports/rings && rm -f build/op1_seq.elf && make op1-seq FX_ENGINES='$ENGINES' 2>&1 | grep -E 'error|undefined|^\.text|^\.bss' | grep -v RWX; test -f build/op1_seq.elf"
-wsl -e bash -lc "cd /mnt/i/GitHub/PersonalProjects/OP1.CustomFirmware/ports/rings && ~/op1-toolchain/bfin/bin/bfin-elf-nm build/op1_seq.elf" | tr -d '\r' > $S/nm_$NAME.txt
+wsl -e bash -lc "cd $WREPO/ports/rings && rm -f build/op1_seq.elf && make op1-seq FX_ENGINES='$ENGINES' 2>&1 | grep -E 'error|undefined|^\.text|^\.bss' | grep -v RWX; test -f build/op1_seq.elf"
+wsl -e bash -lc "cd $WREPO/ports/rings && ~/op1-toolchain/bfin/bin/bfin-elf-nm build/op1_seq.elf" | tr -d '\r' > $S/nm_$NAME.txt
 if grep -q '_GLOBAL__sub_I' $S/nm_$NAME.txt; then echo "static initialiser!"; exit 1; fi
-U=$(wsl -e bash -lc "cd /mnt/i/GitHub/PersonalProjects/OP1.CustomFirmware/ports/rings && ~/op1-toolchain/bfin/bin/bfin-elf-nm -u build/op1_seq.elf | wc -l" | tr -d '\r')
+U=$(wsl -e bash -lc "cd $WREPO/ports/rings && ~/op1-toolchain/bfin/bin/bfin-elf-nm -u build/op1_seq.elf | wc -l" | tr -d '\r')
 echo "undefined symbols: $U"
 END=$(grep ' ___image_end$' $S/nm_$NAME.txt | awk '{print $1}')
 echo "image end: 0x$END (limit 0x03000000)"

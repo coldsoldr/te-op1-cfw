@@ -1,6 +1,6 @@
 # Grids port: bit-exact comparison with upstream and Blackfin benchmark.
 # Run inside WSL from this directory:
-#   wsl -e bash -lc 'cd /mnt/i/GitHub/PersonalProjects/OP1.CustomFirmware/ports/grids && make ...'
+#   wsl -e bash -lc 'cd /mnt/<drive>/<repo>/ports/grids && make ...'
 #
 #   make compare    port vs upstream pattern_generator.cc (host, shims in shim/),
 #                   plus the OP-1 layer checks             -> out/compare.txt
