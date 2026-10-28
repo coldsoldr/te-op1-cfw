@@ -1,0 +1,381 @@
+diff --git a/docs/ADDING-PLUGINS.md b/docs/ADDING-PLUGINS.md
+index b23262b..8ac383f 100644
+--- a/docs/ADDING-PLUGINS.md
++++ b/docs/ADDING-PLUGINS.md
+@@ -44,7 +44,10 @@ Render it straight from your working folder, no Blackfin toolchain needed:
+ ```
+ 
+ `--plugin-dir` takes a plugin folder or a folder of plugin folders and can be repeated; a folder with the same
+-name as a bundle plugin overrides it. Include SDK headers by name (`#include "op1_plugin.h"`,
++name as a bundle plugin overrides it. A plugin written in C++ works too: `.cc`, `.cpp` and `.cxx` sources are
++compiled with g++ (`-std=gnu++17 -fno-exceptions -fno-rtti`, plus the manifest's `cxxflags`) and `.S` files are
++skipped, so Blackfin assembly kernels need a C fallback under `#ifndef __bfin__`. Sources and headers outside the
++plugin folder (`"../../core/x.cc"`, `include_dirs`) count towards the rebuild check. Include SDK headers by name (`#include "op1_plugin.h"`,
+ `"op1_synth.h"`, `"seq/seq_text.h"`): the SDK folder is on the include path. Relative paths like
+ `"../../op1_synth.h"` only work inside the bundle's `plugins/` folder.
+ 
+@@ -54,7 +57,7 @@ a few seconds and is cached until a source file changes.
+ ### Code that only works on the device
+ 
+ A plugin may read firmware memory or Blackfin registers directly, e.g. a key-state byte at a raw address or the
+-`CYCLES` counter through inline assembly. That crashes or doesn't compile on the host. Either keep such code
++`CYCLES` counter through inline assembly, or place its state at a fixed SDRAM address. That crashes or doesn't compile on the host. Either keep such code
+ under `#ifndef OP1_HOST` with a host fallback (`host_shift`, `host_cycles` and the other stand-ins in
+ `sim/include/harness/op1_host.h`), or add an exact-match patch in `op1video/compat.py`. VAPORA is the example: its
+ screen reads the Shift byte at `0x01DD7F78` and `CYCLES`, and two patches point them at `host_shift` and
+diff --git a/docs/INSTALL.md b/docs/INSTALL.md
+index 7fc2382..6dad454 100644
+--- a/docs/INSTALL.md
++++ b/docs/INSTALL.md
+@@ -51,9 +51,13 @@ Use WSL (Windows Subsystem for Linux), which gives you Ubuntu: run `wsl --instal
+ terminal, and follow the Ubuntu steps above. The rendered files are reachable from Windows at
+ `\\wsl$\Ubuntu\home\<you>\op1-plugin-video\renders`.
+ 
+-Natively on Windows (without WSL) you need a gcc (e.g. MSYS2's `mingw-w64-ucrt-x86_64-gcc`) on PATH, ffmpeg on
+-PATH, and `pip install cairosvg` (with the GTK runtime for its cairo DLL) or the `resvg` executable on PATH.
+-`./op1video.py doctor` tells you what is missing.
++Natively on Windows (without WSL) you need a gcc (e.g. MSYS2's `mingw-w64-ucrt-x86_64-gcc`; g++ from the same
++package for C++ plugins) on PATH, ffmpeg on PATH, and `pip install cairosvg` (with the GTK runtime for its cairo
++DLL; an Anaconda Python has cairo already) or the `resvg` executable on PATH. `./op1video.py doctor` tells you
++what is missing. The compiler's own folder is put first on PATH while it runs: with another distribution's DLLs
++(Anaconda's zlib, libwinpthread) ahead of MSYS2's, gcc's helpers exit silently. Frames are rasterised by worker
++processes started with `spawn`, so run the tool through `op1video.py` or `python -m op1video`, not from an
++interactive import.
+ 
+ ## Without a virtual environment
+ 
+diff --git a/op1video.py b/op1video.py
+index 3527fef..5992955 100755
+--- a/op1video.py
++++ b/op1video.py
+@@ -6,4 +6,6 @@ from pathlib import Path
+ sys.path.insert(0, str(Path(__file__).resolve().parent))
+ from op1video.cli import main  # noqa: E402
+ 
+-main()
++# Guarded: on Windows the rasterising pool starts its workers by re-importing this file.
++if __name__ == "__main__":
++    main()
+diff --git a/op1video/build.py b/op1video/build.py
+index 7ef8be5..bb73477 100644
+--- a/op1video/build.py
++++ b/op1video/build.py
+@@ -1,8 +1,11 @@
+-"""Compile a plugin's own C sources together with the host simulator into a small program, op1sim.
++"""Compile a plugin's own sources together with the host simulator into a small program, op1sim.
+ 
+ Each plugin source is compiled in its own translation unit, as the firmware build does, through a wrapper that
+-also exports that unit's beat clock (op1_plugin.h keeps one static clock per unit on the host). Results are cached
+-under .cache/build/<plugin>-<hash>/ so a plugin is only rebuilt when its sources, the simulator or flags change.
++also exports that unit's beat clock (op1_plugin.h keeps one static clock per unit on the host). C sources go
++through the C compiler, C++ sources (.cc, .cpp, .cxx: plugins written against the SDK from C++) through the C++
++compiler with the plugin's `cxxflags`; assembly (.S) is device-only and skipped, the plugin's C fallbacks stand
++in. Results are cached under .cache/build/<plugin>-<hash>/ so a plugin is only rebuilt when its sources, the
++simulator or flags change.
+ """
+ from __future__ import annotations
+ 
+@@ -21,9 +24,16 @@ SIM = ROOT / "sim"
+ SIM_FILES = [SIM / "driver.c", SIM / "host.c", SIM / "include" / "harness" / "op1_host.h"]
+ # -fwrapv: the DSP code relies on two's-complement wrap-around (phase accumulators, Q15 maths), as on the
+ # Blackfin; -fno-strict-aliasing: firmware-style pointer casts.
+-BASE_FLAGS = ["-std=gnu11", "-O2", "-fwrapv", "-fno-strict-aliasing", "-DOP1_HOST"]
++COMMON_FLAGS = ["-O2", "-fwrapv", "-fno-strict-aliasing", "-DOP1_HOST"]
++C_FLAGS = ["-std=gnu11"]
++# as the kennel packer builds C++ plugins for the device (no exceptions, RTTI or static guards)
++CXX_FLAGS = ["-std=gnu++17", "-fno-exceptions", "-fno-rtti", "-fno-threadsafe-statics", "-fno-use-cxa-atexit"]
++BASE_FLAGS = COMMON_FLAGS + C_FLAGS           # kept for callers and the fingerprint
+ # flags in plugin.json meant for the Blackfin toolchain that a host compiler may not accept
+ DROP_FLAGS = {"-mcpu=bf524", "-mcsync-anomaly", "-mspecld-anomaly", "-mfast-fp", "-mlow64k"}
++C_SUFFIXES = (".c",)
++CXX_SUFFIXES = (".cc", ".cpp", ".cxx")
++HEADER_SUFFIXES = (".h", ".hh", ".hpp", ".inc")
+ 
+ 
+ class BuildError(RuntimeError):
+@@ -40,34 +50,97 @@ def compiler() -> str:
+     raise BuildError("no C compiler found: install gcc or clang (see docs/INSTALL.md), or set CC")
+ 
+ 
++def cxx_compiler(cc: str) -> str:
++    """The C++ compiler that goes with `cc`: $CXX, else g++/clang++ next to it, else the first on PATH."""
++    cxx = os.environ.get("CXX")
++    if cxx:
++        return cxx
++    path = shutil.which(cc)
++    folder = str(Path(path).parent) if path else None
++    for c in ("g++", "clang++", "c++"):
++        found = shutil.which(c, path=folder) if folder else None
++        if found:
++            return found
++    for c in ("g++", "clang++", "c++"):
++        if shutil.which(c):
++            return c
++    raise BuildError("no C++ compiler found for the plugin's C++ sources: install g++ or clang++, or set CXX")
++
++
++def _env(cc: str) -> dict[str, str]:
++    """The environment the compilers run in. On Windows the compiler's own folder goes first on PATH: gcc's
++    helpers (cc1, collect2) load DLLs by name, and another distribution earlier on PATH (Anaconda ships zlib,
++    libwinpthread and libgcc of its own) makes them exit silently."""
++    env = dict(os.environ)
++    if os.name == "nt":
++        path = shutil.which(cc)
++        if path:
++            env["PATH"] = str(Path(path).parent) + os.pathsep + env.get("PATH", "")
++    return env
++
++
+ def kind_define(p: Plugin) -> str:
+     return {"synth": "-DOP1V_KIND_SYNTH", "fx": "-DOP1V_KIND_FX", "input": "-DOP1V_KIND_INPUT"}[p.kind]
+ 
+ 
++def _host_flags(flags: list[str]) -> list[str]:
++    return [f for f in flags if f not in DROP_FLAGS and not f.startswith("-mcpu")]
++
++
+ def _plugin_flags(p: Plugin) -> list[str]:
+-    flags = [f for f in p.cflags if f not in DROP_FLAGS and not f.startswith("-mcpu")]
++    flags = _host_flags(p.cflags)
+     for inc in p.include_dirs:
+         flags.append("-I" + str((p.dir / inc).resolve()))
+     return flags
+ 
+ 
++def _plugin_cxxflags(p: Plugin) -> list[str]:
++    return _host_flags(getattr(p, "cxxflags", []))
++
++
+ def compat_file(p: Plugin) -> Path:
+     """Optional per-plugin host glue (sim/compat/<plugin>.c) for plugins that ship their own preview hooks."""
+     return SIM / "compat" / f"{p.name}.c"
+ 
+ 
+-def _fingerprint(p: Plugin, cc: str, extra: list[str]) -> str:
++def _is_c(src: str) -> bool:
++    return src.endswith(C_SUFFIXES)
++
++
++def _is_cxx(src: str) -> bool:
++    return src.endswith(CXX_SUFFIXES)
++
++
++def _fingerprint(p: Plugin, cc: str, cxx: str | None, extra: list[str]) -> str:
+     h = hashlib.sha256()
+     h.update(cc.encode())
+-    h.update(" ".join(BASE_FLAGS + extra + _plugin_flags(p)).encode())
++    h.update((cxx or "").encode())
++    h.update(" ".join(COMMON_FLAGS + C_FLAGS + CXX_FLAGS + extra + _plugin_flags(p) + _plugin_cxxflags(p)).encode())
+     h.update(repr(compat.patched_sources(p.name)).encode())
+     for f in SIM_FILES + [compat_file(p)]:
+         if f.exists():
+             h.update(f.read_bytes())
++    seen: set[Path] = set()
++
++    def add(f: Path, label: str) -> None:
++        if f in seen or not f.is_file():
++            return
++        seen.add(f)
++        h.update(label.encode())
++        h.update(f.read_bytes())
++
+     for f in sorted(p.dir.rglob("*")):
+-        if f.is_file() and f.suffix in (".c", ".h", ".S", ".inc", ".json"):
+-            h.update(str(f.relative_to(p.dir)).encode())
+-            h.update(f.read_bytes())
++        if f.suffix in C_SUFFIXES + CXX_SUFFIXES + HEADER_SUFFIXES + (".S", ".json"):
++            add(f, str(f.relative_to(p.dir)))
++    # sources and headers outside the plugin folder (a plugin built from a ports tree: "../../core/x.cc")
++    for src in p.sources:
++        add((p.dir / src).resolve(), src)
++    for inc in p.include_dirs:
++        root = (p.dir / inc).resolve()
++        if root.is_dir():
++            for f in sorted(root.rglob("*")):
++                if f.suffix in HEADER_SUFFIXES:
++                    add(f, str(f))
+     return h.hexdigest()[:16]
+ 
+ 
+@@ -75,8 +148,10 @@ def build(p: Plugin, sdk_root: Path, verbose: bool = False, force: bool = False,
+     """Return the path of op1sim for plugin `p`, compiling it if needed."""
+     extra = list(extra or [])
+     cc = compiler()
+-    out_dir = cache_dir() / "build" / f"{p.name}-{_fingerprint(p, cc, extra)}"
+-    exe = out_dir / "op1sim"
++    has_cxx = any(_is_cxx(s) for s in p.sources)
++    cxx = cxx_compiler(cc) if has_cxx else None
++    out_dir = cache_dir() / "build" / f"{p.name}-{_fingerprint(p, cc, cxx, extra)}"
++    exe = out_dir / ("op1sim.exe" if os.name == "nt" else "op1sim")
+     if exe.exists() and not force:
+         return exe
+     if out_dir.exists():
+@@ -88,15 +163,16 @@ def build(p: Plugin, sdk_root: Path, verbose: bool = False, force: bool = False,
+     defines = [kind_define(p), f"-DOP1V_SYMBOL={p.symbol}"]
+     if p.screen_symbol:
+         defines.append(f"-DOP1V_SCREEN={p.screen_symbol}")
+-    common = BASE_FLAGS + includes + _plugin_flags(p) + extra
++    common = COMMON_FLAGS + includes + _plugin_flags(p) + extra
++    env = _env(cc)
+ 
+-    units: list[tuple[Path, list[str]]] = []
+-    c_sources = [s for s in p.sources if s.endswith(".c")]
+-    skipped = [s for s in p.sources if not s.endswith(".c")]
++    units: list[tuple[Path, list[str], bool]] = []          # (file, flags, is C++)
++    sources = [s for s in p.sources if _is_c(s) or _is_cxx(s)]
++    skipped = [s for s in p.sources if not (_is_c(s) or _is_cxx(s))]
+     if skipped and verbose:
+         print(f"  note: skipping non-C sources (device-only assembly): {', '.join(skipped)}")
+     patches = compat.patched_sources(p.name)
+-    for i, src in enumerate(c_sources):
++    for i, src in enumerate(sources):
+         path = (p.dir / src).resolve()
+         if src in patches:                      # exact-match host fixes (compat.py), applied to a copy
+             pdir = out_dir / "patched"
+@@ -107,41 +183,57 @@ def build(p: Plugin, sdk_root: Path, verbose: bool = False, force: bool = False,
+                 raise BuildError(str(e))
+             path = pdir / Path(src).name
+             path.write_text(text)
+-        w = out_dir / f"unit{i}.c"
+-        w.write_text(
+-            f'/* generated by op1video: plugin source {src} plus its beat-clock accessor */\n'
+-            f'#include "{path}"\n'
+-            '#include "op1_plugin.h"\n'
+-            f'op1_beat_t *op1v_beat_{i}(void) {{ return host_beat(); }}\n')
+-        units.append((w, ["-w"]))
++        inc = path.as_posix()
++        if _is_cxx(src):
++            w = out_dir / f"unit{i}.cc"
++            w.write_text(
++                f'// generated by op1video: plugin source {src} plus its beat-clock accessor\n'
++                f'#include "{inc}"\n'
++                'extern "C" {\n#include "op1_plugin.h"\n}\n'
++                f'extern "C" op1_beat_t *op1v_beat_{i}(void) {{ return host_beat(); }}\n')
++            units.append((w, ["-w"], True))
++        else:
++            w = out_dir / f"unit{i}.c"
++            w.write_text(
++                f'/* generated by op1video: plugin source {src} plus its beat-clock accessor */\n'
++                f'#include "{inc}"\n'
++                '#include "op1_plugin.h"\n'
++                f'op1_beat_t *op1v_beat_{i}(void) {{ return host_beat(); }}\n')
++            units.append((w, ["-w"], False))
+     beats = out_dir / "beats.c"
+-    n = len(c_sources)
++    n = len(sources)
+     decl = "".join(f"op1_beat_t *op1v_beat_{i}(void);\n" for i in range(n))
+     table = ", ".join(f"op1v_beat_{i}" for i in range(n)) or "0"
+     beats.write_text('#include "op1_plugin.h"\n' + decl +
+                      f"op1_beat_t *(*const op1v_beats[])(void) = {{ {table} }};\n"
+                      f"const int op1v_nbeats = {n};\n")
+-    units.append((beats, []))
+-    units.append((SIM / "host.c", ["-Wall", "-Wno-unused-function"]))
++    units.append((beats, [], False))
++    units.append((SIM / "host.c", ["-Wall", "-Wno-unused-function"], False))
+     if compat_file(p).exists():
+-        units.append((compat_file(p), ["-Wall"]))
+-    units.append((SIM / "driver.c", ["-Wall", "-Wno-unused-function"] + defines))
++        units.append((compat_file(p), ["-Wall"], False))
++    units.append((SIM / "driver.c", ["-Wall", "-Wno-unused-function"] + defines, False))
+ 
+     objs = []
+-    for src, flags in units:
++    for src, flags, is_cxx in units:
+         obj = out_dir / (src.stem + ".o")
+-        cmd = [cc, *common, *flags, "-c", str(src), "-o", str(obj)]
+-        _run(cmd, verbose, f"compiling {src.name} for {p.name}")
++        if is_cxx:
++            cmd = [cxx, *common, *CXX_FLAGS, *_plugin_cxxflags(p), *flags, "-c", str(src), "-o", str(obj)]
++        else:
++            cmd = [cc, *common, *C_FLAGS, *flags, "-c", str(src), "-o", str(obj)]
++        _run(cmd, env, verbose, f"compiling {src.name} for {p.name}")
+         objs.append(str(obj))
+-    _run([cc, *objs, "-lm", "-o", str(exe)], verbose, f"linking {p.name}")
++    link = [cxx if has_cxx else cc, *objs, "-lm"]
++    if os.name == "nt":
++        link.append("-static")                  # no compiler DLLs to find at run time
++    _run([*link, "-o", str(exe)], env, verbose, f"linking {p.name}")
+     return exe
+ 
+ 
+-def _run(cmd: list[str], verbose: bool, what: str) -> None:
++def _run(cmd: list[str], env: dict[str, str], verbose: bool, what: str) -> None:
+     if verbose:
+         print("  $ " + " ".join(shlex.quote(c) for c in cmd))
+-    r = subprocess.run(cmd, capture_output=True, text=True)
++    r = subprocess.run(cmd, capture_output=True, text=True, env=env)
+     if r.returncode:
+-        msg = (r.stderr or r.stdout).strip()
++        msg = (r.stderr or r.stdout).strip() or f"(no compiler output, exit {r.returncode})"
+         lines = [l for l in msg.splitlines() if "error" in l.lower() or "undefined reference" in l or "multiple definition" in l] or msg.splitlines()
+         raise BuildError(f"{what} failed:\n" + "\n".join(lines[:25]))
+diff --git a/op1video/sdk.py b/op1video/sdk.py
+index 6078e43..b09611e 100644
+--- a/op1video/sdk.py
++++ b/op1video/sdk.py
+@@ -180,6 +180,7 @@ class Plugin:
+     svg: Path | None = None
+     screen_symbol: str | None = None
+     cflags: list[str] = field(default_factory=list)
++    cxxflags: list[str] = field(default_factory=list)   # C++ sources only (.cc, .cpp, .cxx)
+     include_dirs: list[str] = field(default_factory=list)
+     uses_sample: bool = False
+     stereo: bool = False
+@@ -211,7 +212,7 @@ def load_plugin(folder: Path) -> Plugin | None:
+         name=folder.name, display=d.get("name", folder.name), dir=folder, kind=kind, symbol=d["symbol"], sources=list(d["sources"]),
+         defaults=defaults, page2_defaults=p2, order=int(d.get("order") or 0),
+         svg=svg if svg and svg.exists() else None, screen_symbol=screen.get("symbol"),
+-        cflags=list(d.get("cflags") or []), include_dirs=list(d.get("include_dirs") or []),
++        cflags=list(d.get("cflags") or []), cxxflags=list(d.get("cxxflags") or []), include_dirs=list(d.get("include_dirs") or []),
+         uses_sample=bool(d.get("uses_sample")), stereo=bool(d.get("stereo")),
+         author=d.get("author", ""), meta=d,
+     )
+diff --git a/op1video/svgframe.py b/op1video/svgframe.py
+index 4f3f71d..b31e6e4 100644
+--- a/op1video/svgframe.py
++++ b/op1video/svgframe.py
+@@ -1,7 +1,7 @@
+ """Turn the simulator's per-frame records into SVG documents.
+ 
+ A frame record (one JSON line from op1sim) has:
+-  nodes: {id: {"m": [a,b,0,c,d,0,tx,ty,1024], "v": 0, "s": "rrggbbaa", "fl": "rrggbbaa"}}  (Q10 matrix)
++  nodes: {id: {"m": [a,b,0,c,d,0,tx,ty,1024], "v": 0|1, "s": "rrggbbaa", "fl": "rrggbbaa"}}  (Q10 matrix)
+   ops  : [["svg"] | ["l", x0, y0, x1, y1, w, "rrggbbaa"] | ["t", x, y, size, align, "rrggbbaa", "str", [m9]]]
+ Node matrices are row-vector matrices, x' = a*x + c*y + tx, y' = b*x + d*y + ty, which is exactly SVG's
+ matrix(a b c d tx ty). Ops are immediate-mode drawing; the SVG is drawn where ["svg"] appears (first, if the
+@@ -131,8 +131,11 @@ class SvgScreen:
+             if m:
+                 a, b, _, c, d, _, tx, ty, _ = m
+                 el.set("transform", "matrix(%s)" % " ".join(f"{v / 1024:.5f}" for v in (a, b, c, d, tx, ty)))
+-            if st.get("v") == 0:
++            v = st.get("v")
++            if v == 0:
+                 el.set("display", "none")
++            elif v == 1 and el.get("display") == "none":      # authored hidden, shown by the screen
++                del el.attrib["display"]
+             if "s" in st:
+                 _paint(el, "stroke", st["s"])
+             if "fl" in st:
+diff --git a/sim/host.c b/sim/host.c
+index afa7a15..f52c10d 100644
+--- a/sim/host.c
++++ b/sim/host.c
+@@ -247,7 +247,7 @@ void host_frame_dump(FILE *f, int frame, double t_ms)
+         host_node *n = &nodes[i];
+         int st = n->has_stroke && memcmp(n->stroke, n->stroke0, 4);
+         int fi = n->has_fill && memcmp(n->fill, n->fill0, 4);
+-        if (!n->has_m && !(n->vis_touched && !n->visible) && !st && !fi) continue;
++        if (!n->has_m && !n->vis_touched && !st && !fi) continue;
+         fprintf(f, "%s", first ? "" : ",");
+         first = 0;
+         put_str(f, n->id);
+@@ -259,7 +259,8 @@ void host_frame_dump(FILE *f, int frame, double t_ms)
+             fputc(']', f);
+             k = 1;
+         }
+-        if (n->vis_touched && !n->visible) { fprintf(f, "%s\"v\":0", k ? "," : ""); k = 1; }
++        /* a node the screen switched: 0 hides it, 1 shows one the SVG authored hidden (display="none") */
++        if (n->vis_touched) { fprintf(f, "%s\"v\":%d", k ? "," : "", n->visible ? 1 : 0); k = 1; }
+         if (st) { fprintf(f, "%s\"s\":", k ? "," : ""); put_rgba(f, n->stroke); k = 1; }
+         if (fi) { fprintf(f, "%s\"fl\":", k ? "," : ""); put_rgba(f, n->fill); }
+         fputc('}', f);

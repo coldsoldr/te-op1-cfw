@@ -9,3 +9,9 @@ incoming/*.jpg
 app/data/
 
 build/
+
+# never the OP-1 firmware or downloaded archives
+*.op1
+incoming/hundekraft/
+incoming/*.pdf
+incoming/*.zip
