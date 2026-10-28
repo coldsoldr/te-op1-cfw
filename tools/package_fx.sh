@@ -7,7 +7,7 @@ set -e
 NAME=$1
 ENGINES=$2
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-WREPO=$(wsl -e wslpath -a "$(cygpath -w "$REPO")" | tr -d '')
+WREPO=$(wsl -e wslpath -a "$(cygpath -w "$REPO")" | tr -d '\r')
 cd $REPO
 F="op1 firmware"
 S=$(mktemp -d)   # scratch: nm output, symbol and hook lists
