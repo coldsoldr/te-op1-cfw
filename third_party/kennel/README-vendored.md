@@ -16,6 +16,7 @@ What is here and why:
 | `synth_sdk/kennel/kn_exports.c` | the exact symbols a plugin may import from the 3.0.3 core; `knl_pack.py` checks imports against it |
 | `synth_sdk/template/` | hundekraft's synth and FX starting points |
 | `synth_sdk/harness/` | `svg_check.py` (the packer's turn-back rule) and the Clouds host checks |
+| `synth_sdk/seq/seq_text.h` | the sequencer types' stroke text and settings store (`sq_store_*`, `sq_join` / `sq_split`): the declarations our sequencer features (`ports/knl/marbles`, `grids`) link against; the core holds the one copy. Copied 2026-10-28, unchanged |
 | `synth_sdk/plugins/clouds`, `plugins/plate` | reference plugins for the two effects we also have, same ids |
 | `synth_sdk/plugins/ORDERS.md`, `PLUGINS.md` | legacy order numbers (new plugins use order 0) |
 | `tools/kennel/` | `pack.py` (packer), `reloc.py` (reference loader), `merge.ld`, format tests |

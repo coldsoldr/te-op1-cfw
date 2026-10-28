@@ -4,6 +4,7 @@ A fixed-point port of Mutable Instruments Marbles' generators (the T clock/rhyth
 
 - Design, verification, CPU cost, the OP-1 glue design and the integration plan: `docs/marbles-port.md`.
 - The OP-1 LFO interface it plugs into: `docs/lfo-interface.md`.
+- As a sequencer: `op1/marbles_seq.*` (the core, `docs/marbles-port.md` §9) and, since 2026-10-28, the kennel plugin `ports/knl/marbles/` for hundekraft (`docs/kennel-plugins.md` "Sequencer features"); the firmware glue `op1/marbles_op1.cc` stays as the lab.
 
 ## Layout
 

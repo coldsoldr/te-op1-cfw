@@ -123,7 +123,51 @@ The packer links with `--gc-sections` rooted at the two descriptors and `--force
 (C++ inline variables and templates would otherwise stay in COMDAT groups their packer rejects), so
 a plugin carries only what its callbacks reach.
 
-Still to port: Marbles and Grids (phase 3, sequencer features).
+## Sequencer features (2026-10-28): marbles and grids
+
+Kennel's sequencer types (`op1_feature_seq.h`): a feature file (kind 3) whose `op1_feature_t.seq` is
+set adds a named entry to the sequencer list of both instruments (the core writes the `seq_types`
+row when the file loads). It runs as R246's finger type plus "which type is active" per mode, with
+its own player object (a vtable in `ok_player`'s shape: key_down / key_up / reset / tick / stop),
+its screen in finger's slot 0x2D while it is the mode's sequencer (the encoder pushes and turns on
+that screen go to the type), and its settings in its own op1.db table through the core's
+background saver (`sq_store_load` / `sq_store_dirty` and `sq_join` / `sq_split` from
+`seq/seq_text.h`, vendored into `third_party/kennel/synth_sdk/seq/`). What ours share:
+`ports/knl/common/knl_seq.h` (the mode, the octaves and shift read as hundekraft's own sequencers
+read them, the notes through `op1_seq_note_on` / `op1_seq_note_off`, the settings text's Q16
+encoding), `common/knl_seq_player.c` (the vtable; C, because a function address cast to a word is
+a static initialiser in C++ and the loader runs none), and `common/knl_seq_host.h` with
+`ports/knl/tests/` (the glue on the host against stubs of the core's services: `make host-test`).
+
+Both plugins keep one core per mode (synth and drum), so each instrument has its own settings and
+run. The keys are the transport, as decided for Test 36: hold a key = run from the press, shift
+pressed while keys are held latches, the next press takes over, the last key up stops; the stock
+SEQ switch decides whether the player gets keys and ticks at all. On the type's screen, lift, drop
+and scissors are swallowed (finger's controller would act on them, as hundekraft's peal and c64arp
+do); no shift + key shortcuts; `midi_start` does nothing. The settings text carries Q16 values as
+0..8191 (the top value maps back to full scale), modes and keys as themselves (255 = no key).
+
+| id | knobs (blue, green, white, orange) | presses | table |
+|---|---|---|---|
+| marbles (a synth sequencer; on the drums a pitch picks a sound, so a kit gets Marbles' rhythms) | T page: rate, deja vu, jitter, bias. X page: spread, length, steps, bias. Shift + turn: an eighth of a click | blue: T model (T page) or scale (X page), shift: backwards; green: the page's deja vu off / on / locked (shift: backwards); white: pitch source scale / keys; shift + white: the page; orange: nothing | `marblesseq` |
+| grids (a drum sequencer; on the synth the parts play keys 0, 2 and 8 as notes) | drums: map X, map Y, chaos, swing. Euclidean: the three parts' lengths, swing. Shift + turn: BD / SD / HH fill (Euclidean: hits), accent | blue: drums / Euclidean, shift: 16ths / 32nds; green: a new chaos draw, shift: forget the accent keys; white: assign BD, then SD, HH, the three accent keys, then off: while armed the next key pressed becomes the part's sound (and auditions), and the keys are the transport again only once white has cycled to off; shift + white: the random voice (key 12) on / off; shift + orange: print the last bar into the stock pattern sequencer's drum data (the stock data getter and saver, as the firmware build) | `gridsseq` |
+
+Screens: the firmware build's designs (`ports/marbles/op1/marbles.svg` "Dots", `ports/grids/op1/grids.svg`
+"Panel + kit", both run on the device in Tests 21-36) with the category dots stripped by
+`tools/knl_svg.py`, the same node ids, drawn for the mode on screen. hundekraft's `svg_check.py`
+passes on both.
+
+| id | file | resident (bss) | imports |
+|---|---|---|---|
+| marbles | 142 KB (Marbles' tables 80 KB, code 44 KB, the screen 13 KB) | 12.6 KB (two cores of 4.8 KB, the note ids, the SQL buffer) | op1_seq_note_on / off, sq_store_load / dirty, sq_join / split |
+| grids | 28 KB (the screen 10 KB) | 1.4 KB | the same six |
+
+Host tests (`make host-test`, both "all ok"): the player's vtable functions (consumed keys, the run
+from the press, the latch, the take-over, the stop, no stray note-offs, the octaves in the notes,
+the drum sound = the key at its own pitch), the presses and turns, the dirty marks, the settings
+text round trip and its refusals. **Not yet on the device (Test 62):** the finger-slot player's
+tick counter being the half-beat phase (Test 20 measured tombola's), the key_down shift flag,
+print under the grids type, the screens in slot 0x2D, the saver tables.
 
 ## Own screens (2026-10-27)
 

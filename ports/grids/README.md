@@ -4,6 +4,7 @@ Mutable Instruments Grids' pattern generator for the OP-1's Blackfin BF524, to b
 
 - What's ported, how it's verified, the CPU and size costs, and the OP-1 integration design: `docs/grids-port.md`.
 - The OP-1 sequencer interface it plugs into: `docs/sequencer-interface.md`.
+- Since 2026-10-28 also the kennel plugin `ports/knl/grids/` for hundekraft (`docs/kennel-plugins.md` "Sequencer features"), on the same core `op1/grids_seq.*`; the firmware glue `op1/grids_op1.cc` stays as the lab.
 
 ## Layout
 

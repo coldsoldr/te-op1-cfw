@@ -79,6 +79,8 @@ and `third_party/kennel/PLUGIN_GUIDE.md`.
   the Rings + Clouds limit re-stated in the manual.
 
 ### 3. Marbles and Grids as sequencer features
+Built 2026-10-28 (`ports/knl/marbles`, `ports/knl/grids`; `docs/kennel-plugins.md` "Sequencer features");
+Test 62 awaits the install.
 - `op1_feature_t` with `.seq` = `op1_seq_type_t` (player object with the R246 ok_player vtable
   shape, screen in slot 0x2D, key/press/turn callbacks, `op1_seq_note_on/off`).
 - The key transport (hold to run, shift latches) re-expressed through `key()`; settings in their

@@ -221,3 +221,11 @@ The user chose a **sequencer** host: Marbles on the **tombola** sequencer (synth
 - **Transport (2026-10-19, seq14, Test 36):** as the OP-1's own sequencers. Marbles runs while a key is held, from the key press (clock and deja vu loops restart there); shift pressed while keys are held latches it; the next key press takes over and clears the latch; the last key up stops it. The host polls the shift flag (`0x01dd7f78`) before each Tick (`set_shift_held`).
 - **Controls:** T page rate / bias / jitter / deja vu; X page spread / bias / steps / length; white = page, shift + white = pitch source, blue = T model or scale, green = the page's deja vu off/on/locked.
 - **Glue:** `op1/marbles_op1.cc` (tombola player, controller and screen words; RAM settings; a digit readout until `marbles.svg` arrives). Image: `make op1-marbles` in `ports/rings` (Clouds + Marbles). Checks: `make sim-seq`. Device: Test 21.
+
+## 10. As a kennel plugin (2026-10-28)
+
+The sequencer of §9 ships for hundekraft as the feature plugin `ports/knl/marbles/` (`build/knl/marbles.knl`):
+the same core (`op1/marbles_seq.*`), one per instrument, kennel's player vtable and screen slot in
+place of the tombola hooks, the clicks as the type's encoder presses (orange free), the settings in
+the op1.db table `marblesseq`. `docs/kennel-plugins.md` "Sequencer features" has the control map and
+the host tests; `docs/device-tests.md` Test 62 the device check.

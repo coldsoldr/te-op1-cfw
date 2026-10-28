@@ -2155,3 +2155,47 @@ add). At 120: shift + blue clockwise past "1/4" reads "1/2T", "1/4.", "1/2" (667
 "1/4" is the last (1/2T would be 1.6 s).
 
 **Round 3 (2026-10-28): "it's on and is great."** Test 61 done; tape echo is finished.
+
+## Test 62: marbles and grids, the two sequencer features (`build/knl/marbles.knl`, `build/knl/grids.knl`)
+
+Both are new ids: add them through the workshop (Your plugins → Update OP-1 → T1), no remove needed.
+After the restart:
+
+1. **The list.** On the synth, shift + SEQ (the sequencer chooser): "marbles" and "grids" after the
+   stock and hundekraft entries. If one is missing, the workshop's inventory says why (API, an
+   import, memory). Pick marbles: its screen (the "Dots" design: three lanes, the legend bars, the
+   chip row, the page squares) replaces finger's.
+2. **The transport.** With the sequencer on (SEQ lit), hold a key: Marbles runs from the press,
+   chords from the gates within two octaves above the key, marks scrolling in the lanes. Release:
+   silence. Hold a key, press shift, release the key: it keeps running; press another key: it takes
+   over (a new root); release: it stops. Shift already down + a key: the key plays itself.
+3. **The encoders** on the marbles screen: blue the rate (the first legend bar steps through the
+   divisions), green deja vu, white jitter, orange bias; shift + turn: fine. Press blue: the chip
+   marker moves (the T model); shift + blue: back. Press green: the bracket above the lanes appears
+   dim (on), then bright (locked), then goes (off). Press white: the keyboard icon lights (keys mode:
+   hold a chord, Marbles picks from it). Shift + white: the X page (the legend icons change): spread,
+   length (the lower bracket's width), steps, bias; press blue there: the scale.
+4. **Settings persist.** Change a few, pick another sequencer and marbles again, then restart: the
+   same (table `marblesseq`). A sound saved with marbles comes back with it.
+5. **Marbles on the drums.** Pick marbles on the drum instrument: holding a key plays the kit with
+   Marbles' rhythms (a pitch picks a sound).
+6. **grids on the drums.** Pick grids: its screen (the map, the kit, the four bars, the state icons).
+   Hold a key: the bar runs on keys 0, 2 and 8 (kick, snare and hat in the factory kits), the
+   playhead moving under the ticks, the kit pieces lighting on their hits. The latch and the
+   take-over as in 2.
+7. **The encoders:** blue and green move the map dot (the groove morphs), white chaos, orange swing;
+   shift + turn: the fill bars (the shift icon shows). Press blue: Euclidean (the octagon; the bars
+   are lengths); shift + blue: 32nds. Press green: another chaos draw. Press white: the assign arrow
+   at the kick; press a key: the kick is that sound now (it auditions); white again: the snare, the
+   hat, then the three accent keys, then off (the arrow goes). The keys are the transport again only
+   once the arrow is gone. Shift + white: the die lights (the random voice on key 12).
+8. **Print.** After a bar has played, shift + orange press; pick the stock "pattern" sequencer: it
+   shows and plays the last bar (16 steps).
+9. **Settings persist** as in 4 (table `gridsseq`). grids on the synth: the parts play as notes.
+10. **Removal.** Remove both, restart: the OP-1 boots; a sound saved with "marbles" or "grids" runs as
+    finger and keeps its name; add them back and it comes back.
+11. Report in numbered points.
+
+If the transport runs but the notes land off the grid (steps not on the metronome's eighths), the
+finger-slot player's tick counter is not the half-beat phase tombola's was (Test 20): report, and
+the plugin counts its own phase from the first tick of a run instead.

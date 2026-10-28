@@ -1,0 +1,21 @@
+{
+  "name": "grids",
+  "kind": "feature",
+  "loadable": true,
+  "symbol": "FEATURE_grids",
+  "sources": [
+    "grids_knl.cc",
+    "../common/knl_seq_player.c",
+    "../../grids/op1/grids_seq.cc",
+    "../../grids/src/pattern_generator.cc",
+    "../../grids/src/drum_sequencer.cc",
+    "../../grids/src/grids_tables.cc"
+  ],
+  "include_dirs": ["..", "../..", "../../grids"],
+  "cxxflags": ["-Wno-class-memaccess"],
+  "screen": {"svg": "grids.svg", "symbol": "SCREEN_grids"},
+  "sequencer": true,
+  "author": "coldsoldr",
+  "version": "0.1",
+  "claims": []
+}

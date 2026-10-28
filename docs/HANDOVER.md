@@ -1,5 +1,22 @@
 # Handover: OP-1 custom firmware
 
+**Latest (2026-10-28, later): Marbles and Grids built as kennel sequencer features (Test 62 awaiting
+the install).** `ports/knl/marbles/` and `ports/knl/grids/` → `build/knl/marbles.knl` (142 KB) and
+`build/knl/grids.knl` (28 KB): `make marbles grids` and `make host-test` in `ports/knl` (WSL). Each is
+a kind-3 feature with `.seq` set (`op1_feature_seq.h`): a named entry in both instruments' sequencer
+lists, its own player (`common/knl_seq_player.c`, the ok_player vtable in C), the firmware build's
+screen (`marbles.svg` / `grids.svg`, category dots stripped) in finger's slot, settings in the op1.db
+tables `marblesseq` / `gridsseq` through `sq_store_*` (`seq/seq_text.h` vendored into
+`third_party/kennel/synth_sdk/seq/`). The cores are the firmware build's (`ports/marbles/op1/marbles_seq.*`,
+`ports/grids/op1/grids_seq.*`), one per mode (so Marbles also runs a kit and Grids also plays notes);
+the key transport of Test 36 is unchanged; the clicks became the type's presses (orange is free;
+shift + orange on grids = print). Host tests (`ports/knl/tests/`, the core's services stubbed) pass:
+the vtable, the latch and take-over, presses, turns, the settings text round trip. The control map
+and what to check: `docs/kennel-plugins.md` "Sequencer features", `docs/device-tests.md` Test 62.
+Unverified on the device: the finger-slot tick counter's phase, the key_down shift flag, print under
+the grids type. **After Test 62: better graphics for some of hundekraft's own plugins** (the user's
+ask; which ones is open). Nothing committed since 10b642d.
+
 **Latest (2026-10-28): tape_echo rebuilt (Test 61 awaiting install), tape_drive renamed.** The user chose
 design B "Schematic" from the canvas "Tape echo screen" (https://claude.ai/artifact/KAu8e82XAZyk9QAYPJ6sdK):
 the Space Echo's signal path with the heads sliding with the time. **Control map:** blue press = the
