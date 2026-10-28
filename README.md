@@ -1,3 +1,6 @@
+# a word of thanks written by a human
+Below are the all the necessary details for installing and using the plugins shared here. All of this stands on the shoulders of the community, and so I extend an enormous thank you to all those involved. 
+
 # Ten plugins for the OP-1 (hundekraft kennel)
 
 Ten add-ons for the **original OP-1** running the [hundekraft](https://hundekraft.github.io/op1-workshop/) firmware: one synth engine, seven effects and two sequencers. Each is a single `.knl` file that you install over USB from the hundekraft workshop in your browser. Nothing is flashed by hand, and the OP-1 can always start without them.
