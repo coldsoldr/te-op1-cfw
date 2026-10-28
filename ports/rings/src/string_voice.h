@@ -37,7 +37,10 @@
 namespace op1rings {
 
 const int32_t kMaxStrings = 8;               // upstream kNumStrings
-const size_t kStringMaxBlockSize = 64;
+#ifndef OP1RINGS_CONTROL_BLOCK_SIZE
+#define OP1RINGS_CONTROL_BLOCK_SIZE 64       // src/op1_voice.h: one control block per render call
+#endif
+const size_t kStringMaxBlockSize = OP1RINGS_CONTROL_BLOCK_SIZE;
 
 class StringVoice {
  public:

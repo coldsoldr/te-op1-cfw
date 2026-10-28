@@ -28,6 +28,7 @@
 
 #ifdef OP1_CLOUDS
 #include "fx/op1/fx_host.h"
+#include "fx/op1/modules.h"
 #endif
 #ifdef OP1_CPU_PROBE
 #include "op1/cpu_probe.h"
@@ -78,6 +79,11 @@ int32_t MultiSlot() {
   if (slot < 0 || slot >= op1::kNumSlots) return -1;
   if (Read<int32_t>(kSynthPage) != 0) return -1;
   if (Read<int32_t>(kSlotTypes + slot * 4) != kPhaseType) return -1;
+#ifdef OP1_CLOUDS
+  // Rings switched off (fx/op1/modules.h): the slot is plain phase, every
+  // click goes to stock.
+  if (!op1::ModuleEnabled(op1::MODULE_RINGS)) return -1;
+#endif
   return slot;
 }
 

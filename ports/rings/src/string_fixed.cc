@@ -15,9 +15,7 @@
 #include "src/fixed_tables.h"
 #include "src/string_kernel.h"
 
-#ifndef OP1RINGS_SAMPLE_RATE
-#define OP1RINGS_SAMPLE_RATE 44100
-#endif
+#include "src/rate_config.h"
 
 namespace op1rings {
 
@@ -210,6 +208,12 @@ void StringFixed::ConfigureTone() {
   decay_scale_ = k120 * FFloat::Reciprocal(rt60);
 
   int32_t brightness = MulQ31(b, b);
+  // A per-sample one-pole coefficient (upstream string.cc: dispersion_noise
+  // += noise_filter x (noise - dispersion_noise)), with its level
+  // compensation below. Not scaled with the sample rate: the pair sets the
+  // noise's level as much as its colour (scaling it made the strings 2 dB
+  // quieter at 22.05 kHz), so the exciter stays sample-identical, as it is
+  // at 44.1 kHz against upstream's 48 kHz.
   const FFloat noise_filter = SemitonesToRatio(FFloat::FromQ(b - kOne, 31) * k48);
   noise_filter_ = noise_filter.ToQ31();
   noise_gain_ = FFloat::Reciprocal(k0_2 + noise_filter).ToQ(28);
@@ -227,7 +231,22 @@ void StringFixed::ConfigureTone() {
     brightness += MulQ31(infinite_, kOne - brightness);
     cutoff += MulQ31(infinite_, (128 << 23) - cutoff);
   }
+#if OP1RINGS_SAMPLE_RATE == 22050
+  // The loop's brightness FIR (h1, h0, h1 below) loses (1 - b) / 2 x
+  // (1 - cos w) per pass at w = 2 pi f / fs: at half the rate, four times
+  // the loss at a given Hz. b' = (3 + b) / 4 matches the loss at low
+  // frequencies. Measured against the 44.1 kHz build (simulator, the
+  // string + reverb scenario): without it 2.8 dB quieter and 4 dB duller
+  // in 2-5 kHz, with it within 0.4 dB in every band below 9 kHz. What it
+  // can't match: above ~3.5 kHz the half-rate FIR loses less than the
+  // formula, so the highest partials of a dark string ring a little longer
+  // (seen at -55 dB relative in the plain string scenario).
+  fir_brightness_ = brightness + MulQ31(kOne - brightness, Q(0.75, 31));
+#elif OP1RINGS_SAMPLE_RATE != 44100
+#error "string FIR: add the rate's remap"
+#else
   fir_brightness_ = brightness;
+#endif
 
   // The low-pass delays the loop by lut_svf_shift(cutoff) periods.
   const int32_t index = cutoff >> 23;

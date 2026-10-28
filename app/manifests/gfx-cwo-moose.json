@@ -1,0 +1,25 @@
+{
+  "id": "gfx-cwo-moose",
+  "name": "cwo: moose",
+  "group": "mods",
+  "category": "screens",
+  "kind": "mod",
+  "option": "gfx-cwo-moose",
+  "description": "A moose instead of the cow on the cwo screen.",
+  "screens": {},
+  "cpu": "none",
+  "conflicts": [
+    "gfx-cwo-dog",
+    "gfx-cwo-cat"
+  ],
+  "order": 301,
+  "replaces_stock": [
+    "bode.svg"
+  ],
+  "requires": [],
+  "warnings": {},
+  "preset_rows": 0,
+  "mask_bit": null,
+  "tag": null,
+  "chain": null
+}

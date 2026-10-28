@@ -22,6 +22,7 @@ struct CrushParams {
   int32_t rate;     // 0..32767
   int32_t bits;     // 0..32767: 16 bits -> 2
   int32_t jitter;   // 0..32767
+  int32_t gain_q14 = 16384;   // input gain into the crusher, Q14 (the kennel plugin's page 2; the dry side is untouched)
   int32_t mix;      // 0..32767
 };
 
@@ -71,8 +72,8 @@ class Crush {
     for (int32_t i = 0; i < n; ++i) {
       const uint32_t next = phase + inc;
       if (next < phase || inc == 0xffffffffu) {
-        hl = Quantise(l[i], mask, half);
-        if (r) hr = Quantise(r[i], mask, half);
+        hl = Quantise(Gain(l[i], p.gain_q14), mask, half);
+        if (r) hr = Quantise(Gain(r[i], p.gain_q14), mask, half);
         rng_ = rng_ * 1664525u + 1013904223u;
         // A random fraction of a period, x jitter: the next hold comes early.
         phase = next + ((((rng_ >> 16) * jitter) >> 16) << 16);
@@ -88,6 +89,11 @@ class Crush {
   }
 
  private:
+  static int32_t Gain(int32_t x, int32_t g_q14) {
+    const int32_t y = (x * g_q14) >> 14;
+    return y > 32767 ? 32767 : y < -32768 ? -32768 : y;
+  }
+
   static int32_t Quantise(int32_t x, int32_t mask, int32_t half) {
     int32_t q = x + half;
     if (q > 32767) q = 32767;

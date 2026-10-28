@@ -272,7 +272,21 @@ void TestSettings() {
   }
   Check(master_forward && op1fx::EngineId(m) == kCloudsEngineId,
         "master: orange from stock spring through the engines to Clouds");
-  Check(DecodeSettings(m).mode_index == 1, "master: Clouds starts in granular");
+  Check(DecodeSettings(m).mode_index == kEnterMode, "master: Clouds starts in its entry mode");
+  {
+    // The entry defaults on both pages: the encoders hold page 1, the
+    // hidden page is page 2.
+    EncoderRange r[4];   // the test's ranges (sim_ranges), the host's for the master
+    for (int k = 0; k < 4; ++k) InitRange(&r[k], op1fx::sim_ranges[k][0], op1fx::sim_ranges[k][1]);
+    const FxSettings ms = DecodeSettings(m);
+    bool entry = ms.page == 0;
+    for (int k = 0; k < 4; ++k) {
+      const int32_t shown = EncoderToValue(r[k], m[k]);
+      entry &= shown - kEnterDefaults[k] < 4 && kEnterDefaults[k] - shown < 4;
+      entry &= ms.hidden[k] - kEnterDefaults[4 + k] < 16 && kEnterDefaults[4 + k] - ms.hidden[k] < 16;
+    }
+    Check(entry, "master: Clouds starts at the entry defaults on both pages");
+  }
 
   // Pitch: the dead zone and the ends.
   Check(PitchQ16(16384) == 0 && PitchQ16(16384 + kPitchDeadZone) == 0, "pitch centre");

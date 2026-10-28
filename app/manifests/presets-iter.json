@@ -1,0 +1,24 @@
+{
+  "id": "presets-iter",
+  "name": "iter presets",
+  "group": "synths",
+  "category": "iter",
+  "kind": "mod",
+  "option": "presets-iter",
+  "description": "11 community presets for iter from op1.fun, in their own preset folder (crystal pad, ebullition, feu doux, iter, korder, lotremkords, pulse bass, rezpiano, wonky bass, woodblock, wood bell).",
+  "screens": {},
+  "preset_rows": 11,
+  "requires": [
+    "iter"
+  ],
+  "cpu": "none",
+  "warnings": {
+    "!filter": "Some iter presets use the filter effect: enable filter too."
+  },
+  "order": 21,
+  "conflicts": [],
+  "mask_bit": null,
+  "tag": null,
+  "chain": null,
+  "replaces_stock": []
+}

@@ -1,0 +1,22 @@
+{
+  "id": "grids",
+  "name": "Grids",
+  "group": "sequencers",
+  "category": "drum",
+  "kind": "module",
+  "tag": "Mutable Instruments",
+  "chain": "pattern → Grids",
+  "description": "Mutable Instruments Grids, a topographic drum sequencer, on the pattern slot for drums.",
+  "screens": {
+    "grids.svg": "ports/grids/op1/grids.svg"
+  },
+  "mask_bit": 12,
+  "cpu": "light",
+  "order": 201,
+  "requires": [],
+  "conflicts": [],
+  "warnings": {},
+  "preset_rows": 0,
+  "option": null,
+  "replaces_stock": []
+}

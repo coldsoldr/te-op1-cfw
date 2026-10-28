@@ -35,6 +35,14 @@ BFIN_CXXFLAGS := -O2 -mcpu=bf524 -msim -fno-exceptions -fno-rtti -DTEST -DBENCH 
                  -I$(MI) -I. $(WARN)
 BENCH_SECONDS ?= 0.25
 
+# Another Rings rate (src/rate_config.h). The 22.05 kHz build renders 32
+# samples a call and upsamples 4x: `make op1-seq-r22`, and for the checks
+# `make bench-models RINGS_RATE_FLAGS="$(RINGS_R22_FLAGS)"` (quote them on
+# the command line: -DOP1RINGS_SAMPLE_RATE=22050 -DOP1RINGS_CONTROL_BLOCK_SIZE=32
+# -DOP1RINGS_UPSAMPLE=4). Empty = the 44.1 kHz build, unchanged.
+RINGS_RATE_FLAGS ?=
+RINGS_R22_FLAGS := -DOP1RINGS_SAMPLE_RATE=22050 -DOP1RINGS_CONTROL_BLOCK_SIZE=32 -DOP1RINGS_UPSAMPLE=4
+
 .PHONY: all ref port port44 compare bench-ref bench-port clean
 
 all: ref port compare
@@ -81,7 +89,7 @@ bench-port: $(BUILD)/bench_port.elf
 
 OP1_CXXFLAGS := -O2 -std=c++17 -mcpu=bf524 -ffreestanding -fno-exceptions \
                 -fno-rtti -fno-threadsafe-statics -fno-use-cxa-atexit \
-                -ffunction-sections -fdata-sections -DOP1RINGS_L1_SCRATCH -I. $(WARN)
+                -ffunction-sections -fdata-sections -DOP1RINGS_L1_SCRATCH -I. $(WARN) $(RINGS_RATE_FLAGS)
 OP1_LDFLAGS  := -nostdlib -nostartfiles -T op1/link.ld -Wl,--gc-sections \
                 -Wl,--no-undefined
 OP1_ENGINE_SRC := op1/engine.cc op1/screen.cc op1/input.cc op1/patches.cc op1/support.cc \
@@ -90,7 +98,7 @@ OP1_ENGINE_SRC := op1/engine.cc op1/screen.cc op1/input.cc op1/patches.cc op1/su
                   src/mode_bank_bfin.S src/string_kernel_bfin.S src/limiter_bfin.S src/reverb_bfin.S
 OP1_HDR := $(wildcard op1/*.h)
 
-.PHONY: hot-set op1-cpuprobe op1-probe op1-engine op1-fxprobe op1-clouds op1-seqprobe op1-marbles op1-seq sim-engine sim-engine-fm host-probe step-params test-fm test-screen test-alloc \
+.PHONY: hot-set op1-cpuprobe op1-probe op1-engine op1-fxprobe op1-clouds op1-seqprobe op1-marbles op1-seq op1-seq-r22 sim-engine sim-engine-fm host-probe step-params test-fm test-screen test-alloc \
         test-string sim-model bench-string test-reverb test-reverb-bus bench-mode-bank
 
 $(BUILD)/op1_probe.elf: op1/probe.cc op1/support.cc op1/op1.h op1/link.ld | $(BUILD)
@@ -153,6 +161,16 @@ $(BUILD)/op1_seq.elf: $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(GRIDS_SRC
 
 op1-seq: $(BUILD)/op1_seq.elf
 
+#   make op1-seq-r22  the same image with Rings at 22.05 kHz, upsampled 4x
+#                     (src/rate_config.h) -> build/op1_seq_r22.elf
+$(BUILD)/op1_seq_r22.elf: $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(GRIDS_SRC) $(OP1_HDR) $(CLOUDS_HDR) $(MARBLES_HDR) $(GRIDS_HDR) op1/link.ld $(PORT_HDR) src/halfband_taps.h | $(BUILD)
+	$(BFIN_CXX) $(OP1_CXXFLAGS) $(RINGS_R22_FLAGS) -I$(CLOUDS) -I$(MARBLES) -I$(GRIDS) -I.. -Wno-class-memaccess -DOP1_CLOUDS $(FX_FLAGS) \
+	  -DOP1CLOUDS_SAMPLE_RATE=22050 -DOP1_MARBLES -DOP1_GRIDS \
+	  $(OP1_ENGINE_SRC) $(CLOUDS_SRC) $(MARBLES_SRC) $(GRIDS_SRC) $(OP1_LDFLAGS) -o $@ -lgcc
+	$(BFIN_BIN)/bfin-elf-size -A $@
+
+op1-seq-r22: $(BUILD)/op1_seq_r22.elf
+
 #   make op1-cpuprobe the op1-seq image plus the CPU probe (op1/cpu_probe.cc:
 #                     white click on a Rings page = timing readout)
 CPU_PROBE_SRC := op1/cpu_probe.cc op1/mode_bank_old_bfin.S
@@ -170,7 +188,7 @@ op1-cpuprobe: $(BUILD)/op1_cpuprobe.elf
 #   make host-probe   the probe against a simulated OP-1 -> build/host_probe.wav
 #                     (decode with tools/decode_probe_beeps.py)
 SIM_CXXFLAGS := -O2 -std=c++17 -mcpu=bf524 -msim -fno-exceptions -fno-rtti \
-                -DOP1_SIM -I. $(WARN)
+                -DOP1_SIM -I. $(WARN) $(RINGS_RATE_FLAGS)
 SIM_ENGINE_SRC := tests/sim_engine.cc op1/engine.cc op1/screen.cc op1/input.cc op1/patches.cc \
                   src/op1_voice.cc src/string_voice.cc src/string_fixed.cc src/reverb_fixed.cc \
                   src/fm_voice_fixed.cc src/modal_resonator.cc src/fixed_tables.cc \
@@ -278,7 +296,7 @@ $(BUILD)/bench_string.elf: $(BENCH_STRING_SRC) $(PORT_HDR) | $(BUILD)
 #   The host build runs the reverb's C loop; its "reverb:" line (samples,
 #   guards, checksum) must match the Blackfin one, which runs the assembly.
 $(BUILD)/bench_string_host: $(filter-out %.S,$(BENCH_STRING_SRC)) $(PORT_HDR) | $(BUILD)
-	$(HOST_CXX) -O2 -std=c++17 -I. $(WARN) $(filter-out %.S,$(BENCH_STRING_SRC)) -o $@
+	$(HOST_CXX) -O2 -std=c++17 -I. $(WARN) $(RINGS_RATE_FLAGS) $(filter-out %.S,$(BENCH_STRING_SRC)) -o $@
 
 bench-string: $(BUILD)/bench_string.elf $(BUILD)/bench_string_host
 	@$(BFIN_RUN) $< > $(BUILD)/bench_string.txt; s=$$?; cat $(BUILD)/bench_string.txt; exit $$s
@@ -294,7 +312,7 @@ $(BUILD)/bench_mode_bank.elf: tests/bench_mode_bank.cc src/mode_bank_bfin.S $(PO
 	$(BFIN_CXX) $(SIM_CXXFLAGS) tests/bench_mode_bank.cc src/mode_bank_bfin.S -o $@
 
 $(BUILD)/bench_mode_bank_host: tests/bench_mode_bank.cc $(PORT_HDR) | $(BUILD)
-	$(HOST_CXX) -O2 -std=c++17 -I. $(WARN) tests/bench_mode_bank.cc -o $@ -lm
+	$(HOST_CXX) -O2 -std=c++17 -I. $(WARN) $(RINGS_RATE_FLAGS) tests/bench_mode_bank.cc -o $@ -lm
 
 bench-mode-bank: $(BUILD)/bench_mode_bank.elf $(BUILD)/bench_mode_bank_host
 	@$(BFIN_RUN) $< > $(BUILD)/bench_mode_bank.txt; s=$$?; cat $(BUILD)/bench_mode_bank.txt; exit $$s
@@ -317,7 +335,7 @@ test-reverb: $(BUILD)/test_reverb
 TEST_REVERB_BUS_SRC := tests/test_reverb_bus.cc src/op1_voice.cc src/string_voice.cc src/string_fixed.cc                        src/reverb_fixed.cc src/fm_voice_fixed.cc src/modal_resonator.cc src/fixed_tables.cc
 
 $(BUILD)/test_reverb_bus: $(TEST_REVERB_BUS_SRC) $(OP1_HDR) $(PORT_HDR) | $(BUILD)
-	$(HOST_CXX) -O2 -std=c++17 -I. $(WARN) $(TEST_REVERB_BUS_SRC) -o $@
+	$(HOST_CXX) -O2 -std=c++17 -I. $(WARN) $(RINGS_RATE_FLAGS) $(TEST_REVERB_BUS_SRC) -o $@
 
 test-reverb-bus: $(BUILD)/test_reverb_bus
 	$<

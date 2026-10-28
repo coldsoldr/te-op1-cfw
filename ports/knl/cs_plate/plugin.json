@@ -1,0 +1,20 @@
+{
+  "name": "cs_plate",
+  "kind": "fx",
+  "order": 0,
+  "loadable": true,
+  "stereo": true,
+  "symbol": "FX_plate",
+  "sources": ["plate_knl.cc", "../../fx/src/plate/plate.cc", "../../fx/src/plate/plate_bfin.S",
+              "../../clouds/src/core/halfband.cc", "../../clouds/src/core/halfband_bfin.S",
+              "../../clouds/src/core/clouds_tables.cc", "../../rings/src/fixed_tables.cc",
+              "../../rings/op1/support.cc"],
+  "include_dirs": ["..", "../..", "../../fx", "../../rings", "../../clouds"],
+  "cxxflags": ["-DOP1CLOUDS_SAMPLE_RATE=22050", "-Wno-class-memaccess"],
+  "defaults": [16384, 9830, 3277, 11469],
+  "page2_defaults": [18725, 22938, 9830],
+  "screen": {"svg": "plate.svg", "symbol": "SCREEN_plate"},
+  "author": "coldsoldr",
+  "version": "0.1",
+  "claims": []
+}

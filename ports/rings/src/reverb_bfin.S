@@ -1,3 +1,4 @@
+#include "src/rate_config.h"
 /*
  * Blackfin kernel for ReverbFixed's sample loop, settled case (no reads
  * cut off by a Clear): same arithmetic as ReverbFixed::ProcessInternal
@@ -31,25 +32,30 @@
 #define K_WET1 40
 #define K_KAP 44
 
-/* Upstream's delay lines (reverb_fixed.cc): bases and lengths. */
+/* Upstream's delay lines (reverb_fixed.cc): bases and lengths, packed with
+ * one sample between. DIV halves them at 22.05 kHz (src/rate_config.h); at
+ * 44.1 kHz the bases are 0, 151, 366, 686, 1214, 3397, 6088, 10590, 13116,
+ * 15314 as before. */
+#define DIV OP1RINGS_REVERB_DIV
 #define AP1 0
-#define AP1_LEN 150
-#define AP2 151
-#define AP2_LEN 214
-#define AP3 366
-#define AP3_LEN 319
-#define AP4 686
-#define AP4_LEN 527
-#define DAP1A 1214
-#define DAP1A_LEN 2182
-#define DAP1B 3397
-#define DAP1B_LEN 2690
-#define DEL1 6088
-#define DAP2A 10590
-#define DAP2A_LEN 2525
-#define DAP2B 13116
-#define DAP2B_LEN 2197
-#define DEL2 15314
+#define AP1_LEN (150 / DIV)
+#define AP2 (AP1 + AP1_LEN + 1)
+#define AP2_LEN (214 / DIV)
+#define AP3 (AP2 + AP2_LEN + 1)
+#define AP3_LEN (319 / DIV)
+#define AP4 (AP3 + AP3_LEN + 1)
+#define AP4_LEN (527 / DIV)
+#define DAP1A (AP4 + AP4_LEN + 1)
+#define DAP1A_LEN (2182 / DIV)
+#define DAP1B (DAP1A + DAP1A_LEN + 1)
+#define DAP1B_LEN (2690 / DIV)
+#define DEL1 (DAP1B + DAP1B_LEN + 1)
+#define DEL1_LEN (4460 / DIV + 40 / DIV + 1)
+#define DAP2A (DEL1 + DEL1_LEN + 1)
+#define DAP2A_LEN (2525 / DIV)
+#define DAP2B (DAP2A + DAP2A_LEN + 1)
+#define DAP2B_LEN (2197 / DIV)
+#define DEL2 (DAP2B + DAP2B_LEN + 1)
 
 #define MUL(d, a, b)                                                       \
 	A0 = a.H * b.H, A1 = a.H * b.L (M);                                \

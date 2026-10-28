@@ -1,0 +1,20 @@
+{
+  "id": "subtle-fx",
+  "name": "subtle effect defaults",
+  "group": "effects",
+  "category": "other",
+  "kind": "mod",
+  "option": "subtle-fx",
+  "description": "op1repacker's gentler default settings for the stock effects, so switching one on changes the sound less.",
+  "screens": {},
+  "cpu": "none",
+  "order": 141,
+  "requires": [],
+  "conflicts": [],
+  "warnings": {},
+  "preset_rows": 0,
+  "mask_bit": null,
+  "tag": null,
+  "chain": null,
+  "replaces_stock": []
+}

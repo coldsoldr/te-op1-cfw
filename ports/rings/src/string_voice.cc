@@ -6,9 +6,7 @@
 #include "src/fixed_tables.h"
 #include "src/scratch.h"
 
-#ifndef OP1RINGS_SAMPLE_RATE
-#define OP1RINGS_SAMPLE_RATE 44100
-#endif
+#include "src/rate_config.h"
 
 namespace op1rings {
 
@@ -299,11 +297,12 @@ void StringVoice::Process(int32_t f0, const VoicePatch& patch, int32_t* out, siz
     lfo_amount = MulQ31(kHalf - distance, Q(0.9, 31));
     if (!state_.glide_valid || state_.glide_brightness != sympathetic_brightness ||
         state_.glide_size != static_cast<int32_t>(size)) {
-      // glide = SemitonesToRatio((brightness - 1) * 36), per 32 samples;
-      // per 64, 1 - (1 - glide)^2.
+      // glide = SemitonesToRatio((brightness - 1) * 36), per 32 samples at
+      // 44.1 kHz; per 64 (or per 32 at 22.05 kHz: the same time),
+      // 1 - (1 - glide)^2.
       const int32_t semitones = MulQ31(sympathetic_brightness - kOne, 36 << 24);   // Q24
       int32_t glide = SemitonesToRatio(semitones).ToQ31();
-      if (size == 64) {
+      if (size * (44100 / OP1RINGS_SAMPLE_RATE) == 64) {
         const int32_t rest = kOne - glide;
         glide = kOne - MulQ31(rest, rest);
       }

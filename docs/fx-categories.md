@@ -62,7 +62,7 @@ Where each entry reads its values from:
 | `values[6]` | 0-13, 14 | q1, q3 bit 1 |
 | `values[7]` | 0-13, 14 | q2, q3 bit 0 |
 
-q0..q3 are the hidden page's values as offsets from the defaults, cut to 11, 14, 14 and 11 bits. `sim-fx`'s checksums are unchanged.
+q0..q3 are the hidden page's values as offsets from the encoding base (`kDefaults`, fx1's defaults), cut to 11, 14, 14 and 11 bits. `sim-fx`'s checksums are unchanged. The orange click into Clouds starts it at `kEnterDefaults` / `kEnterMode` (the user's snapshot of 2026-10-20: looping delay, both pages written, the encoders as the white click writes them), not at the base.
 
 ## The engine interface
 

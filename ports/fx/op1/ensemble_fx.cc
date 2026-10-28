@@ -51,7 +51,8 @@ void Process(int32_t position, int32_t, int16_t* l, int16_t* r, const int16_t* l
   const uint32_t start = op1::Cycles();
   if (!in.half.Begin(start)) {
     in.ensemble.Init();
-    op1fx::measured_cycles += op1::Cycles() - start;
+    in.half.End();
+  op1fx::measured_cycles += op1::Cycles() - start;
     return;
   }
   int32_t v[4];
@@ -64,6 +65,7 @@ void Process(int32_t position, int32_t, int16_t* l, int16_t* r, const int16_t* l
   in.ensemble.Process(in.half.in(0), r ? in.half.in(1) : nullptr, in.half.wet(0),
                       r ? in.half.wet(1) : nullptr, op1fx::kHalfN, p);
   in.half.Mix(l, r, v[3]);
+  in.half.End();
   op1fx::measured_cycles += op1::Cycles() - start;
 }
 

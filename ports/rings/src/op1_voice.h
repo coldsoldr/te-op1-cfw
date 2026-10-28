@@ -25,6 +25,8 @@
 #include "src/string_voice.h"
 #include "src/voice_patch.h"
 
+#include "src/rate_config.h"
+
 namespace op1rings {
 
 #ifndef OP1RINGS_SUBBLOCK_SIZE

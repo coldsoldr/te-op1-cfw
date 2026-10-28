@@ -28,6 +28,8 @@
 #include "fx/op1/fx_host.h"
 
 #include "fx/op1/fx_screen.h"
+#include "fx/op1/modules.h"
+#include "fx/op1/modules.h"
 
 #ifdef OP1_CLOUDS
 #include "op1/clouds_fx.h"
@@ -109,6 +111,12 @@ typedef void (*SetValuesFn)(void* patch, const int16_t* values);
 
 const int32_t kMaxEngines = 8;
 
+// An engine and the module bit that switches it on (op1/modules.h).
+struct Hosted {
+  const Engine* engine;
+  op1::Module module;
+};
+
 // A category: its stock type and the words its entries replace.
 struct Host {
   int32_t type;              // fx_types.cpp index (FX Ranges, slot FX type words)
@@ -120,8 +128,10 @@ struct Host {
   int16_t stock_tail[4];     // the type's factory default_params[4..7]
   int16_t ranges[4][2];      // the FX Ranges table's entries (used if it's not valid)
   // In orange-click order after stock, null after the last (each engine is
-  // in the image if its OP1FX_ flag is set).
-  const Engine* engines[kMaxEngines + 1];
+  // in the image if its OP1FX_ flag is set, and switched on if its module
+  // bit is: an engine switched off is skipped everywhere, and a slot saved
+  // on it plays stock).
+  Hosted engines[kMaxEngines + 1];
 };
 
 enum { HOST_REVERB, HOST_MODULATION, HOST_DIRT, HOST_DELAY, kNumHosts };
@@ -133,13 +143,13 @@ const Host kHosts[kNumHosts] = {
     { { 1344, 16448 }, { 7744, 16448 }, { 0, 16384 }, { 0, 32767 } },
     {
 #ifdef OP1FX_PLATE
-      &op1fx::kPlateEngine,
+      { &op1fx::kPlateEngine, op1::MODULE_PLATE },
 #endif
 #ifdef OP1FX_HALL
-      &op1fx::kHallEngine,
+      { &op1fx::kHallEngine, op1::MODULE_HALL },
 #endif
 #ifdef OP1_CLOUDS
-      &op1clouds::kCloudsEngine,
+      { &op1clouds::kCloudsEngine, op1::MODULE_CLOUDS },
 #endif
     } },
   // modulation: cwo (BodeAudioEngine.cpp)
@@ -148,10 +158,10 @@ const Host kHosts[kNumHosts] = {
     { { 0, 32767 }, { 0, 32767 }, { 0, 32767 }, { 0, 32767 } },
     {
 #ifdef OP1FX_ENSEMBLE
-      &op1fx::kEnsembleEngine,
+      { &op1fx::kEnsembleEngine, op1::MODULE_ENSEMBLE },
 #endif
 #ifdef OP1FX_SHIFT
-      &op1fx::kShiftEngine,
+      { &op1fx::kShiftEngine, op1::MODULE_SHIFT },
 #endif
     } },
   // dirt: punch (Mllp.cpp)
@@ -160,15 +170,15 @@ const Host kHosts[kNumHosts] = {
     { { 1344, 12480 }, { 0, 32767 }, { 1536, 25088 }, { 0, 32767 } },
     {
 #ifdef OP1FX_DRIVE
-      &op1fx::kDriveEngine,
+      { &op1fx::kDriveEngine, op1::MODULE_DRIVE },
 #endif
 #ifdef OP1FX_TAPE
-      &op1fx::kTapeEngine,
+      { &op1fx::kTapeEngine, op1::MODULE_TAPE },
 #endif
 #ifdef OP1FX_FOLD
-      &op1fx::kFoldEngine,
+      { &op1fx::kFoldEngine, op1::MODULE_FOLD },
 #endif
-      &op1fx::kCrushEngine,
+      { &op1fx::kCrushEngine, op1::MODULE_CRUSH },
     } },
   // delay
   { 0, op1fx::kDelayMonoProcess, op1fx::kDelayStereoProcess, 0x0190fb8c, op1fx::kDelayScreenInit,
@@ -176,14 +186,24 @@ const Host kHosts[kNumHosts] = {
     { { 1024, 11264 }, { 3276, 32767 }, { 0, 16384 }, { 0, 32767 } },
     {
 #ifdef OP1FX_TAPE_ECHO
-      &op1fx::kTapeEchoEngine,
+      { &op1fx::kTapeEchoEngine, op1::MODULE_TAPE_ECHO },
 #endif
     } },
 };
 
 int32_t NumEngines(int32_t h) {
   int32_t n = 0;
-  while (n < kMaxEngines && kHosts[h].engines[n]) ++n;
+  while (n < kMaxEngines && kHosts[h].engines[n].engine) ++n;
+  return n;
+}
+
+// Whether host h's engine i (0-based in its list) is switched on.
+bool Enabled(int32_t h, int32_t i) { return op1::ModuleEnabled(kHosts[h].engines[i].module); }
+
+// The engines switched on.
+int32_t NumEnabled(int32_t h) {
+  int32_t n = 0;
+  for (int32_t i = 0; i < NumEngines(h); ++i) n += Enabled(h, i) ? 1 : 0;
   return n;
 }
 
@@ -221,9 +241,9 @@ const Engine* EngineFor(int32_t h, const int16_t* values) {
   const int32_t id = op1fx::EngineId(values);
   if (id == 0) return nullptr;
   for (int32_t i = 0; i < NumEngines(h); ++i) {
-    if (kHosts[h].engines[i]->id == id) return kHosts[h].engines[i];
+    if (Enabled(h, i) && kHosts[h].engines[i].engine->id == id) return kHosts[h].engines[i].engine;
   }
-  return nullptr;   // an engine this image doesn't have: stock
+  return nullptr;   // an engine this image doesn't have, or one switched off: stock
 }
 
 // fx1's values (a negative values[4..7], IsLegacy) converted in place: the
@@ -235,7 +255,7 @@ void Migrate(int32_t h, int16_t* values) {
   if (!op1fx::IsLegacy(values)) return;
   const int32_t id = op1fx::LegacyEngineId(values);
   for (int32_t i = 0; i < NumEngines(h); ++i) {
-    const Engine* e = kHosts[h].engines[i];
+    const Engine* e = kHosts[h].engines[i].engine;
     if (e->id == id && e->migrate) {
       e->migrate(values);
       op1fx::SetEngineId(values, id);
@@ -333,10 +353,10 @@ void Stereo(int32_t h, void* self, int16_t* l, int16_t* r, const int16_t* params
   engine->process(op1fx::POSITION_MASTER, 0, l, r, params, values, Ranges(h));
 }
 
-// The host of an effect type that has engines in this image, or -1.
+// The host of an effect type that has engines switched on, or -1.
 int32_t HostOfType(int32_t type) {
   for (int32_t h = 0; h < kNumHosts; ++h) {
-    if (kHosts[h].type == type && NumEngines(h) > 0) return h;
+    if (kHosts[h].type == type && NumEnabled(h) > 0) return h;
   }
   return -1;
 }
@@ -372,18 +392,21 @@ bool HostClick(int32_t h, int32_t owner, int32_t position, int16_t* values, Clic
   const int32_t n = NumEngines(h) + 1;
   int32_t index = 0;
   for (int32_t i = 0; i + 1 < n; ++i) {
-    if (host.engines[i] == engine) index = i + 1;
+    if (host.engines[i].engine == engine) index = i + 1;
   }
   Remembered& memory = remembered[owner][h];
   for (int32_t k = 0; k < 8; ++k) memory.values[index][k] = values[k];
   memory.valid |= 1u << index;
-  index = (index + direction + n) % n;
+  // The next that is stock or an engine switched on (stock always is).
+  do {
+    index = (index + direction + n) % n;
+  } while (index != 0 && !Enabled(h, index - 1));
   if (memory.valid & (1u << index)) {
     for (int32_t k = 0; k < 8; ++k) values[k] = memory.values[index][k];
   } else if (index == 0) {
     for (int32_t k = 0; k < 4; ++k) values[4 + k] = host.stock_tail[k];
   } else {
-    const Engine* next = host.engines[index - 1];
+    const Engine* next = host.engines[index - 1].engine;
     for (int32_t k = 4; k < 8; ++k) values[k] = 0;
     if (next->enter) next->enter(values, Ranges(h));
     op1fx::SetEngineId(values, next->id);
@@ -437,7 +460,7 @@ int16_t* EditedMaster(int32_t* h) {
   if (!object) return nullptr;
   const uint32_t vtable = Read<uint32_t>(object);
   for (int32_t i = 0; i < kNumHosts; ++i) {
-    if (kHosts[i].stereo_vtable == vtable && NumEngines(i) > 0) {
+    if (kHosts[i].stereo_vtable == vtable && NumEnabled(i) > 0) {
       *h = i;
       return reinterpret_cast<int16_t*>(kMasterFxValues);
     }
@@ -470,8 +493,8 @@ void ScreenInit(int32_t h, void* self) {
   s.shown = s.stock;
   if (s.stock) reinterpret_cast<InitFn>(kHosts[h].screen_init)(self);
   for (int32_t i = 0; i < NumEngines(h); ++i) {
-    const Engine* e = kHosts[h].engines[i];
-    s.documents[i] = e->svg ? LoadDocument(e->svg) : nullptr;
+    const Engine* e = kHosts[h].engines[i].engine;
+    s.documents[i] = e->svg && Enabled(h, i) ? LoadDocument(e->svg) : nullptr;
     if (s.documents[i] && e->screen_init) {
       DocumentOf(self) = s.documents[i];
       e->screen_init(self);
@@ -498,7 +521,7 @@ void ScreenUpdate(int32_t h, void* self, int32_t ticks) {
     Migrate(h, values);
     const Engine* e = EngineFor(h, values);
     for (int32_t i = 0; i < NumEngines(h); ++i) {
-      if (kHosts[h].engines[i] == e && s.documents[i] && e->screen_update) engine_index = i;
+      if (kHosts[h].engines[i].engine == e && s.documents[i] && e->screen_update) engine_index = i;
     }
   }
   void* document = engine_index >= 0 ? s.documents[engine_index] : s.stock;
@@ -510,7 +533,7 @@ void ScreenUpdate(int32_t h, void* self, int32_t ticks) {
   if (engine_index >= 0) {
     const int32_t p = position == op1fx::kScreenMaster ? op1fx::POSITION_MASTER : op1fx::POSITION_MONO;
     const int16_t* encoders = playing[p] && played[p] == values ? played_live[p] : values;
-    kHosts[h].engines[engine_index]->screen_update(self, position, encoders, values, Ranges(h));
+    kHosts[h].engines[engine_index].engine->screen_update(self, position, encoders, values, Ranges(h));
     // Update must draw (Screen::UpdateAll doesn't).
     Draw(self);
   } else if (s.stock) {

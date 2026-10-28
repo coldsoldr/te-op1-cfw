@@ -1578,3 +1578,580 @@ Look for anything static or misplaced.
 **Procedure:** boot; pick iter (shift + T1). Does the lab screen show and animate with the knobs?
 
 **If something is wrong:** COM at power-on, flash `op1_246_beta3.op1`.
+
+## Test 46: the module switch and the builder app's first packages (`op1_246_beta5.op1`, `_off`, `_mix`)
+
+**Not flashed yet.** The one firmware change for the builder app (docs/librarian-handover.md Part 0): every module is compiled in, and a data word in the image, `op1_module_mask` (`ports/fx/op1/modules.h`, one bit per module: plate 0, hall 1, clouds 2, drive 3, tape 4, fold 5, crush 6, ensemble 7, shift 8, tape echo 9, Rings 10, Marbles 11, Grids 12), switches them on and off. The builder patches the word in the shipped ELF before injection (`tools/inject_app.py --set-word op1_module_mask=0x...`). A module whose bit is clear: an effect engine is skipped by the orange click, and a slot saved on it plays stock (`fx_host.cc`: `EngineFor` returns null, `HostOfType` and the master lookup count only enabled engines, the screen's document isn't loaded); Rings' clicks are ignored and a MULTI slot plays phase (`input.cc` `MultiSlot`, `engine.cc` `NoteOn`); Marbles and Grids stay stock tombola and pattern (`Active()` and `Click()` in their glue). Every screen file still ships. The type list still shows multi / reverb / dirt / modulation whatever the mask (the query patch is in the image; the open question in the handover).
+
+Three packages, all made by the app's pipeline (`python -m app.backend.build`) from the stock `op1_246.op1`, each verify_bootloader PASS, package = work dir, 51 hooks checked against the ELF's symbols:
+
+| Package | Mask | Features | Expect |
+|---|---|---|---|
+| `op1_246_beta5.op1` | `0x1fff` | beta4's set: everything, iter + presets + lab screen, filter, tape at the top | = beta4 (the work dir's SVGs and db rows are identical to work_beta4's, bar the iter rows' JSON formatting, now compact) |
+| `op1_246_beta5_off.op1` | `0x0000` | none (no op1repacker mods either) | stock behaviour, except the list names (multi, reverb, dirt, modulation) and the phase preset folder shown as multi |
+| `op1_246_beta5_mix.op1` | `0x160a` | Rings, hall, drive, tape echo, Grids, iter, filter | reverb: spring → hall only; dirt: punch → drive only; modulation: cwo only (no orange click); delay: delay → tape echo; Marbles absent (tombola stock), Grids present; no clouds, plate, tape, fold, crush, ensemble, shift |
+
+The simulator (`make sim-fx`) passes with the refactored host (bit-identical checksums). The ELF is `app/image/op1_seq.elf` (sha256 in `app/manifests/image.json`).
+
+**Procedure:**
+1. `beta5`: boot; a quick pass over multi (Rings), a reverb slot (spring → plate → hall → clouds), dirt, modulation, delay, Marbles, Grids, iter. Same as beta4?
+2. While on beta5, save a synth sound on **clouds** (reverb) and one on **fold** (dirt), and a drum kit on **tape echo**; save a multi sound on **Rings**.
+3. `beta5_off`: boot. Those saved sounds must play **stock** (spring, punch, delay; phase) and nothing must crash; the orange click on an FX page must do nothing; the multi slot's clicks do nothing; tombola and pattern are stock. The list names still read multi / reverb / dirt / modulation.
+4. `beta5_mix`: boot. Reverb's orange click goes spring → hall → spring; the sound saved on clouds plays spring; the one on fold plays punch; the drum kit on tape echo plays tape echo; the Rings sound plays Rings; Grids on drums, tombola stock on synth; iter and filter in their lists.
+5. Report in numbered points.
+
+**If something is wrong:** COM at power-on, flash `op1_246_beta4.op1`.
+
+**Result (2026-10-20, the user):** "everything worked as expected, there were no issues." The module switch works: a slot saved on a disabled engine plays stock, the orange click skips what's off, Rings off plays phase, the mixed set behaves as listed. The user's one decision: **"all off" should provide the stock firmware experience**, so the list names must follow the mask too (Test 47).
+
+## Test 47: the list names follow the mask (`op1_246_beta6.op1`, `_off`, `_mix`)
+
+**Not flashed yet.** After Test 46 the user asked that a firmware with every module off be the stock experience. The engine browser's query, which renamed phase / spring / cwo / punch to multi / reverb / modulation / dirt in every image, is now a named writable buffer in the image (`op1_type_list_query`, 151 bytes, `ports/rings/op1/patches.cc`) that the builder rewrites before injection (`tools/inject_app.py --set-string`): a stock type shows as its category's name only while one of that category's modules is on (phase→multi with Rings; spring→reverb with plate, hall or clouds; punch→dirt with drive, tape, fold or crush; cwo→modulation with ensemble or shift), else the stock query `SELECT id, type FROM %s` verbatim. Two more things follow the mask: the factory phase folder is renamed to multi only with Rings on, and the MULTI screen doesn't load rings.svg with Rings off (`screen.cc`: Update then always runs stock). The image is rebuilt (`app/image/op1_seq.elf`, sha256 f3e8bfe0…; 0 undefined symbols, no static constructors; `make sim-fx` passes). The strings and masks were read back from each package's injected LDR.
+
+| Package | Mask | Features | Lists | Expect |
+|---|---|---|---|---|
+| `op1_246_beta6.op1` (12287945 bytes) | `0x1fff` | beta5's set (everything, iter + presets + lab screen, filter, tape at the top) | multi, reverb, dirt, modulation, delay | = beta5 |
+| `op1_246_beta6_off.op1` (12255972 bytes) | `0x0000` | none | **phase, spring, punch, cwo, delay** | stock in every way: the stock query, the phase folder named phase, no rings.svg loaded; the saved sounds from Test 46 play stock |
+| `op1_246_beta6_mix.op1` (12307650 bytes) | `0x160a` | Rings, hall, drive, tape echo, Grids, iter, filter | multi, reverb, dirt, **cwo**, delay | as Test 46's mix, but the modulation list entry reads cwo (no modulation module is on) |
+
+**Procedure:**
+1. `beta6_off`: boot. The synth engine list reads **phase** (not multi), and its preset folder is **phase**; the FX list reads **spring, punch, cwo, delay**; the phase screen is stock; the sounds saved in Test 46 play stock. Anything at all that differs from stock?
+2. `beta6_mix`: boot. The FX list reads reverb, dirt, **cwo**, delay; the synth list multi; the folder multi; the rest as Test 46's mix.
+3. `beta6`: boot. Same as beta5?
+4. Report in numbered points.
+
+**If something is wrong:** COM at power-on, flash `op1_246_beta5.op1`.
+
+**Result (2026-10-20, the user), and the hang that came first:** after Test 46 the user re-flashed beta5 and it **hung on the logo**; so did beta4, beta6 and beta6_mix, while **stock booted**. The disk was backed up with the Librarian (its first real use: 91 files, `app/data/backups/op1-backup-20261020-162837`): every preset well-formed, no limit near, four slot states carrying an engine marker (synth slot 1 hall, slot 2 fold, slot 8 drive, drum kit 1 drive; slot 1 had been saved on clouds and switched to hall by the orange click under beta5_mix). Bisect: `beta6_off` boots (markers ignored); beta6 boots with the four slot files' markers reset to stock; **the original slot 1 (hall) put back hangs beta6**. So: **a slot saved on hall, live at power-on, hangs the boot.** Cause (read, then fixed in Test 48): `fx/op1/half_rate.h` restarts a position after a pause over 5 ms between calls, measured from the *start* of the previous call; a restart re-initialises the core (hall clears 76 KB), and at boot, with cold caches and the firmware loading files, that one call takes over 5 ms, so the next call restarts again, every call does, the audio interrupt starves the boot. Clouds had the same loop in clouds1 and measures its pause from the end of the call; plate, hall, ensemble and tape echo (the half-rate engines) didn't. Drive, tape, fold, crush and shift restart only on the host's stop, so they can't loop. The list names themselves (`beta6_off`: phase / spring / punch / cwo; `beta6`: multi / reverb / dirt / modulation) were seen in passing and are right.
+
+## Test 48: the restart loop fixed (`op1_246_beta7.op1`, `_off`, `_mix`)
+
+**Result so far (2026-10-20, the user): beta7 boots with the original slot 1 (hall) on the disk**, the exact file that hung beta6: the cause and the fix are confirmed. Steps 1 (the other three slot files), 3 and 4 are still to come; the three files are being put back with the Librarian (delete the cleaned file, import the original from the backup), which is also its first write test.
+
+beta7 = beta6 + `fx/op1/half_rate.h`: the pause is measured from the end of the previous call (`End()`, which plate, hall, ensemble and tape echo call last, on a restart too), as Clouds does, so a long restart never reads as a pause at the next call. Nothing else changes (`make sim-fx` passes with the same checksums). Same three feature sets as Test 47.
+
+**Procedure:**
+1. With beta6 (or `beta6_off`) in disk mode, **put the original slot files back** from the backup: `app/data/backups/op1-backup-20261020-162837/synth/user/1.aif`, `2.aif`, `8.aif` and `drum/user/1.aif` over the same paths on the OP-1. Eject.
+2. Flash `op1_246_beta7.op1`. **It must boot** with slot 1 on hall, slot 2 on fold, slot 8 on drive and kit 1 on drive, and they must sound as saved. Power-cycle twice more.
+3. Leave a slot on **plate**, on **tape echo** and the master on **ensemble**; power-cycle. Boots?
+4. `beta7_off` and `beta7_mix`: the Test 47 checks (stock names with everything off; cwo with no modulation module).
+5. Report in numbered points.
+
+**If something is wrong:** COM at power-on, flash `op1_246_beta6_off.op1` (boots whatever the slots hold), disk mode, copy the cleaned slot files from the scratchpad's `slots-cleared` folder back, then any build.
+
+## Test 49: Clouds' entry defaults, the Librarian's second round (`op1_246_beta8.op1`, `_off`, `_mix`)
+
+**Not flashed yet.** beta8 = beta7 + Clouds' entry defaults: the orange click into Clouds now lands on the settings of the user's snapshot `synth/snapshot/20261020_2024.aif` (2026-10-20, "the clouds setting of this patch should be the default settings for the clouds fx"), decoded from its stored words and rounded to clean values (`clouds_settings.h` `kEnterDefaults`, `kEnterMode`): **looping delay**, page 1 position 41 % / size 100 % / pitch 0 / density 100 %, page 2 texture 50 % / dry-wet 31 % / feedback 28 % / reverb 66 %. It starts on page 1 (the snapshot was saved showing page 2). The encoders are written on entry the way the white click writes them. Saved Clouds presets decode as before (the encoding base is unchanged). `make sim-fx` passes, with a new check of the entry on both pages. Same three feature sets as Test 47; the mask and the list names unchanged.
+
+The rest of Test 48 moves here (beta7 is proven on the hall slot only).
+
+**Procedure:**
+1. Flash `op1_246_beta8.op1`. It must boot with slot 1 on hall and the other three originals back (slot 2 fold, slot 8 drive, kit 1 drive), sounding as saved. Power-cycle twice.
+2. On a slot with spring: orange click to Clouds. **It must be in looping delay with the snapshot's sound** (the four encoders at position 41 %, size full, pitch centre, density full; white click shows page 2 at texture half, mix a third, feedback a quarter, reverb two thirds). The master too. Does it sound like `20261020_2024` with spring's knobs on that slot the same?
+3. Leave a slot on **plate**, one on **tape echo** and the master on **ensemble**; power-cycle. Boots?
+4. `beta8_off` and `beta8_mix`: the Test 47 checks (stock names with everything off; cwo with no modulation module).
+5. Report in numbered points.
+
+**If something is wrong:** COM at power-on, flash `op1_246_beta7.op1` (Test 48's, the same without the Clouds defaults) or `op1_246_beta6_off.op1`.
+
+## Test 50: hundekraft 3.0.3 and our first kennel plugin (`hundekraft-3.0.3-noboot.op1`, `crush.knl`)
+
+**Not flashed yet.** The direction changed on 2026-10-26 (`docs/kennel-roadmap.md`): our modules
+become plugin files for hundekraft's kennel core instead of our own injected firmware. This test
+installs hundekraft 3.0.3 and loads the smallest of our effects, crush, packed as a `.knl`
+(`ports/knl/cs_crush/`, `tools/knl_pack.py`, 11,608 bytes, stereo, with its screen).
+
+**The package.** `incoming/hundekraft/hundekraft-3.0.3.op1` (13,359,401 bytes, SHA-256
+`39c3d475…41dce`, = its `build.json`) **contains `te-boot.ldr`** (the stock TE-BOOT v2.30), so
+`tools/verify_bootloader.py` fails it: never flash that file. `op1 firmware/hundekraft-3.0.3-noboot.op1`
+(12,602,900 bytes) is the same tar repacked by `tools/build_package.py` without the bootloader:
+verify **PASS**, `pkg_check` 197 files, 0 mismatches against the unpacked original
+(`op1 firmware/work_hundekraft303/`). Same recovery as always: COM at power-on, flash any known package.
+
+**Going back afterwards:** hundekraft saves sounds with its own type names (crush, or any of its
+engines you try). Stock and our firmware halt at boot on an unknown type ("Invalid synth patch …
+error 22"). Before flashing anything else, set every synth slot, drum kit and the master back to
+stock engines and effects (or restore the backup from step 1).
+
+**Procedure:**
+1. Back up the disk (disk mode, copy the drive; or the Librarian's backup).
+2. COM at power-on, flash `op1 firmware/hundekraft-3.0.3-noboot.op1`. Boots? Use it for a while:
+   the lists, the screens, the clock pages, what a saved sound does. Notes on its UX are part of the
+   result (the user wants ideas from it).
+3. Install the plugin: OP-1 on USB in normal mode (not disk mode), Chrome at
+   https://hundekraft.github.io/op1-workshop/ (if that site has moved past 3.0.3 and insists on a core
+   update, serve the local copy instead: `python -m http.server 8000` in
+   `incoming/hundekraft/op1-workshop-main`, open http://localhost:8000/). **Your plugins** → add
+   `build/knl/cs_crush.knl` → **Update OP-1** → read the review → send → **T1** on the OP-1 → it restarts.
+4. Shift + T3 on a synth sound: **cs crush** is in the effect list (hundekraft has its own crush; ours is prefixed, every plugin of ours will be). Choose it. Blue rate, green bits,
+   white jitter, orange mix: the sound and the screen (variant set, bit ticks, jittering clock ticks,
+   mix bar) follow. Shift + knob fine-adjusts.
+5. The same on a drum kit, and on the master (mixer): stereo there (each side holds its own sample).
+6. Save a sound with crush on it; power-cycle. Still crush, same settings? The workshop's
+   "Your plugins" lists it as installed?
+7. Remove it in the workshop (Remove → Update OP-1 → T1). The OP-1 boots; the sound plays through
+   the stock filter and keeps the name crush; reinstalling brings it back.
+8. Report in numbered points.
+
+**If something is wrong:** COM at power-on, flash `op1_246_beta7.op1` (ours, Test 48) after step
+"going back", or stock `op1_246.op1` after a factory reset.
+
+## Test 51: Rings at 22.05 kHz, upsampled 4x (`op1_246_beta8_r22.op1`)
+
+**Not flashed yet.** The user's question (2026-10-26): does rendering Rings at half its rate
+appreciably change the sound, and does it let Rings and Clouds run together? `op1_246_beta8_r22.op1`
+(12,262,289 bytes) is **beta8 with one file changed, the app image**: every other file is
+byte-identical (checked), so an A/B against beta8 is the rate and nothing else. Bootloader check PASS,
+51 hooks checked; built by `python -m app.backend.build --image ports/rings/build/op1_seq_r22.elf`
+with beta8's feature list (`make op1-seq-r22` in `ports/rings`, WSL).
+
+**What changed in the image** (`ports/rings/src/rate_config.h` and the files it names; the 44.1 kHz
+build is proven unchanged: its load segment is byte-identical to the shipped `app/image/op1_seq.elf`):
+- Rings renders 32 samples a call at 22.05 kHz; a 47-tap half-band FIR (Kaiser 60 dB: flat to 9 kHz,
+  -0.7 dB at 10 kHz, -59 dB from 13 kHz, so no audible images) takes it to 44.1 kHz, then the old
+  2x Lagrange stage to the 128 samples at 88.2 kHz. Delay 0.59 ms. Pitch word x4.
+- Kept in seconds: the reverb's delay lines and modulated taps (halved, C and assembly), the limiters'
+  attack/release (coefficients doubled, C and assembly), the modal modes' Q (upstream's `1 + f q` with
+  f a fraction of the rate would ring every mode twice as long: q halved), the string loop's
+  brightness FIR (remapped to the same loss per pass at low frequencies), the strings' glide.
+- Checks at the new rate: limiter assembly = C, reverb assembly = host C, reverb bus = reference,
+  mode bank assembly = C = host (`make bench-models bench-string test-reverb-bus bench-mode-bank
+  RINGS_RATE_FLAGS=...`).
+- Simulator audio, voice 0's output of the same note and knobs at both rates, band energies: modal
+  within 0.6 dB in every band below 9 kHz, level within 0.1 dB; string + reverb within 0.4 dB;
+  plain string level within 0.9 dB, its highest partials (55 dB down) ring somewhat longer. Above
+  9 kHz the 22.05 kHz build has nothing (-6 dB at 11 kHz, gone by 13 kHz): that is the trade.
+
+**Expected CPU** (simulator, six voices, 44.1 -> 22.05 kHz): modal 123 -> 82 MHz (turning 143 ->
+101), string 89 -> 68, string + reverb 76 -> 54, FM 95 -> 68. Less than half because the per-block
+work (coefficients, smoothing, note-ons, the upsampler) doesn't scale. On the device Test 34 measured
+Rings' six modal voices at 161 MHz; expect ~105-110, so Rings "all" + Clouds on the master (~70 MHz)
+should sit near 45% of the CPU before the firmware's own ~25%, where Test 34's 62% + 25% dropped blocks.
+
+**Procedure** (after Test 49's beta8 checks, so beta8 is the reference):
+1. Flash `op1_246_beta8_r22.op1`. Boots; Rings slots play; power-cycle twice.
+2. **Sound A/B**, same preset on beta8 and on r22 (switch back and forth as needed): the modal
+   model at polyphony 4 with brightness high (the top octave is where the two differ), a string
+   model (dispersion on), string + reverb (its room and modulation should be the same size), FM.
+   Attack, tuning, decay length, brightness, the reverb tail. Is the loss of the band above 9 kHz
+   audible on the OP-1's output? Where?
+3. **Rings + Clouds**: Rings polyphony "all" on a slot, Clouds (granular, then looping delay with
+   reverb) on the master, six-note chords held and retriggered, knobs turning: pops, pumping, cut
+   tails (Test 34's symptoms)? Then a synth Clouds on another slot too.
+4. The Rings tape animation with more than 3 voices while recording (the old choppiness).
+5. Report in numbered points: sound (which models, what differs, acceptable or not), CPU.
+
+**If something is wrong:** COM at power-on, flash `op1_246_beta8.op1` (or `beta7`).
+
+**Result (2026-10-26, the user):** "I don't notice a difference in sound quality. I think there is a
+slight boost in performance." So the 22.05 kHz build is the one to carry forward (the roadmap's
+phase 2, Rings as a kennel synth, starts from it). The user then moved to hundekraft (Test 50).
+
+**Result, step 4 (2026-10-26, the user): "ok it works, amazing!"** cs crush loads, plays and shows its
+screen on hundekraft 3.0.3. The user asked for the category dots to go and for every effect to be
+ported.
+
+### Test 50, round 2: the eight other effects (`build/knl/cs_*.knl`)
+
+**Not installed yet.** All nine effects are kennel plugins now (`docs/kennel-plugins.md`: ids,
+knobs, presses, what differs from the firmware build; `ports/knl/`, `make` in WSL). Category dots
+removed from every screen.
+
+**Procedure:**
+1. Workshop → Your plugins → add the eight files from `build/knl/` (cs_drive, cs_tape, cs_fold,
+   cs_shift, cs_ensemble, cs_plate, cs_hall, cs_tape_echo; cs_crush is installed) → Update OP-1 → T1.
+   The review should list eight new plugins and no conflicts.
+2. Each one on a synth sound: the list entry, the sound, the screen without dots, every knob.
+3. Presses: plate and hall: press blue/green/white (the screen switches to page 2, that knob turns
+   the page-2 parameter, press again to return), press orange (freeze: the tail holds, the freeze
+   mark lights). Tape echo: press blue, turn blue through the four head patterns (the heads on the
+   screen follow), press green (hold). Shift: press blue, turn blue past half (ring mode).
+4. The master (mixer) on cs_hall and cs_plate (stereo, width on hall's page 2) and cs_tape_echo
+   (ping-pong heads as before).
+5. Save a sound with page-2 settings; power-cycle: kept? CPU: hall on the master plus a synth
+   plate while playing six-note chords, as the firmware build managed.
+6. Report in numbered points.
+
+## Test 52: the whole plugin set on hundekraft (`build/knl/cs_*.knl`, twelve files)
+
+**Round 1 (2026-10-26): memory, not sound.** All twelve installed: the MIDI sequencer (one of
+hundekraft's own plugin files) stopped loading, and the workshop's Refresh answered "The OP-1
+refused the inventory request (io)". A clean hundekraft rebuild, a stock reflash and a factory
+reset changed nothing: plugin files live in NAND `/yaffs2/plugins`, outside every package, and the
+browser re-sent the "Your plugins" list with each USB update. Cause: kennel's arena is 2 MB usable
+for every plugin file (hundekraft's own ~45 take 1.14 MB); our first builds kept Rings' 573 KB of
+voices and reverb there, and Clouds a 360 KB core per position, so the loader ran out while
+loading hundekraft's files (user files load first), and the inventory text, built in the same
+arena, failed, which blocks Remove. Rings plus one Clouds did the same. Way out (worked): the safe
+start. Switch off within a few seconds of the tape screen; the next boot skips every plugin file
+("plugin files not loaded"), Refresh works, Remove → Update OP-1 → T1 deletes them.
+
+**Round 2: the big state is outside the arena** (`ports/knl/common/cs_sdram.h`, region A
+0x02C00000.. where our firmware ran; `docs/kennel-plugins.md` "Sizes"). cs_rings, cs_clouds and
+cs_clouds_delay rebuilt: all twelve now take 392 KB of the arena, hundekraft complete beside them.
+Install: safe start if the device is still full, then Your plugins → add the three new files (same
+ids: the review says replaced) and the rest → Update OP-1 → T1. Refresh afterwards: every file
+`loaded`, the MIDI sequencer among hundekraft's. Then the procedure below. New things to watch: the
+first Rings note after a boot clears 576 KB (one block, a click at most, once); a Clouds position
+clears its slot for ~65 ms of pass-through when created, as the half-rate restart did.
+
+**Between the rounds (2026-10-27):** with the eleven first-build effects and Clouds installed, a
+note on any sound hung the OP-1, a stock engine with its effect off included; with every cs plugin
+switched off it played. The master effect is the one position a sound's own settings don't change,
+so a Clouds build on the master is the suspect; the name was lost before it could be read. The user
+uninstalled everything to start from hundekraft alone, and the plugins go back in groups (small
+effects, modulation, the big three, cs_clouds on the master, cs_clouds_delay, cs_rings last). Not
+ours: a drum memory saved on Gin with Gin not loaded crashed every boot at the stock exception
+screen (`SEQSTAT 0x21`, `RETX 0x3`: illegal instruction at address 3, a null function pointer).
+Pointing the slot elsewhere fixed it; persistent state, so reflashes don't touch it. Worth
+reporting to hundekraft (their guide says a missing provider should fall back, not crash).
+
+**Procedure:**
+1. Workshop → Your plugins → add every `build/knl/cs_*.knl` not yet installed → Update OP-1 → T1.
+   The review: new plugins, no conflicts.
+2. **cs rings** in the synth engine list (Shift + T1). Play; the screen (rings.svg, no engine dots).
+   Press blue, turn blue through the six models; press green, turn green through all / 1 / 2 / 4;
+   press again to return to the knobs. Model 6 (string + reverb) at "all" plays 4 voices as before.
+   Save a sound on a model and polyphony; power-cycle: kept? The 22.05 kHz sound (Test 51).
+3. **cs clouds** and **cs clouds delay** on a synth sound and on the master. Delay: the user's
+   snapshot settings (position 41 %, size full, density full; dry/wet 31 %, feedback 28 %, reverb
+   66 %) on entry. Presses: blue/green/white page 2 (the screen shows page 2 while any is pressed),
+   orange freeze (the face freezes). Granular: density off-centre makes grains; texture on blue.
+4. **Rings + Clouds together**: cs rings at "all" with cs clouds delay on the master and chords:
+   pops, pumping, cut tails? Then a synth cs clouds as well. The governor no longer sees Rings'
+   cycles (it did in the firmware build), only its own lateness.
+5. Everything saved; power-cycle; the OP-1 boots with every slot as left. Then Remove one plugin in
+   the workshop and boot: its sounds fall back to the stock engine and keep their name.
+6. Report in numbered points, with anything in the UX that reads wrong.
+
+**Going back to our firmware or stock afterwards:** set every slot, kit and the master off the
+cs_ plugins first (an unknown type halts the boot), or restore the backup.
+
+## Test 53: rings (was cs_rings) with its new screen and one-step page-2 words (`build/knl/rings.knl`)
+
+**2026-10-27.** The user's first round with the twelve on the device: cs_rings' presses did work
+(blue, then turn blue, changed the model) but nothing on the screen said so, and the six models
+took 21 clicks of the encoder (kennel moves a page-2 word by about 1536 per click over the full
+range). Rebuilt: a setting is now the word in clicks, one model or polyphony step per click,
+cycling (`settings.h` `RangeSetting`, rounded to the nearest click). The screen is new
+(`ports/knl/rings/gen_rings_knl_svg.py`, the design canvas "Rings kennel screen"): six rings
+lit by structure, eight green rays (brightness), a white pad sliding in over the rings (damping),
+the orange strike dot on the radius (position), a ripple per voice growing from the core to the rim
+and fading with the voice, the core's glow (the drive valve's blend), and at the right the MODEL
+and POLY rows with stroked labels, dots, ticks and a page-2 bracket. Per-voice level and age come
+from the engine (`RingsScreenVoices`). Composition 8 px left, 12 px up for the viewing angle.
+
+**Procedure:**
+1. Remove `cs_rings` in the workshop (its sounds fall back to the stock engine: resave them on
+   rings), add `rings.knl`, Update OP-1 -> T1. The id is plain `rings` now (the user's choice).
+2. The idle screen: rings, rays, pad, strike dot, MODAL, ALL. Turn each knob: rings light from
+   the core out (blue), rays light anticlockwise from the lower left (green), the pad lifts off
+   the rings as white turns clockwise (it sits deep in at zero: in Rings more damping is a longer
+   ring), the dot moves out along the radius (orange). Round 2 (2026-10-27, after the user's
+   photo of round 1): the composition is larger (rings to r 54, rays from y 9, the pad's foot at
+   y 134) and the pad's travel is reversed, as the user asked.
+3. Press blue: a blue bracket around MODEL, the label white, the rings dim. Each click of blue is
+   one model: MODAL, SYMP, STRING, FM, QUANT, VERB, then round again. Press blue to return.
+   The same with green: bracket around POLY, ALL, 1, 2, 4 one click each.
+4. Play: a white ripple leaves the core on each note, reaches the rim in about a third of a
+   second and fades; chords make several. The core flares and the lit rays flash on a strike.
+   The POLY ticks count the voices sounding: bright green per sounding voice from the left,
+   dim green for the rest the setting allows, and they drop on key up (round 3: the user
+   missed a playing-voice count, so the ticks show it outright and the engine reports note-off
+   to the screen). **Watch the ripple's line width:** if it gets
+   thicker as it grows, the renderer scales strokes with the matrix (unverified, screen-interface.md
+   section 6); then say so and the ripple will be redrawn as fills.
+5. Damping at zero (pad deep in): ripples die before the rim. Brightness at zero: no rays, a black core.
+6. Save a sound on a model and polyphony, power-cycle: kept, and the label matches.
+7. Report in numbered points.
+
+## Test 54: bitcrusher (was cs_crush) with its new screen and the input gain (`build/knl/bitcrusher.knl`)
+
+**2026-10-27.** Renamed to plain `bitcrusher` (the user's choice; hundekraft's own is `crush`). New:
+an input gain on blue's page 2 (word 5, -6 dB at 0, 0 dB at the centre default, +6 dB at the top,
+about 0.6 dB a click; it drives the crusher only, the dry side of the mix is untouched, and the
+crushed signal clips at full scale). New screen (`ports/knl/bitcrusher/gen_crush_knl_svg.py`, the
+canvas "Bitcrusher screen" option C, https://claude.ai/artifact/MMa1PBoYe8Q3XbPvxUdx9V): the gain as
+a white gauge at the far left (bar up or down from the 0 dB mark, warming with the input level),
+the mix as an orange gauge at the far right, and between them the staircase over a dim sine (eight
+variants by rate), the green bit ladder, the clock row along the top (two halves shaken apart by
+jitter) and a white sampling dot running the steps. The file is 29 KB (113 clock ticks and the
+readout's glyph sets); hundekraft's check passes.
+
+**Procedure:**
+1. Remove `cs_crush` in the workshop, add `bitcrusher.knl`, Update OP-1 -> T1. Resave any sound
+   that used cs crush (it fell back to the stock effect, keeping its name).
+2. Idle: the two gauges, the ladder, the staircase, the clock row, the dot. Turn each knob: blue
+   changes the step width and the clock pitch together; green lights fewer ladder ticks as bits
+   fall; white shakes the clock row; orange fills the right gauge from the foot.
+3. Play: the left gauge's bar brightens with the input; the dot steps along the staircase,
+   faster at higher rates.
+4. Press blue: the staircase dims, a bracket around the left gauge, a readout above it (`+0.0`
+   at the default). Turn blue: the bar grows up from the centre to `+6.0` and down to `-6.0`,
+   the sound driving harder into the crusher at +6 (at mix 0 the dry sound must not change).
+   Press blue again: back. Save a sound at +3, power-cycle: `+3.0` again.
+5. Report in numbered points.
+
+**First report (2026-10-27):** installed; white (jitter) did nothing on the screen. Cause: the clock
+row's shake was scaled by `>> 14` instead of `>> 6`, at most 0.016 px (`crush_knl.cc`). Fixed and
+rebuilt (36,740 bytes); the row's two halves now shake apart up to 4 px, more as white rises. Replace
+`bitcrusher.knl` in the workshop and rerun point 2 for white. Note for the manual: the gauge at the
+far left is white-coloured but is the input gain, set by blue on page 2, not by the white knob.
+
+## Test 55: shift + a page-2 knob moves in fine steps (`build/knl/bitcrusher.knl`, `cs_plate.knl`, `cs_hall.knl`, `cs_clouds.knl`, `cs_clouds_delay.knl`)
+
+**2026-10-27.** The user: one click of blue on the bitcrusher's gain frame moves it 0.4 dB; shift + blue
+should move it 0.1, as the stock knobs do under shift, on every module. Kennel's dispatcher steps a
+page-2 word a click regardless of shift, so the plugins now do it (`knl::Fine`, `ports/knl/common/
+knl_fx.h`): once a render block the effect compares its page-2 words with what it saw last; a change of
+up to three clicks while shift is held is rewritten in the stored words as a fine step a click (a tenth
+of a dB for the gain, a quarter click for plate, hall and Clouds); larger jumps pass. **The unknown:**
+whether the dispatcher reads the stored word back for its next click (then the fine steps hold) or
+keeps its own running value (then each shift click would show a fine step and the next unshifted click
+would jump to where the coarse count is). Point 3 tells.
+
+**Procedure:**
+1. Replace the five plugins in the workshop, Update OP-1 -> T1.
+2. Bitcrusher, press blue, readout `+0.0`. Hold shift, turn blue one click at a time: `+0.1`, `+0.2`,
+   `+0.3` ... one digit a click, both ways. Release shift, one click: about +0.6 from there (not a jump
+   back to a whole number of coarse clicks).
+3. Shift + ten clicks, then release shift and click once: the value continues from where shift left it.
+   If it instead snaps to a coarse count, report what it showed; the dispatcher keeps its own value and
+   the plugin-side approach has to change.
+4. Save a sound at `+1.3`, power-cycle: `+1.3`.
+5. Plate (blue page 2, size) and Clouds (blue page 2, texture): shift + a click moves the screen's
+   page-2 element about a quarter of an unshifted click; unshifted clicks unchanged.
+6. cs_shift's mode and the tape echo's head pattern: shift + a click still changes the mode by one.
+7. **Blue and green turn the stock way now** (the user's ask, same build): blue clockwise raises the
+   sample rate (narrower steps, a higher clock pitch), green clockwise adds bits (more ladder ticks).
+   The defaults mirror the old ones (24767, 24767), so a new sound crushes as before; a sound saved
+   with the old build keeps its words and so now sounds mirrored: reset its rate and bits.
+8. Report in numbered points.
+
+**Result (2026-10-27): bitcrusher "perfect"** (the user): the shake, the tenth-of-a-dB shift steps on
+the gain (so the dispatcher does read the stored word back: the plugin-side fine step holds) and the
+knob directions. Plate, hall and the two Clouds builds with the quarter-click shift steps (points 5-6)
+not reported yet.
+
+## Test 56: drive with the schematic screen and an input gain (`build/knl/drive.knl`, was cs_drive)
+
+**2026-10-27.** The user's pick from the canvas "Drive screen" (design A "Schematic",
+https://claude.ai/artifact/KAb4QAzStA5Eo9vvq4nztk; `docs/fx-briefs/designs/drive-schematic.md`): the
+signal path as a circuit: jack, the input gain as a pot with a blue wiper, the clipper's two blue
+diodes filling from the tip with drive, the triode with its filament and glow warming with bias, the
+tilt EQ as its S response, the output arrow, the orange mix gauge. New in the core: an input gain on
+blue's page 2 (word 5, -6..+6 dB, 0 dB at the centre, shift for tenths) that scales the clipper's gain
+only (the auto-level and the dry side don't see it). Built with the bitcrusher (whose gain table moved
+to `common/knl_fx.h`).
+
+**Procedure:**
+1. Remove `cs_drive` in the workshop, add `drive.knl` (plain `drive`: hundekraft has none), Update
+   OP-1 -> T1. Resave any sound that used cs drive (it falls back to the stock effect).
+2. Idle: the circuit. Turn blue: the diode triangles fill from the tip in seven steps, rays appear at
+   the top of the range. Green: the S after the tube rises to the right (bright), flattens at the
+   centre, flips (dark). White: the filament under the cathode goes from dim to white, the glow
+   behind it comes up. Orange: the right gauge fills from the foot.
+3. Press blue: the diodes dim, a blue readout `+0.0` above the pot. Turn blue: the wiper arrow slides
+   along the resistor, `-6.0` at the left end to `+6.0` at the right; shift + a click moves it a tenth.
+   The sound: at +6 the clipping is heard harder, at -6 cleaner, with no level jump; at mix 0 nothing
+   changes. Press blue again: the diodes return. Save at +2.0, power-cycle: `+2.0`.
+4. Report in numbered points.
+
+**Result (2026-10-27): drive "perfect"** (the user): installed as plain `drive`, the schematic screen,
+the gain and its readout, the S tilt. Next in the UI round: tape, fold (dirt), then ensemble and
+shift (modulation), then tape echo.
+
+## Test 57: tapesat (was cs_tape) with the aligned reels screen and an input gain (`build/knl/tapesat.knl`)
+
+**2026-10-27.** The user's pick from the canvas "Tape screen" (design A "Reels, aligned",
+https://claude.ai/artifact/TKsEMfeTbLg34RCNroqFkJ; `docs/fx-briefs/designs/tapesat.md`): the firmware's
+reels without the box, spread over the width: the blue gain gauge at the far left, bigger reels with
+their green hubs, the saturation wave on the tape rail, the head, the wow -> flutter scale on the
+gauges' foot row, the low-pass glyph and specks at the right, the orange mix gauge. New in the core: an
+input gain on blue's page 2 (word 5, -6..+6 dB, 0 dB at the centre, shift for tenths) that adds to the
+saturation drive only (the level make-up and the dry side don't see it). Renamed `tapesat` (hundekraft
+has its own `tape`).
+
+**Procedure:**
+1. Remove `cs_tape` in the workshop, add `tapesat.knl`, Update OP-1 -> T1. Resave any sound that used
+   cs tape (it falls back to the stock effect).
+2. Idle: the two gauges, the reels, the tape, the scale, the glyph. Turn blue: the wave on the tape
+   flattens in eight steps. Green: the hubs shiver, slowly and a little at the bottom of the range,
+   fast and wider at the top, and the marker slides wow -> flutter. White (clockwise = a newer tape,
+   the user's ask after the first build; the default mirrored to 22937): anticlockwise the glyph's
+   corner walks left and the glyph greys, specks appear above it one by one (six); clockwise it
+   clears. A sound saved with the first build keeps its word and so now reads mirrored: reset its
+   age. Orange: the right gauge fills from the foot.
+3. Press blue: a bracket round the left gauge, `+0.0` top left. Turn blue: the bar grows up from the
+   centre to `+6.0` and down to `-6.0`; shift + a click moves a tenth. The sound: at +6 the tape
+   saturates harder, at -6 cleaner, with no level jump; at mix 0 nothing changes. Press blue again:
+   back. Save at `-2.0`, power-cycle: `-2.0`.
+4. Report in numbered points.
+
+**Result (2026-10-27): tapesat "good"** (the user), with white mirrored. Next: fold.
+
+## Test 58: wavefolder (was cs_fold) with the aligned wave screen and an input gain (`build/knl/wavefolder.knl`)
+
+**2026-10-27.** The user's pick from the canvas "Fold screen" (design A "Wave, aligned",
+https://claude.ai/artifact/CscKQMR3VBtoGF1GQaTpNN; `docs/fx-briefs/designs/fold-aligned.md`): the
+firmware's folded wave without the box, drawn large over the width between two dim fold lines, the
+blue gain gauge at the far left, the green offset line, the white low-pass glyph at the right (as
+tapesat's), the orange mix gauge. New in the core: an input gain on blue's page 2 (word 5, -6..+6 dB,
+0 dB at the centre, shift for tenths) that scales the folder's gain only (the level make-up and the dry
+side don't see it). Renamed `wavefolder` (the user's name).
+
+**Procedure:**
+1. Remove `cs_fold` in the workshop, add `wavefolder.knl`, Update OP-1 -> T1. Resave any sound that
+   used cs fold (it falls back to the stock effect).
+2. Idle: the two gauges, the wave between its lines, the offset line, the glyph. Turn blue: the wave
+   grows wiggles in its tops and bottoms in eight steps. Green: the offset line slides up and down.
+   White: the glyph's corner walks left as tone darkens. Orange: the right gauge fills from the foot.
+3. Press blue: a bracket round the left gauge, `+0.0` top left. Turn blue: the bar grows up from the
+   centre to `+6.0` and down to `-6.0`; shift + a click moves a tenth. The sound: at +6 more folds, at
+   -6 fewer, with no level jump; at mix 0 nothing changes. Press blue again: back. Save at `+1.5`,
+   power-cycle: `+1.5`.
+4. Report in numbered points.
+
+**Result (2026-10-27): wavefolder "good"** (the user). The dirt family is done (bitcrusher, drive,
+tapesat, wavefolder). Next: ensemble.
+
+## Test 59: ensemble (was cs_ensemble) with the drift screen and an input gain (`build/knl/ensemble.knl`)
+
+**2026-10-27.** The user's pick from the canvas "Ensemble screen" (design C "Drift",
+https://claude.ai/artifact/DzykGtr3epWihZ7qJEUfoM; `docs/fx-briefs/designs/ensemble-drift.md`): each
+voice a vertical string swaying about its home mark, L above and R below, green depth ticks either side
+of each mark, the blue sweep dial and rate bar at the right, the blue gain gauge at the far left, the
+orange mix gauge. New: an input gain on blue's page 2 (word 5, -6..+6 dB, 0 dB at the centre, shift for
+tenths) on the wet path only (the plugin scales the decimated input; the dry side doesn't see it). The
+id is plain `ensemble` now (the user's name; hundekraft has none).
+
+**Procedure:**
+1. Remove `cs_ensemble` in the workshop, add `ensemble.knl`, Update OP-1 -> T1. Resave any sound that
+   used cs ensemble (it falls back to the stock effect).
+2. On a synth: one lane (the R lane and its strings hidden). On the master: both lanes. Idle: the
+   strings sway about their marks at the rate, the three a third of a turn apart, the R lane
+   opposite; the dial's dot circles at the same rate. Turn blue: faster, the bar grows. Green: the
+   sway widens and the ticks spread with it. White: one, two, three strings per lane (their marks
+   and ticks with them). Orange: the right gauge fills from the foot.
+3. Press blue: a bracket round the left gauge, `+0.0` top left. Turn blue: the bar grows up from the
+   centre to `+6.0` and down to `-6.0`; shift + a click moves a tenth. The sound: the chorused voices
+   louder or softer against the dry; at mix 0 nothing changes. Press blue again: back. Save at
+   `-1.0`, power-cycle: `-1.0`.
+4. Report in numbered points.
+
+**Result (2026-10-27): ensemble "good"** (the user), installed as plain `ensemble`. Next: shift.
+
+## Test 60: freq_shift (was cs_shift) with the dial screen, the gain on blue and the mode on green (`build/knl/freq_shift.knl`)
+
+**2026-10-27.** The user's pick from the canvas "Freq shift screen" (design B "Dial",
+https://claude.ai/artifact/4JwECGQ5XeJKoNRp7mLViS; `docs/fx-briefs/designs/freq-shift-dial.md`): shift
+as a needle on a bipolar arc spanning the width, two needles with a white spread arc on the master,
+green feedback arcs sweeping the way the sound climbs, the mode marks top left in green, the blue gain
+gauge at the far left, the orange mix gauge. **The control map changed:** blue press → the input gain
+(word 5, -6..+6 dB, the wet path only, shift for tenths); green press → the mode (word 6, one click
+flips shifter / ring; it was blue's). Renamed `freq_shift` (the user's name; the workshop shows "freq
+shift"). **The unknown:** the needles turn by a full affine matrix (rotation), the first use of the
+renderer's b and c terms; every earlier screen only scaled and translated.
+
+**Procedure:**
+1. Remove `cs_shift` in the workshop, add `freq_shift.knl`, Update OP-1 -> T1. Resave any sound that
+   used cs shift (it falls back to the stock effect).
+2. On a synth, idle: the arc, one needle straight up at 0 Hz, two green arcs, the arrow lit. Turn blue:
+   **the needle swings** right for up, left for down, to the end ticks at the ends of the range (if it
+   instead stretches, skews or stays put, the rotation isn't supported: report what it does). Green:
+   one to four arcs, sweeping right for up, flipping to the left for down. White: the white arc under
+   the rim widens with spread (the knob's value; on a synth the sound doesn't change, spread is a
+   stereo effect). Orange: the right gauge fills from the foot.
+   *First report (2026-10-27): no sign of white on a synth, and no sign of the green press: fixed in
+   the rebuild (the arc shows everywhere; a green bracket round the mode marks while green is on
+   page 2).*
+3. On the master: two needles; white parts them, a white arc between them that follows the shift
+   angle.
+4. Play: dim ripples spread from the hub out to the rim and fade, more and brighter the louder
+   the input (the sonar). Silence: none.
+5. Press green: a green bracket round the mode marks. Turn green a click: the ring lights, the arrow dims; the needles mirror either side of
+   the top at the carrier's angle, the feedback arcs sit centred on the top; the sound is the ring
+   modulator; white still shows (the arc at the carrier's angle; on the master the carriers part).
+   Another click: back. (Shift + a click: still one mode per click.)
+   *Second report (2026-10-27): no sign of white in ring mode: fixed in the rebuild, with the
+   ripples added at the user's ask.*
+6. Press blue: a bracket round the left gauge, `+0.0` top left. Turn blue: the bar grows up from the
+   centre to `+6.0` and down to `-6.0`; shift + a click moves a tenth. The sound: the shifted (or
+   ring-modulated) side louder or softer; in ring mode harder at +6; at mix 0 nothing changes. Press
+   blue again: back. Save at `+2.0` in ring mode, power-cycle: `+2.0`, ring mode.
+7. Report in numbered points.
+
+**Result (2026-10-27): freq_shift "looks great"** (the user), after two rounds: the green bracket,
+the spread arc on every position and in ring mode, the sonar ripples. **The rotation matrix works on
+the device** (the needle swings): the renderer's transform is a full affine. Session ended here; next:
+tape echo, then plate / hall / Clouds when installed.
+
+
+## Test 61: tape_echo (was cs_tape_echo) with the schematic screen, the gain on blue, the heads on white and the tempo lock; tape_drive (was tapesat) renamed (`build/knl/tape_echo.knl`, `build/knl/tape_drive.knl`)
+
+**2026-10-28.** The user's pick from the canvas "Tape echo screen" (design B "Schematic",
+https://claude.ai/artifact/KAu8e82XAZyk9QAYPJ6sdK; `docs/fx-briefs/designs/tape-echo-schematic.md`): the
+Space Echo's signal path, record head, the white tape wave (age), three play heads sliding with the
+time, the sum, the return path with green chevrons (feedback), a blue dot travelling the tape, the
+family gauges. **The control map changed:** blue press → the input gain (word 5, what reaches the
+record head, shift for tenths); white press → the head pattern (word 7, one click per pattern; it was
+blue's); green latches hold as before. **New: shift + blue on the time page locks the time to the
+project tempo's divisions** (1/16T, 1/16, 1/8T, 1/16., 1/8, 1/4T, 1/8., 1/4; a division a click,
+clockwise = longer; the readout top left names it). **The unknowns:** (1) the tempo is read from the
+stock firmware's LFO tempo word (`[0x1aadad4]`, `knl::TempoIncrement`); if hundekraft's core keeps it
+elsewhere the plugin reads nonsense and falls back to 120 BPM, so the lock would be right at 120 BPM
+only; (2) the lock rewrites the stored page-1 word the way the fine steps rewrite the page-2 words,
+proven for page 2, not yet for page 1. Also renamed: `tape_drive` (was tapesat), the same build with
+its id and screen file renamed.
+
+**Procedure:**
+1. In the workshop remove `cs_tape_echo` and `tapesat`, add `tape_echo.knl` and `tape_drive.knl`,
+   Update OP-1 -> T1. The lists show "tape echo" and "tape drive". Resave any sound that used them.
+2. tape echo on a synth, idle: the signal path, head 3 lit (the default pattern), two chevrons, the
+   tape nearly flat (age 30 %), the gain bar at 0 dB, the mix gauge. Turn blue: the three heads slide
+   right (longer) and left (shorter), the dot runs faster at short times. Green: one to four chevrons.
+   White: the tape wave grows and breathes. Orange: the right gauge.
+3. Play a note: echoes as before (the DSP is unchanged). Press green: the input arrow and record head
+   dim, the return path and the glyph top right turn green, all four chevrons; the tape loops what it
+   holds. Press again: back.
+4. Press white: a white bracket round the heads, "3" top left. Turn white a click: "2+3", heads 2 and 3
+   lit; again "1+2+3", again "1+3", again "3". Press white: back to age.
+5. Press blue: the bracket round the gain gauge, "+0.0". Turn: the bar up and down, +6 .. -6 dB; shift
+   + turn: tenths. More gain = a louder, more saturated echo; the dry sound unchanged. Press: back.
+6. **The tempo lock.** Set the tempo to 120 (the metronome / tempo screen). On the time page, hold
+   shift and turn blue one click clockwise: the time jumps to a division and its name reads out top
+   left ("1/8", "1/8." ...), the heads jump with it, and blue 16th ticks (every 4th taller) appear
+   over the tape from the record head while shift is held, head 3 sitting on a tick. Further clicks:
+   the next division up, down for anticlockwise; the list ends at 1/16T and 1/4. Play a note with the
+   sequencer or metronome running: the echoes land on the beat (at "1/4", one per beat; at "1/8T",
+   three per beat). Release shift and turn blue normally: the readout disappears, the time is free.
+7. Change the tempo to 90 and lock again: "1/4" should be 667 ms (slower repeats than at 120). If
+   the repeats do not follow the tempo (the same at 90 as at 120), the tempo word isn't at the stock
+   address on this core: report, and the sequencer feature's tempo source becomes the alternative.
+8. tape drive: as Test 57, only the name changed.
+9. Report in numbered points.
+
+**Round 1 (2026-10-28): the screen and the renames fine ("looks ok for now"); the tempo lock wrong.** At 90 BPM
+only 1/16 and 1/16T could be reached, at 120 only 1/16, 1/16T and 1/8T, and with head 3 alone the
+repeats were not on the metronome. Read as unknown (2): the reachable divisions were the ones next to
+the knob's own time, so the stock knob keeps its own copy of a page-1 value and writes it back on the
+next click; the rewritten word held only until then. **Round 2:** the word is never rewritten. Each
+shifted click is a step through the list and the plugin feeds the core the division's time in place
+of the word (`TimeLock::Word`) until a turn without shift frees it; the lock isn't saved with the
+sound. Repeat steps 6 and 7: all eight divisions reachable at 90 and 120, the repeats on the beat;
+releasing shift and turning blue returns the time to the knob. If the repeats are still off the beat
+while the readout says "1/4", unknown (1) is the cause: time a "1/4" against the metronome at 120
+(500 ms) and at 90 (667 ms) and report which, if either, it matches.
+
+**Round 2 (2026-10-28): "works and is sounding great. the tempo syncs nicely now."** So the tempo word
+is at the stock address on hundekraft's core too (unknown 1 settled), and the lock as plugin state is
+the right shape. **An install lesson on the way:** replacing the installed `tape_echo` in place (the same
+id, Update OP-1 → T1) left the OP-1 on the "kennel: updated" screen, black; the safe start (power off
+within a few seconds of the first screen, power on) got it back, and the same file added fresh after
+a Remove booted fine. Replace a plugin by removing it first, restarting, then adding the new file.
+**Round 3:** three longer divisions added, 1/2T, 1/4. and 1/2 (they fit the 1.5 s ceiling from 54, 60
+and 80 BPM up; below that the walk skips them). Install `build/knl/tape_echo.knl` (remove, restart,
+add). At 120: shift + blue clockwise past "1/4" reads "1/2T", "1/4.", "1/2" (667, 750, 1000 ms). At 50:
+"1/4" is the last (1/2T would be 1.6 s).
+
+**Round 3 (2026-10-28): "it's on and is great."** Test 61 done; tape echo is finished.

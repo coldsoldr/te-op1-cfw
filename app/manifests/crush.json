@@ -1,0 +1,22 @@
+{
+  "id": "crush",
+  "name": "crush",
+  "group": "effects",
+  "category": "dirt",
+  "kind": "module",
+  "description": "A bit crusher, from subtle 12-bit grit to 2-bit destruction, with an unsteady sample clock.",
+  "screens": {
+    "crush.svg": "ports/fx/op1/crush.svg"
+  },
+  "mask_bit": 6,
+  "cpu": "light",
+  "order": 113,
+  "requires": [],
+  "conflicts": [],
+  "warnings": {},
+  "preset_rows": 0,
+  "option": null,
+  "tag": null,
+  "chain": null,
+  "replaces_stock": []
+}

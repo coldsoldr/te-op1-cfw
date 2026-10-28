@@ -1,0 +1,16 @@
+{
+  "name": "bitcrusher",
+  "kind": "fx",
+  "order": 0,
+  "loadable": true,
+  "stereo": true,
+  "symbol": "FX_crush",
+  "sources": ["crush_knl.cc", "../../rings/op1/support.cc"],
+  "include_dirs": ["..", "../.."],
+  "defaults": [24767, 24767, 0, 32767],
+  "page2_defaults": [16384, 0, 0],
+  "screen": {"svg": "crush.svg", "symbol": "SCREEN_crush"},
+  "author": "coldsoldr",
+  "version": "0.1",
+  "claims": []
+}

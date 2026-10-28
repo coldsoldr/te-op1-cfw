@@ -18,8 +18,9 @@
 // q0..q3 are the hidden page's four values, as offsets from kDefaults (mod
 // 2^15) cut to 11, 14, 14 and 11 bits (q0's rounding as fx1's, so sim-fx's
 // checksums stay). So all-zero engine bits are looping delay, page 1, the
-// hidden page at its defaults. Entering Clouds from another engine starts
-// it in granular. fx1's layout (values[4] bits 0-10 the first value, [5..7]
+// hidden page at the encoding base. Entering Clouds from another engine
+// starts it at kEnterDefaults, both pages and the mode (EnterSettings).
+// fx1's layout (values[4] bits 0-10 the first value, [5..7]
 // bits 0-14 the others, bit 15 of [5]/[6] the mode and of [7] the page)
 // converts with MigrateSettings.
 //
@@ -53,10 +54,20 @@ const int32_t kModeOrder[kNumModes] = { MODE_LOOPING_DELAY, MODE_GRANULAR, MODE_
                                         MODE_SPECTRAL };
 const int32_t kNumPlayableModes = 2;
 
-// The hidden page's values are stored as offsets from these.
+// The encoding base: the hidden page's values are stored as offsets from
+// these (fx1's defaults; kept so that saved presets decode unchanged).
 const int32_t kDefaults[kNumParams] = {
   0, 16384, 16384, 16384,     // position, size, pitch 0, density: no grains
   16384, 16384, 0, 0,         // texture, dry/wet 50%, feedback, reverb
+};
+
+// A fresh start (the host's orange click into Clouds): the user's settings
+// of 2026-10-20 (the snapshot synth/snapshot/20261020_2024.aif, rounded to
+// the clean values), v15, page-major, and the mode.
+const int32_t kEnterMode = 0;   // index into kModeOrder: looping delay
+const int32_t kEnterDefaults[kNumParams] = {
+  13512, 32767, 16384, 32767,   // position 41%, size 100%, pitch 0, density 100%
+  16384, 10239, 9216, 21504,    // texture 50%, dry/wet 31%, feedback 28%, reverb 66%
 };
 
 // Stereo spread is fixed for now (decision 4).
@@ -162,13 +173,17 @@ inline void ApplyParams(const int32_t v[kNumParams], CloudsParams* p) {
 
 // Click actions on a position's values (outside the audio thread).
 
-// A fresh start (the host's orange click): granular, page 1, the hidden
-// page at its defaults.
-inline void EnterSettings(int16_t* values) {
+// A fresh start (the host's orange click): kEnterMode, page 1 on the
+// encoders and page 2 hidden, both at kEnterDefaults (the encoders are
+// written the way SwapPage writes them).
+inline void EnterSettings(const EncoderRange* ranges, int16_t* values) {
   FxSettings s = DecodeSettings(values);
-  s.mode_index = 1;
+  s.mode_index = kEnterMode;
   s.page = 0;
-  for (int32_t k = 0; k < kParamsPerPage; ++k) s.hidden[k] = kDefaults[kParamsPerPage + k];
+  for (int32_t k = 0; k < kParamsPerPage; ++k) {
+    values[k] = ValueToEncoder(ranges[k], kEnterDefaults[k]);
+    s.hidden[k] = kEnterDefaults[kParamsPerPage + k];
+  }
   EncodeSettings(s, values);
 }
 

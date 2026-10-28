@@ -254,7 +254,9 @@ void EngineProcess(int32_t position, int32_t slot, int16_t* l, int16_t* r, const
 
 void EngineStop(int32_t position) { InstanceAt(position)->running = false; }
 
-void EngineEnter(int16_t* values, const EncoderRange*) { op1clouds::EnterSettings(values); }
+void EngineEnter(int16_t* values, const EncoderRange* ranges) {
+  op1clouds::EnterSettings(ranges, values);
+}
 
 // blue = next mode (shift: back), green = freeze, white = page.
 bool EngineClick(int32_t position, int16_t* values, const EncoderRange* ranges, op1fx::Click click,

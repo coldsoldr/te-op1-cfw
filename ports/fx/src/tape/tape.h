@@ -42,6 +42,13 @@ struct TapeParams {
   int32_t wobble;     // 0..32767: none -> deep wow (half) -> flutter (top)
   int32_t age;        // 0..32767: new (flat) -> worn (dark, head bump)
   int32_t mix;        // 0..32767: dry -> wet
+  // An input gain into the saturation, as Q16 octaves added to the drive's
+  // exponent (the kennel plugin's page-2 word: -65536..65536, about -6..+6
+  // dB). The exponent stays within the knob's own range (-2..4), so at
+  // either end of the saturate knob the gain adds nothing; the level make-up
+  // follows the knob alone, so the gain is heard as more or less saturation,
+  // and the dry side of the mix never sees it.
+  int32_t gain_oct = 0;
 };
 
 const int32_t kTapeMaxBlock = 64;
@@ -160,6 +167,7 @@ class TapeSat {
   int32_t sat_, age_, wob_;
   int32_t mix_;                     // Q15
   int32_t sat_done_, age_done_, wob_done_;   // the values the coefficients are for
+  int32_t gain_done_;                        // the gain the saturation's are for
   int32_t aw_, af_;                 // wow and flutter depths, Q8 samples
   int32_t aw_t_, af_t_;             // their targets
   uint32_t ph_wow_, ph_flut_, ph_rnd_;

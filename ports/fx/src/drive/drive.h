@@ -42,6 +42,12 @@ struct DriveParams {
   int32_t tone;    // 0..32767: tilt, dark (-6 dB highs, +6 dB lows) .. 16384 flat .. bright
   int32_t bias;    // 0..32767: the clipper's operating point 0..0.5 (odd -> even)
   int32_t mix;     // 0..32767: dry .. wet (32767: wet only)
+  // An input gain into the clipper, Q14 (16384 = 0 dB; the kennel plugin's
+  // page-2 word, -6..+6 dB). It scales the clipper's gain K only: the dry
+  // side of the mix and the auto-level don't see it. K is clamped at 2^7
+  // (the exponent table's range), so above about +30 dB of drive the top of
+  // the gain's range adds nothing.
+  int32_t gain = 16384;
 };
 
 const int32_t kDriveMaxBlock = 64;
@@ -146,6 +152,7 @@ class Drive {
 
   // Smoothed knobs (Q15 << 8).
   int32_t drive_, tone_, bias_, mix_;
+  int32_t gain_;               // the input gain, Q14 (not smoothed: K ramps)
   // Ramped coefficients: the value at the start of the next call.
   int32_t k_;                  // K, Q16
   int32_t beta_;               // Q15

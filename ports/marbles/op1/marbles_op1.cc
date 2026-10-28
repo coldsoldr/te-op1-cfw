@@ -17,6 +17,8 @@
 
 #include "op1/marbles_seq.h"
 
+#include "fx/op1/modules.h"
+
 namespace {
 
 using op1marbles::MarblesSeq;
@@ -75,7 +77,9 @@ int16_t midi_note[256];       // per pitch + 64: the MIDI note it started as
 
 // Marbles plays the synth only: synth and drum share tombola's player
 // object (docs/sequencer-interface.md §2), so on drums it stays stock.
-bool Active() { return marbles_on && Read<int32_t>(kInstrument) == 0; }
+bool Active() {
+  return op1::ModuleEnabled(op1::MODULE_MARBLES) && marbles_on && Read<int32_t>(kInstrument) == 0;
+}
 
 MarblesSeq* Seq() {
   if (!seq_ready) {
@@ -112,6 +116,7 @@ class OpSink : public op1marbles::NoteSink {
 };
 
 int32_t Click(int32_t key, int32_t direction) {
+  if (!op1::ModuleEnabled(op1::MODULE_MARBLES)) return 0;   // switched off: stock tombola
   if (Read<int32_t>(kInstrument) != 0) return 0;   // drums: stock tombola
   switch (key & 0xff) {
     case kClickOrange: {

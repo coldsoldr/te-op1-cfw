@@ -121,7 +121,7 @@ void Fold::Init() {
     ch_[i].t1 = ch_[i].t2 = 0;
     ch_[i].z = 0;
   }
-  for (int32_t i = 0; i < 4; ++i) knob_[i] = last_[i] = -1;
+  for (int32_t i = 0; i < 5; ++i) knob_[i] = last_[i] = -1;
   g_ = c_ = sc_ = lm_ = mm_ = 0;
   shape_.sin_tab = kFoldSin;
   shape_.sinc_tab = kFoldSinc;
@@ -134,8 +134,8 @@ void Fold::Init() {
 }
 
 void Fold::Control(int32_t n, const FoldParams& p) {
-  const int32_t target[4] = { p.fold, p.symmetry, p.tone, p.mix };
-  for (int32_t i = 0; i < 4; ++i) {
+  const int32_t target[5] = { p.fold, p.symmetry, p.tone, p.mix, p.gain };
+  for (int32_t i = 0; i < 5; ++i) {
     int32_t t = target[i];
     if (t < 0) t = 0;
     if (t > 32767) t = 32767;
@@ -150,8 +150,9 @@ void Fold::Control(int32_t n, const FoldParams& p) {
       }
     }
   }
-  const int32_t fold = knob_[0], sym = knob_[1], tone = knob_[2], mix = knob_[3];
-  if (!first_ && fold == last_[0] && sym == last_[1] && tone == last_[2] && mix == last_[3]) {
+  const int32_t fold = knob_[0], sym = knob_[1], tone = knob_[2], mix = knob_[3], gain = knob_[4];
+  if (!first_ && fold == last_[0] && sym == last_[1] && tone == last_[2] && mix == last_[3] &&
+      gain == last_[4]) {
     // Settled: the ramps stand still at the last targets.
     shape_.g = g_;
     shape_.g_step = 0;
@@ -163,9 +164,14 @@ void Fold::Control(int32_t n, const FoldParams& p) {
     tone_.mix_step = 0;
     return;
   }
-  for (int32_t i = 0; i < 4; ++i) last_[i] = knob_[i];
+  for (int32_t i = 0; i < 5; ++i) last_[i] = knob_[i];
 
-  const int32_t g = Curve(kFoldGain, fold) << 16;
+  // The input gain (Q14) scales the folder's gain, within the knob's own range.
+  int32_t gk = (Curve(kFoldGain, fold) * gain) >> 14;
+  const int32_t gmin = Curve(kFoldGain, 0), gmax = Curve(kFoldGain, 32767);
+  if (gk < gmin) gk = gmin;
+  if (gk > gmax) gk = gmax;
+  const int32_t g = gk << 16;
   const int32_t c = (sym - 16384) << 10;   // +-1/8 turn, Q27
   // What the folder makes of silence at this offset: u = u' = c, so
   // sin(2 pi c) x sinc(0) (16383).

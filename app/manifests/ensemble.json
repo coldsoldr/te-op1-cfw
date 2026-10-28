@@ -1,0 +1,22 @@
+{
+  "id": "ensemble",
+  "name": "ensemble",
+  "group": "effects",
+  "category": "modulation",
+  "kind": "module",
+  "chain": "cwo → ensemble → shift",
+  "description": "Stereo chorus and string ensemble: one voice per side is a classic chorus, three per side the swirl of 1970s string machines.",
+  "screens": {
+    "ensemble.svg": "ports/fx/op1/ensemble.svg"
+  },
+  "mask_bit": 7,
+  "cpu": "medium",
+  "order": 120,
+  "requires": [],
+  "conflicts": [],
+  "warnings": {},
+  "preset_rows": 0,
+  "option": null,
+  "tag": null,
+  "replaces_stock": []
+}

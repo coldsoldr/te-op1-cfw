@@ -243,3 +243,22 @@ Test 7 showed the device runs ~1.6x the simulator's figures for every model (the
   - optionally fewer modes per voice (Rings itself uses `64/poly − 4`).
 - **Done since:** the device tests, the Rings screen, and model and polyphony select on encoder clicks (`docs/device-tests.md`, Tests 2–5; `docs/HANDOVER.md`).
 - **Sample rate.** Upstream assumes 48 kHz. The port takes `OP1RINGS_SAMPLE_RATE` (default 44100). The lookup tables don't depend on sample rate.
+
+## The 22.05 kHz build (2026-10-26, Test 51)
+
+A test build for the user's question whether half the rate is audible and whether it lets Rings and
+Clouds run together. `src/rate_config.h` is the one place the rate enters; `make op1-seq-r22` builds
+it (`-DOP1RINGS_SAMPLE_RATE=22050 -DOP1RINGS_CONTROL_BLOCK_SIZE=32 -DOP1RINGS_UPSAMPLE=4`), and every
+check target takes `RINGS_RATE_FLAGS`. What had to change to keep the sound, found by rendering the
+same note at both rates in the simulator (`tests/sim_engine.cc`, `sim-model M=`) and comparing band
+energies: the reverb's delay lines (sample counts, C and assembly), the limiters' coefficients, the
+modes' Q (upstream's `1 + f q` is in fractions of the rate: without the halving every mode rang
+twice as long, +2.4 dB and a thick midrange), the string FIR (remapped; without it 2.8 dB quieter
+and 4 dB duller in 2-5 kHz). What did not need changing, and why: the strike (upstream's `1 / fc`
+already makes its area rate-independent; scaling it cost 5 dB), the exciter's noise coefficient
+(scaling it moves the level, not just the colour). The 4x upsampler is two stages: a 47-tap
+half-band FIR (`resources/gen_halfband.py` -> `src/halfband_taps.h`, Kaiser 60 dB) then the 2x
+Lagrange stage, so images stay below -59 dB; the response is flat to 9 kHz and -6 dB at 11 kHz.
+CPU in the simulator, six voices: modal 123 -> 82 MHz, string 89 -> 68, string + reverb 76 -> 54,
+FM 95 -> 68. The 44.1 kHz build is unchanged: its load segment is byte-identical to the shipped
+image. Test 51 in `docs/device-tests.md` has the listening procedure.

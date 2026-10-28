@@ -1,0 +1,20 @@
+{
+  "id": "filter",
+  "name": "filter",
+  "group": "effects",
+  "category": "other",
+  "kind": "mod",
+  "option": "filter",
+  "tag": "Teenage Engineering",
+  "description": "Teenage Engineering's hidden multi-mode filter effect, added to the effect list.",
+  "screens": {},
+  "cpu": "light",
+  "order": 140,
+  "requires": [],
+  "conflicts": [],
+  "warnings": {},
+  "preset_rows": 0,
+  "mask_bit": null,
+  "chain": null,
+  "replaces_stock": []
+}

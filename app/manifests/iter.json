@@ -1,0 +1,20 @@
+{
+  "id": "iter",
+  "name": "iter",
+  "group": "synths",
+  "category": "iter",
+  "kind": "mod",
+  "option": "iter",
+  "tag": "Teenage Engineering",
+  "description": "Teenage Engineering's hidden synth engine, added to the engine list.",
+  "screens": {},
+  "cpu": "light",
+  "order": 20,
+  "requires": [],
+  "conflicts": [],
+  "warnings": {},
+  "preset_rows": 0,
+  "mask_bit": null,
+  "chain": null,
+  "replaces_stock": []
+}

@@ -476,6 +476,7 @@ void Drive::Init() {
   drive_ = bias_ = mix_ = 0;
   tone_ = 16384 << 8;
   k_ = kKTable.v[0];
+  gain_ = 16384;
   beta_ = 0;
   fb_ = 0;
   hm_ = Makeup(0, 0) << 1;
@@ -530,7 +531,9 @@ template <bool kPow2>
 int32_t Drive::GroupA(const Count& c, const Count& gc, int32_t hw, int32_t hs) {
   const int32_t drive = drive_ >> 8, bias = bias_ >> 8;
   // Gain: K (Q16) = Gm (Q15) x 2^(e + 1), one exponent for the ramp, K < 2^e.
-  const int32_t k_target = Lookup(kKTable, drive);
+  // The input gain scales K (Q16); clamped under 2^7 so kExp's index holds.
+  int32_t k_target = static_cast<int32_t>((static_cast<int64_t>(Lookup(kKTable, drive)) * gain_) >> 14);
+  if (k_target > (127 << 16)) k_target = 127 << 16;
   const int32_t kint = (k_ > k_target ? k_ : k_target) >> 16;   // 1..67
   const int32_t e = kExp.v[kint];
   const int32_t sh = e + 1;
@@ -545,8 +548,10 @@ int32_t Drive::GroupA(const Count& c, const Count& gc, int32_t hw, int32_t hs) {
 
   // Bias: b (Q15, 0..0.5) at the clipper; b / K in the interpolator.
   int32_t start;
-  int32_t step = RampOf<kPow2>(&beta_, &start,
-                               Mul16(bias >> 1, Lookup16(kInvKTable, drive)) >> 15, c);
+  // b / K: the table's 1 / K is for the drive alone, so the gain divides it.
+  const int32_t beta_target = static_cast<int32_t>(
+      (static_cast<int64_t>(Mul16(bias >> 1, Lookup16(kInvKTable, drive)) >> 15) << 14) / gain_);
+  int32_t step = RampOf<kPow2>(&beta_, &start, beta_target, c);
   int32_t moving = gstep | step;
   ik_.beta = Pack(start, start + Mul16(hs, step));
   ik_.dbeta = Pack(step, step);
@@ -593,19 +598,23 @@ int32_t Drive::GroupB(const Count& c) {
 void Drive::Control(const DriveParams& p, int32_t n, bool split) {
   const int32_t pd = Clamp15(p.drive), pt = Clamp15(p.tone), pb = Clamp15(p.bias),
                 pm = Clamp15(p.mix);
-  if (settled_ && pd == last_.drive && pt == last_.tone && pb == last_.bias && pm == last_.mix) {
+  const int32_t pg = p.gain < 4096 ? 4096 : (p.gain > 65536 ? 65536 : p.gain);   // -12..+12 dB
+  if (settled_ && pd == last_.drive && pt == last_.tone && pb == last_.bias && pm == last_.mix &&
+      pg == last_.gain) {
     return;   // every step is 0: the kernel blocks hold
   }
   last_.drive = pd;
   last_.tone = pt;
   last_.bias = pb;
   last_.mix = pm;
-  const int32_t d0 = drive_, t0 = tone_, b0 = bias_, m0 = mix_;
+  last_.gain = pg;
+  const int32_t d0 = drive_, t0 = tone_, b0 = bias_, m0 = mix_, g0 = gain_;
+  gain_ = pg;
   drive_ = SmoothFast(drive_, pd);
   tone_ = SmoothFast(tone_, pt);
   bias_ = SmoothFast(bias_, pb);
   mix_ = SmoothFast(mix_, pm);
-  const bool moved = ((d0 ^ drive_) | (t0 ^ tone_) | (b0 ^ bias_) | (m0 ^ mix_)) != 0;
+  const bool moved = ((d0 ^ drive_) | (t0 ^ tone_) | (b0 ^ bias_) | (m0 ^ mix_) | (g0 ^ gain_)) != 0;
   const bool at_target = ((drive_ ^ (pd << 8)) | (tone_ ^ (pt << 8)) | (bias_ ^ (pb << 8)) |
                           (mix_ ^ (pm << 8))) == 0;
   if (moved) fresh_ = 0;   // both groups must see the new values

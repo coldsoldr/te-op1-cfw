@@ -37,23 +37,37 @@ namespace {
 // as "dirt" (delay keeps its name); only fx_types has those rows. The FX
 // browser finds its current entry by id (0x1a01954, "SELECT id FROM fx_types
 // WHERE type='%s'" on the stored name), so the shown name is display only.
+// The shown names follow the module mask (../fx/op1/modules.h): the builder
+// app rewrites this buffer before injection (tools/inject_app.py
+// --set-string op1_type_list_query=...) with a CASE for the categories that
+// have a module, or the stock query with none, so a firmware with nothing
+// switched on reads spring / punch / cwo / phase like stock. The buffer is
+// writable data, named for the ELF's symbol table, and as long as the
+// longest form: the app only ever shortens it (NUL-terminated).
 #if defined(OP1_CLOUDS) && defined(OP1_GRIDS) && defined(OP1_GRIDS_RENAME)
 // ... and seq_types' "pattern" (Grids or pattern; only seq_types has that
 // row). The chooser also looks the current type up by its shown name:
 // GridsSeqName answers "multi" there (docs/sequencer-interface.md §12).
 // Not built yet: the chooser's CALL (0x1970bea) can't reach region A
 // directly (pcrel24 = +-16 MB; ~19.6 MB away), so it needs a trampoline.
-const char kTypeListQuery[] =
-    "SELECT id, CASE type WHEN 'phase' THEN 'multi' WHEN 'spring' THEN 'reverb' WHEN 'cwo' THEN 'modulation' "
-    "WHEN 'punch' THEN 'dirt' WHEN 'pattern' THEN 'multi' ELSE type END FROM %s";
+#define OP1_TYPE_LIST_QUERY \
+    "SELECT id, CASE type WHEN 'phase' THEN 'multi' WHEN 'spring' THEN 'reverb' WHEN 'cwo' THEN 'modulation' " \
+    "WHEN 'punch' THEN 'dirt' WHEN 'pattern' THEN 'multi' ELSE type END FROM %s"
 #elif defined(OP1_CLOUDS)
-const char kTypeListQuery[] =
-    "SELECT id, CASE type WHEN 'phase' THEN 'multi' WHEN 'spring' THEN 'reverb' WHEN 'cwo' THEN 'modulation' "
-    "WHEN 'punch' THEN 'dirt' ELSE type END FROM %s";
+#define OP1_TYPE_LIST_QUERY \
+    "SELECT id, CASE type WHEN 'phase' THEN 'multi' WHEN 'spring' THEN 'reverb' WHEN 'cwo' THEN 'modulation' " \
+    "WHEN 'punch' THEN 'dirt' ELSE type END FROM %s"
 #else
-const char kTypeListQuery[] =
-    "SELECT id, CASE type WHEN 'phase' THEN 'multi' ELSE type END FROM %s";
+#define OP1_TYPE_LIST_QUERY "SELECT id, CASE type WHEN 'phase' THEN 'multi' ELSE type END FROM %s"
 #endif
+
+}  // namespace
+
+extern "C" {
+__attribute__((used)) char op1_type_list_query[] = OP1_TYPE_LIST_QUERY;
+}
+
+namespace {
 
 #ifdef OP1_CLOUDS
 // The synth patch check (patch.cpp, 0x1a037a8) range-checks each effect
@@ -72,9 +86,9 @@ const uint16_t kNeverInvalid = 0x0880;
 const Patch kPatches[kNumPatches] = {
   // Type list query (0x19707d8): R1.L = 0x42a8 at 0x1970866, R1.H = 0x018d
   // at 0x197086a (the immediates are the instructions' second halfwords)
-  // ("SELECT id, type FROM %s") -> kTypeListQuery.
-  { 0x01970868, kImm16Lo, 0x42a8, kTypeListQuery },
-  { 0x0197086c, kImm16Hi, 0x018d, kTypeListQuery },
+  // ("SELECT id, type FROM %s") -> op1_type_list_query.
+  { 0x01970868, kImm16Lo, 0x42a8, op1_type_list_query },
+  { 0x0197086c, kImm16Hi, 0x018d, op1_type_list_query },
   // The MULTI screen (op1/screen.cc): the PdScreen keeps loading "pd.svg".
   // PdScreen vtable 0x191116c: Init (+0x24), Update (+0x1c).
   { 0x01911190, kWord32, 0x01a0cca0, reinterpret_cast<const void*>(&MultiScreenInit) },

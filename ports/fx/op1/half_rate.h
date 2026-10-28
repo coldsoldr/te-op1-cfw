@@ -11,6 +11,14 @@
 // Restart: a position's first call after the host's stop, or after a pause
 // over 5 ms, re-initialises the filters and passes the input through; the
 // engine re-initialises its core when Begin returns false.
+//
+// The pause is measured from the END of the previous call (End, which the
+// engine calls last): a restart that itself takes over 5 ms (hall clears
+// 76 KB; at boot, with cold caches and the firmware loading files, calls
+// are slow) must not read as a pause at the next call, or every call
+// restarts, each call takes over 5 ms, and the audio interrupt starves the
+// boot: a hang on the logo (Test 47: a slot saved on hall; the same loop as
+// clouds1's, ../../clouds/op1/clouds_fx.cc).
 
 #ifndef OP1FX_OP1_HALF_RATE_H_
 #define OP1FX_OP1_HALF_RATE_H_
@@ -32,8 +40,8 @@ class HalfRate {
   // Once per call, first: false on a restart (the input stays as it is; the
   // engine re-initialises its core and returns, adding its cycles).
   bool Begin(uint32_t now) {
-    if (running_ && now - last_call_ > kGapCycles) running_ = false;
-    last_call_ = now;
+    if (running_ && now - last_end_ > kGapCycles) running_ = false;
+    last_end_ = now;   // until End
     if (running_) return true;
     for (int32_t c = 0; c < 2; ++c) {
       decimator_[c].Init();
@@ -49,6 +57,10 @@ class HalfRate {
   }
 
   void Stop() { running_ = false; }
+
+  // Once per call, last (on a restart too): the pause before the next call
+  // counts from here.
+  void End() { last_end_ = op1::Cycles(); }
 
   // The call's input at half rate: in(0), in(1) (r null: mono).
   void Decimate(const int16_t* l, const int16_t* r) {
@@ -95,7 +107,7 @@ class HalfRate {
   int16_t wet_half_[2][kHalfN];
   int16_t wet_full_[2][kFxBlockSize];
   bool running_;
-  uint32_t last_call_;
+  uint32_t last_end_;
   int32_t mix_;   // Q16
 
   // Shared by every instance (C++17 inline: zero-initialised, no constructor).

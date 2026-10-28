@@ -41,6 +41,11 @@ struct ShiftParams {
   int32_t spread;     // 0..32767: L at shift + spread, R at shift - spread
   int32_t mix;        // 0..32767 dry -> wet
   bool ring;          // ring modulation (carrier |shift|) instead of shifting
+  // An input gain on the wet path, Q14 (16384 = 0 dB; the kennel plugin's
+  // page-2 word, -6..+6 dB): the analytic signal after the Hilbert is
+  // scaled before the channels' rotation and feedback, saturating. The dry
+  // side of the mix doesn't see it.
+  int32_t gain = 16384;
 };
 
 struct ShiftHilbertKernel {

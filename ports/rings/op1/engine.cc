@@ -10,9 +10,11 @@
 //
 // The OP-1 renders voices at 88.2 kHz, 128 samples per call. Rings runs at
 // half that (44.1 kHz, 64 samples per call; upstream runs at 48 kHz) and is
-// upsampled 2x, which halves its CPU cost. The buffers that live only
-// within a render call are in the L1 scratchpad (src/scratch.h): the OP-1
-// runs without a data cache.
+// upsampled 2x, which halves its CPU cost. The 22.05 kHz build
+// (src/rate_config.h, OP1RINGS_UPSAMPLE 4) renders 32 samples and upsamples
+// 4x: a half-band FIR to 44.1 kHz (src/halfband_taps.h), then the same 2x
+// stage. The buffers that live only within a render call are in the L1
+// scratchpad (src/scratch.h): the OP-1 runs without a data cache.
 //
 // Encoders (params[0..3], 0..32767): blue = structure, green = brightness,
 // white = damping, orange = position (confirmed on the device). They're
@@ -37,25 +39,36 @@
 #include "op1/fx_probe.h"
 #endif
 #ifdef OP1_CLOUDS
+#include "fx/op1/modules.h"
 #include "op1/clouds_fx.h"
 #endif
 #include "op1/op1.h"
 #include "op1/param_smoother.h"
-#include "op1/patches.h"
+#ifndef OP1_KENNEL
+#include "op1/patches.h"   // the image's patch table (ports/knl/rings has none: kennel hooks the firmware)
+#endif
 #include "op1/reverb_bus.h"
 #include "op1/settings.h"
 #include "op1/voice_allocator.h"
 #include "src/fixed.h"
 #include "src/op1_voice.h"
 #include "src/scratch.h"
+#ifdef OP1_KENNEL
+#include "common/cs_sdram.h"   // the voice states and the reverb live outside kennel's arena
+#endif
+#if OP1RINGS_UPSAMPLE == 4
+#include "src/halfband_taps.h"
+#endif
 
 namespace {
 
 using op1rings::RingsVoice;
 using op1rings::VoicePatch;
 
-const int32_t kRingsBlockSize = op1::kBlockSize / 2;
+const int32_t kRingsBlockSize = op1::kBlockSize / OP1RINGS_UPSAMPLE;
 static_assert(kRingsBlockSize == op1rings::kScratchBlock, "scratch block size");
+static_assert(kRingsBlockSize == static_cast<int32_t>(op1rings::kControlBlockSize),
+              "one control block per render call (OP1RINGS_CONTROL_BLOCK_SIZE)");
 
 // params[] index for structure, brightness, damping, position.
 const int32_t kParamOrder[4] = { 0, 1, 2, 3 };
@@ -65,6 +78,58 @@ const int32_t kParamOrder[4] = { 0, 1, 2, 3 };
 // -0.4 dB at 10 kHz and -1.6 dB at 15 kHz. Delays the signal by 2 input
 // samples (45 us). Works on 16-bit-scaled samples, so the sums can't
 // overflow.
+#if OP1RINGS_UPSAMPLE == 4
+// 4x upsampler, two stages. First a half-band FIR doubles 22.05 kHz to
+// 44.1 kHz (src/halfband_taps.h: flat to 9 kHz, -0.7 dB at 10 kHz, -59 dB
+// from 13 kHz, so the images of the band above 11 kHz stay out of hearing);
+// the even outputs are the input delayed by 12 samples, the odd ones a
+// 24-tap symmetric sum. Then the 2x Lagrange stage above takes it to
+// 88.2 kHz (its own images lie above 33 kHz). Delay: 12 samples at
+// 22.05 kHz + 2 at 44.1 kHz (0.59 ms). The input is clamped to 16 bits, so
+// the Q14 sums fit 32 bits (sum |c| = 1.15).
+class Upsampler {
+ public:
+  void Init() {
+    for (int32_t i = 0; i < op1rings::kScratchHalfbandHistory; ++i) history_[i] = 0;
+    mid_history_[0] = mid_history_[1] = mid_history_[2] = 0;
+  }
+
+  // in: kRingsBlockSize Q27 samples; out: 4 * kRingsBlockSize samples.
+  void Process(const int32_t* in, int16_t* out) {
+    using op1rings::kHalfbandTaps;
+    const int32_t kHistory = op1rings::kScratchHalfbandHistory;   // 24 = 2 x 12 taps
+    int32_t* x = op1rings::scratch()->upsampler.x;       // the voice has rendered
+    int32_t* mid = op1rings::scratch()->upsampler.mid;
+    for (int32_t i = 0; i < kHistory; ++i) x[i] = history_[i];
+    for (int32_t i = 0; i < kRingsBlockSize; ++i) x[kHistory + i] = op1::Saturate16(in[i] >> 12);
+    // Stage 1: 22.05 -> 44.1 kHz. Output pair m uses x[m + 1 .. m + 24]
+    // (the even sample is x[m + 12]).
+    mid[0] = mid_history_[0];
+    mid[1] = mid_history_[1];
+    mid[2] = mid_history_[2];
+    for (int32_t m = 0; m < kRingsBlockSize; ++m) {
+      const int32_t* c = x + m + 12;
+      int32_t acc = 1 << 13;
+      for (int32_t j = 0; j < 12; ++j) acc += kHalfbandTaps[j] * (c[-j] + c[1 + j]);
+      mid[3 + 2 * m] = c[0];
+      mid[3 + 2 * m + 1] = acc >> 14;
+    }
+    // Stage 2: 44.1 -> 88.2 kHz (the 2x stage).
+    for (int32_t k = 0; k < 2 * kRingsBlockSize; ++k) {
+      out[2 * k] = op1::Saturate16(mid[k + 1]);
+      out[2 * k + 1] = op1::Saturate16((9 * (mid[k + 1] + mid[k + 2]) - mid[k] - mid[k + 3]) >> 4);
+    }
+    for (int32_t i = 0; i < kHistory; ++i) history_[i] = x[kRingsBlockSize + i];
+    mid_history_[0] = mid[2 * kRingsBlockSize];
+    mid_history_[1] = mid[2 * kRingsBlockSize + 1];
+    mid_history_[2] = mid[2 * kRingsBlockSize + 2];
+  }
+
+ private:
+  int32_t history_[op1rings::kScratchHalfbandHistory];   // last 24 inputs of the previous block
+  int32_t mid_history_[3];                                // last three 44.1 kHz samples
+};
+#else
 class Upsampler {
  public:
   void Init() { history_[0] = history_[1] = history_[2] = 0; }
@@ -88,24 +153,75 @@ class Upsampler {
  private:
   int32_t history_[3];   // last three inputs of the previous block
 };
+#endif
 
 // Rings voice states, and which one each OP-1 voice plays. A steal swaps
 // them: the new OP-1 voice takes over the ringing state at no cost, and the
 // stolen one fades out with a copy of only what it still needs
 // (RingsVoice::CopyFrom).
+#ifdef OP1_KENNEL
+// The kennel plugin's two big objects (462 KB + 109 KB) sit at fixed SDRAM
+// addresses outside the plugin arena (common/cs_sdram.h), zeroed by InitAll
+// (not bss: nothing else clears them).
+const uint32_t kStatesAt = cssdram::kRings;
+const uint32_t kReverbAt = (kStatesAt + sizeof(RingsVoice) * op1::kNumVoices + 15) & ~15u;
+static_assert(kReverbAt + sizeof(op1::ReverbBus) <= cssdram::kRings + cssdram::kRingsSize, "cs_sdram: Rings");
+RingsVoice* const states = reinterpret_cast<RingsVoice*>(kStatesAt);
+#else
 RingsVoice states[op1::kNumVoices];
+#endif
 RingsVoice* voices[op1::kNumVoices];
 Upsampler upsamplers[op1::kNumVoices];
 op1::ParamSmoother smoothers[op1::kNumVoices];
 op1::VoiceAllocator allocator;
 op1::CoefficientBudget coefficient_budget;   // the modal model's updates per block
+#ifdef OP1_KENNEL
+op1::ReverbBus& reverb_bus = *reinterpret_cast<op1::ReverbBus*>(kReverbAt);
+#else
 op1::ReverbBus reverb_bus;   // string + reverb's reverb, shared by the voices
+#endif
 static_assert(op1::ReverbBus::kBlock == kRingsBlockSize, "reverb bus: one block per call");
 bool initialized;
 op1::Engine voice_engines[op1::kNumVoices];   // latched at note-on
 uint32_t next_serial;
+#ifdef OP1_KENNEL
+// For the plugin's screen (rings_screen_knl.cc): each voice's level (the
+// block's peak, decaying) and its age in blocks since its note-on. Written
+// by the audio thread, read by the GUI thread: 16-bit words, no tearing.
+volatile int16_t screen_level[op1::kNumVoices];
+volatile uint16_t screen_age[op1::kNumVoices];
+volatile uint8_t screen_released[op1::kNumVoices];   // key up: the stock envelope is closing
+
+void ScreenQuiet(int32_t v) { screen_level[v] = static_cast<int16_t>(screen_level[v] - (screen_level[v] >> 2)); }
+
+// The level is the block's peak before the stock envelope (applied after
+// render), so a released voice reads loud until its ring dies: after the
+// key up the level is let go by a quarter a block (~12 ms to a tenth) and
+// the peak no longer tops it up, the way the heard note stops.
+void ScreenRendered(int32_t v, const int16_t* out) {
+  int32_t peak = 0;
+  for (int32_t i = 0; i < op1::kBlockSize; ++i) {
+    const int32_t a = out[i] < 0 ? -out[i] : out[i];
+    if (a > peak) peak = a;
+  }
+  const int32_t level = screen_level[v];
+  if (screen_released[v]) {
+    screen_level[v] = static_cast<int16_t>(level - (level >> 2));
+  } else {
+    const int32_t held = level - (level >> 4);
+    screen_level[v] = static_cast<int16_t>(peak > held ? peak : held);
+  }
+  if (screen_age[v] != 0xffff) screen_age[v] = static_cast<uint16_t>(screen_age[v] + 1);
+}
+#else
+inline void ScreenQuiet(int32_t) {}
+inline void ScreenRendered(int32_t, const int16_t*) {}
+#endif
 
 void InitAll() {
+#ifdef OP1_KENNEL
+  cssdram::Zero(kStatesAt, kReverbAt + sizeof(op1::ReverbBus) - kStatesAt);   // once, at the first note
+#endif
   for (int32_t v = 0; v < op1::kNumVoices; ++v) {
     voices[v] = &states[v];
     voices[v]->Init(op1::kPolyModes[op1::POLY_ALL]);
@@ -173,10 +289,21 @@ void PhaseNoteOn(void* self, const int16_t* knobs) {
 namespace {
 
 void Render(void* self, int16_t* out, const int16_t* params) {
+#ifdef OP1_KENNEL
+  // Nothing of the fixed region is touched until a note: a render before
+  // the first note-on (the firmware may render idle voices at boot) is
+  // silence, so a boot never depends on that memory (Test 52 round 2).
+  if (!initialized) {
+    for (int32_t i = 0; i < op1::kBlockSize; ++i) out[i] = 0;
+    return;
+  }
+#else
   if (!initialized) InitAll();
+#endif
   const int32_t v = op1::VoiceIndex(self);
   if (voice_engines[v] == op1::ENGINE_PHASE) {
     PhaseRender(self, out, params);
+    ScreenQuiet(v);
     return;
   }
   if (allocator.silent(v) ||
@@ -187,6 +314,7 @@ void Render(void* self, int16_t* out, const int16_t* params) {
     // share of the reverb plays through them).
     for (int32_t i = 0; i < op1::kBlockSize; ++i) out[i] = 0;
     upsamplers[v].Init();
+    ScreenQuiet(v);
     return;
   }
   int32_t target[op1::ParamSmoother::kNumParams];
@@ -199,11 +327,15 @@ void Render(void* self, int16_t* out, const int16_t* params) {
   patch.brightness = smoothed[1];
   patch.damping = smoothed[2];
   patch.position = smoothed[3];
-  // The OP-1's increment is f / 88200 * 2^32; at half the rate it doubles.
-  // Pitch is latched at the start of the block (as the stock string engine
-  // does).
+  // The OP-1's increment is f / 88200 * 2^32; at half the rate it doubles,
+  // at a quarter it quadruples. Pitch is latched at the start of the block
+  // (as the stock string engine does).
   const uint32_t inc = op1::PitchBuffer()[0];
+#if OP1RINGS_UPSAMPLE == 4
+  const uint32_t rings_inc = inc < 0x40000000u ? inc << 2 : 0xffffffffu;
+#else
   const uint32_t rings_inc = inc < 0x80000000u ? inc << 1 : 0xffffffffu;
+#endif
   // String + reverb sends to the shared reverb and plays a share of it
   // (op1/reverb_bus.h); a voice fading out after a steal does neither (the
   // voice that took over carries the ring on).
@@ -242,6 +374,7 @@ void Render(void* self, int16_t* out, const int16_t* params) {
     }
     allocator.AdvanceFade(v, op1::kBlockSize);
   }
+  ScreenRendered(v, out);
 }
 
 void NoteOn(void* self, const int16_t* knobs) {
@@ -249,6 +382,10 @@ void NoteOn(void* self, const int16_t* knobs) {
   const int32_t v = op1::VoiceIndex(self);
   const int16_t* settings = SettingsKnobs(knobs);
   voice_engines[v] = settings ? op1::EngineSetting(settings) : op1::ENGINE_PHASE;
+#ifdef OP1_CLOUDS
+  // Rings switched off (fx/op1/modules.h): a slot saved on it plays phase.
+  if (!op1::ModuleEnabled(op1::MODULE_RINGS)) voice_engines[v] = op1::ENGINE_PHASE;
+#endif
   if (voice_engines[v] == op1::ENGINE_PHASE) {
     // Stock phase: out of Rings' voice list (nothing steals or fades it).
     allocator.Forget(v);
@@ -284,6 +421,10 @@ void NoteOn(void* self, const int16_t* knobs) {
   voices[v]->set_model(VoiceModel(model));
   voices[v]->NoteOn();
   smoothers[v].Snap();
+#ifdef OP1_KENNEL
+  screen_age[v] = 0;
+  screen_released[v] = 0;
+#endif
 }
 
 }  // namespace
@@ -316,8 +457,23 @@ extern "C" void RingsNoteOn(void* self, const int16_t* knobs) {
 #endif
 }
 
+#ifdef OP1_KENNEL
+// The screen's view of the voices (GUI thread): level = the last block's
+// peak, decaying; age = blocks since the note-on (saturating).
+extern "C" void RingsNoteOff(void* self) { screen_released[op1::VoiceIndex(self)] = 1; }
+
+extern "C" void RingsScreenVoices(int16_t* level, uint16_t* age) {
+  for (int32_t v = 0; v < op1::kNumVoices; ++v) {
+    level[v] = screen_level[v];
+    age[v] = screen_age[v];
+  }
+}
+#endif
+
+#ifndef OP1_KENNEL
 extern "C" __attribute__((section(".op1header"), used))
 const op1::Header op1_header = {
   op1::kHeaderMagic, 3, &RingsRender, &RingsNoteOn, nullptr,
   op1::kPatches, op1::kNumPatches, 0,
 };
+#endif

@@ -1,0 +1,24 @@
+{
+  "id": "gfx-iter-lab",
+  "name": "iter lab screen",
+  "group": "synths",
+  "category": "iter",
+  "kind": "mod",
+  "option": "gfx-iter-lab",
+  "description": "op1repacker's laboratory drawing for the iter screen, in place of the stock one.",
+  "screens": {},
+  "requires": [
+    "iter"
+  ],
+  "cpu": "none",
+  "order": 22,
+  "replaces_stock": [
+    "iter.svg"
+  ],
+  "conflicts": [],
+  "warnings": {},
+  "preset_rows": 0,
+  "mask_bit": null,
+  "tag": null,
+  "chain": null
+}

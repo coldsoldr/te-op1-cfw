@@ -40,6 +40,12 @@ struct FoldParams {
   int32_t symmetry;   // 0..32767, 16384 = symmetric: offset -1/8 .. +1/8 turn
   int32_t tone;       // 0..32767: dark (300 Hz, 2 poles) -> open
   int32_t mix;        // 0..32767: dry -> wet
+  // An input gain into the folder, Q14 (16384 = 0 dB; the kennel plugin's
+  // page-2 word, -6..+6 dB). It scales the folder's gain only, kept within
+  // the fold knob's own range (0.25..4 turns), so at either end of the knob
+  // the gain adds nothing; the level make-up follows the knob alone, and the
+  // dry side of the mix never sees it.
+  int32_t gain = 16384;
 };
 
 // Kernel blocks (offsets in fold_layout.h). The ramps: each sample first
@@ -137,8 +143,8 @@ class Fold {
   FoldShapeBlock shape_;
   FoldToneBlock tone_;
   FoldChannel ch_[2];
-  int32_t knob_[4];             // smoothed fold, symmetry, tone, mix
-  int32_t last_[4];             // ... as of the last full control update
+  int32_t knob_[5];             // smoothed fold, symmetry, tone, mix, gain
+  int32_t last_[5];             // ... as of the last full control update
   int32_t g_, c_, sc_, lm_, mm_;  // the ramps' values at the end of the last call
   bool first_;
   bool use_asm_;

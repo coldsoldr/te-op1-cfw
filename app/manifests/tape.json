@@ -1,0 +1,22 @@
+{
+  "id": "tape",
+  "name": "tape",
+  "group": "effects",
+  "category": "dirt",
+  "kind": "module",
+  "description": "A tape machine in a box: warm saturation, a low head bump, and the pitch wobble of an uneven transport.",
+  "screens": {
+    "tapesat.svg": "ports/fx/op1/tapesat.svg"
+  },
+  "mask_bit": 4,
+  "cpu": "light",
+  "order": 111,
+  "requires": [],
+  "conflicts": [],
+  "warnings": {},
+  "preset_rows": 0,
+  "option": null,
+  "tag": null,
+  "chain": null,
+  "replaces_stock": []
+}

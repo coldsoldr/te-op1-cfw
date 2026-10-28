@@ -34,6 +34,9 @@
 #ifdef OP1_CPU_PROBE
 #include "op1/cpu_probe.h"
 #endif
+#ifdef OP1_CLOUDS
+#include "fx/op1/modules.h"
+#endif
 #include "op1/op1.h"
 #include "op1/screen_math.h"
 #include "op1/settings.h"
@@ -259,7 +262,13 @@ extern "C" void MultiScreenInit(void* self) {
   pd_document = DocumentOf(self);
   shown_document = pd_document;
   if (pd_document) reinterpret_cast<InitFn>(kStockInit)(self);
+  // With Rings switched off (../fx/op1/modules.h) the screen stays stock:
+  // its drawing isn't loaded, so Update never shows it.
+#ifdef OP1_CLOUDS
+  rings_document = op1::ModuleEnabled(op1::MODULE_RINGS) ? LoadDocument(op1::kRingsSvgName) : nullptr;
+#else
   rings_document = LoadDocument(op1::kRingsSvgName);
+#endif
   if (rings_document) {
     DocumentOf(self) = rings_document;
     RingsInit(self);

@@ -74,6 +74,27 @@ inline int32_t StepEngine(int32_t engine, int32_t direction) {
   return (engine + direction + kNumEngines) % kNumEngines;
 }
 
+#ifdef OP1_KENNEL
+// As a kennel plugin (ports/knl/cs_rings) Rings is its own engine, and the
+// model and polyphony are the page-2 words a knob press edits (op1_plugin.h:
+// blue -> word 5, green -> word 6). Kennel moves a page-2 word by about
+// 1536 per encoder click (21 clicks for the range, Test 52), so a setting
+// is the word in clicks, one step per click, cycling: model 0..5,
+// polyphony all, 1, 2, 4. Rounded to the nearest click, so a step size a
+// little off 1536 can't split a click. All-zero words (a new sound) are
+// the modal model, polyphony "all", as before.
+const int32_t kPageClick = 1536;
+inline int32_t RangeSetting(int16_t k, int32_t count) {
+  int32_t v = k;
+  if (v < 0) v = 0;
+  return ((v + kPageClick / 2) / kPageClick) % count;
+}
+inline Engine EngineSetting(const int16_t*) { return ENGINE_RINGS; }
+inline int32_t ModelSetting(const int16_t* knobs) { return RangeSetting(knobs[5], kNumModels); }
+inline PolyState PolySetting(const int16_t* knobs) {
+  return static_cast<PolyState>(RangeSetting(knobs[6], kNumPolyStates));
+}
+#else
 inline Engine EngineSetting(const int16_t* knobs) {
   return static_cast<Engine>(DecodeSetting(knobs[kEngineKnob], kNumEngines));
 }
@@ -81,6 +102,7 @@ inline int32_t ModelSetting(const int16_t* knobs) { return DecodeSetting(knobs[k
 inline PolyState PolySetting(const int16_t* knobs) {
   return static_cast<PolyState>(DecodeSetting(knobs[kPolyKnob], kNumPolyStates));
 }
+#endif
 
 }  // namespace op1
 

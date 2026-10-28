@@ -8,9 +8,7 @@
 #include "src/fixed.h"
 #include "src/fixed_tables.h"
 
-#ifndef OP1RINGS_SAMPLE_RATE
-#define OP1RINGS_SAMPLE_RATE 44100
-#endif
+#include "src/rate_config.h"
 
 namespace op1rings {
 
@@ -43,9 +41,15 @@ constexpr int32_t Q(double x, int n) {
 
 // Upstream's delay lines: lengths, and bases packed with one sample between
 // (FxEngine::DelayLine).
-const int32_t kAp1 = 150, kAp2 = 214, kAp3 = 319, kAp4 = 527;
-const int32_t kDap1a = 2182, kDap1b = 2690, kDel1 = 4501;
-const int32_t kDap2a = 2525, kDap2b = 2197, kDel2 = 6312;
+// At 22.05 kHz every length halves, the modulated taps and their depth too
+// (src/rate_config.h), so the room keeps its size and its modulation in
+// seconds; src/reverb_bfin.S derives the same numbers.
+const int32_t kDiv = OP1RINGS_REVERB_DIV;
+const int32_t kAp1 = 150 / kDiv, kAp2 = 214 / kDiv, kAp3 = 319 / kDiv, kAp4 = 527 / kDiv;
+const int32_t kDel1Tap = 4460 / kDiv, kDel1Mod = 40 / kDiv;   // del1's read: tap + mod x lfo, interpolated
+const int32_t kDel2Tap = 6261 / kDiv, kDel2Mod = 50 / kDiv;
+const int32_t kDap1a = 2182 / kDiv, kDap1b = 2690 / kDiv, kDel1 = kDel1Tap + kDel1Mod + 1;
+const int32_t kDap2a = 2525 / kDiv, kDap2b = 2197 / kDiv, kDel2 = kDel2Tap + kDel2Mod + 1;
 const int32_t kAp1Base = 0;
 const int32_t kAp2Base = kAp1Base + kAp1 + 1;
 const int32_t kAp3Base = kAp2Base + kAp2 + 1;
@@ -58,8 +62,8 @@ const int32_t kDap2bBase = kDap2aBase + kDap2a + 1;
 const int32_t kDel2Base = kDap2bBase + kDap2b + 1;
 static_assert(kDel2Base + kDel2 <= ReverbFixed::kSize, "reverb memory full");
 
-// The furthest back any read goes: del2's modulated tap, 6261 + 50 + 1.
-const int32_t kMaxReach = 6312;
+// The furthest back any read goes: del2's modulated tap, 6261 + 50 + 1 (= kDel2).
+const int32_t kMaxReach = kDel2;
 static_assert(ReverbFixed::kSize - 1 + kDel2Base + kMaxReach < ReverbFixed::kBufferSize,
               "reverb buffer: reads");
 static_assert(kMaxReach - 1 + kDel2Base + ReverbFixed::kSize < ReverbFixed::kBufferSize,
@@ -164,8 +168,8 @@ void ReverbFixed::ProcessAsm(int32_t* in_out, size_t size) {
     }
     size_t n = (next & 31) == 0 ? 32 : static_cast<size_t>(next & 31);
     if (n > size) n = size;
-    const int32_t offset_2 = (6261 << 16) + MulQ31(lfo_value_[1], 50 << 16);
-    const int32_t offset_1 = (4460 << 16) + MulQ31(lfo_value_[0], 40 << 16);
+    const int32_t offset_2 = (kDel2Tap << 16) + MulQ31(lfo_value_[1], kDel2Mod << 16);
+    const int32_t offset_1 = (kDel1Tap << 16) + MulQ31(lfo_value_[0], kDel1Mod << 16);
     k.d2_offset = 2 * (kDel2Base + (offset_2 >> 16));
     k.d2_frac = (offset_2 & 0xffff) << 15;
     k.d1_offset = 2 * (kDel1Base + (offset_1 >> 16));
@@ -243,7 +247,7 @@ void ReverbFixed::ProcessInternal(int32_t* in_out, size_t size) {
 
     // Main loop, first branch: del2 at 6261 + 50 lfo_2 (interpolated).
     {
-      const int32_t offset = (6261 << 16) + MulQ31(lfo_2, 50 << 16);
+      const int32_t offset = (kDel2Tap << 16) + MulQ31(lfo_2, kDel2Mod << 16);
       const int32_t k = offset >> 16;
       const int32_t a = READ(kDel2Base, k);
       const int32_t b = READ(kDel2Base, k + 1);
@@ -258,7 +262,7 @@ void ReverbFixed::ProcessInternal(int32_t* in_out, size_t size) {
 
     // Second branch: del1 at 4460 + 40 lfo_1.
     {
-      const int32_t offset = (4460 << 16) + MulQ31(lfo_1, 40 << 16);
+      const int32_t offset = (kDel1Tap << 16) + MulQ31(lfo_1, kDel1Mod << 16);
       const int32_t k = offset >> 16;
       const int32_t a = READ(kDel1Base, k);
       const int32_t b = READ(kDel1Base, k + 1);

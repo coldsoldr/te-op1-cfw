@@ -22,6 +22,8 @@
 
 #include "op1/grids_seq.h"
 
+#include "fx/op1/modules.h"
+
 namespace {
 
 using op1grids::GridsSeq;
@@ -90,7 +92,7 @@ GridsSeq* Seq() {
 }
 
 bool Drums() { return Read<int32_t>(kInstrument) == 1; }
-bool Active() { return grids_on && Drums(); }
+bool Active() { return op1::ModuleEnabled(op1::MODULE_GRIDS) && grids_on && Drums(); }
 
 // Drum keys through the firmware's calls (no octave in drum mode).
 class OpOut : public op1grids::NoteOut {
@@ -125,6 +127,7 @@ void Print() {
 }
 
 int32_t Click(int32_t key, int32_t direction) {
+  if (!op1::ModuleEnabled(op1::MODULE_GRIDS)) return 0;   // switched off: stock pattern
   if (!Drums()) return 0;   // synth pattern: stock
   switch (key & 0xff) {
     case kClickOrange:

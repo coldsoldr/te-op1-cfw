@@ -265,6 +265,7 @@ void TapeSat::Init() {
   mix_ = 0;
   aw_ = af_ = 0;
   sat_done_ = age_done_ = wob_done_ = -1;
+  gain_done_ = 0x7fffffff;
   aw_t_ = af_t_ = 0;
   ph_wow_ = ph_flut_ = 0xc0000000u;   // the sines' minimum: the delay starts at 0
   ph_rnd_ = 0;
@@ -274,6 +275,7 @@ void TapeSat::Init() {
   settled_ = false;
   lfo_call_ = true;
   last_.saturate = last_.wobble = last_.age = last_.mix = -1;
+  last_.gain_oct = 0x7fffffff;
   mono_ = false;
   use_asm_ = true;
   dk_.pos = 0;
@@ -374,7 +376,8 @@ void TapeSat::Control(const TapeParams& p, int32_t n) {
     Lfo(n);
   } else {
     // Still knobs and settled smoothers: nothing to do.
-    const bool same = p.saturate == last_.saturate && p.wobble == last_.wobble && p.age == last_.age;
+    const bool same = p.saturate == last_.saturate && p.wobble == last_.wobble && p.age == last_.age &&
+                      p.gain_oct == last_.gain_oct;
     if (!same || !settled_) Knobs(p, 2 * n, false);
   }
   lfo_call_ = !lfo_call_;
@@ -390,10 +393,14 @@ void TapeSat::Knobs(const TapeParams& p, int32_t n, bool snap) {
 
   // Saturation: drive g = 2^e / 2, e = -2 + 6 s. z = 2 g u 2^-c (Q15, c <= 0
   // keeps small drives' precision), as (u h) << shift, h in [0.5, 1).
-  if (sat_ != sat_done_) {
+  if (sat_ != sat_done_ || p.gain_oct != gain_done_) {
     sat_done_ = sat_;
+    gain_done_ = p.gain_oct;
     const int32_t s = sat_ >> 8;
-    const int32_t e = -131072 + 12 * s;
+    // The input gain adds to the exponent, kept within the knob's own range.
+    int32_t e = -131072 + 12 * s + p.gain_oct;
+    if (e < -131072) e = -131072;
+    if (e > 262144) e = 262144;
     const int32_t fl = e >> 16, fr = e & 0xffff;
     const int32_t i = fr >> 11, wgt = fr & 2047;
     int32_t h = kTapeExp2[i] + (((kTapeExp2[i + 1] - kTapeExp2[i]) * wgt) >> 11);

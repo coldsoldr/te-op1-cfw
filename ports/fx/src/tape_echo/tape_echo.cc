@@ -236,6 +236,17 @@ static_assert(sizeof(TapeEchoKernel) == TEK_SIZE, "kernel block");
 
 }  // namespace
 
+int32_t TapeEchoTimeSamplesQ4(int32_t word) { return Lookup(kTimeTable, Clamp(word, 0, 32767)); }
+
+int32_t TapeEchoTimeWord(int32_t samples_q4) {
+  if (samples_q4 < kTimeTable.v[0] || samples_q4 > kTimeTable.v[32]) return -1;
+  int32_t i = 0;
+  while (i < 31 && samples_q4 >= kTimeTable.v[i + 1]) ++i;
+  const int32_t lo = kTimeTable.v[i], hi = kTimeTable.v[i + 1];
+  const int32_t word = (i << 10) + ((samples_q4 - lo) * 1024 + (hi - lo) / 2) / (hi - lo);
+  return Clamp(word, 0, 32767);
+}
+
 const uint8_t kTapeEchoPatternHeads[kTapeEchoNumPatterns] = { 4, 6, 7, 5 };
 const int32_t kTapeEchoHeadPos[kTapeEchoNumHeads] = { 10923, 21845, 32768 };
 const int16_t kTapeEchoSatTable[257] = {

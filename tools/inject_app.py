@@ -19,11 +19,25 @@ Takes an image linked for the free SDRAM region (ports/rings/op1/link.ld) and:
      land in the app's own blocks.
 Every patch checks the stock value first, like tools/patch_app.py.
 
+--set-word NAME=VALUE (repeatable) sets a 32-bit data word of the image
+before it's injected: NAME is a symbol of the ELF (with or without the
+leading underscore bfin adds to C names) in a load segment's initialised
+data, e.g. the module switch `op1_module_mask` (ports/fx/op1/modules.h).
+This is how the builder app makes every module combination from one
+shipped ELF. --set-string NAME=TEXT (repeatable) likewise rewrites a
+NUL-terminated char array of the image: TEXT plus its NUL must fit the
+symbol's size (the rest is zeroed), e.g. the engine browser's query
+`op1_type_list_query` (ports/rings/op1/patches.cc), which names the lists
+for the modules that are on.
+
 The image must stay inside 0x02c00000-0x02ffffff (docs/memory-map.md) and
 must not overlap anything the app loads.
 
 Usage:
     python tools/inject_app.py IN.ldr OUT.ldr IMAGE.elf [--fill-pattern 0xa5a5a5a5]
+        [--set-word op1_module_mask=0x1fff] [--set-string op1_type_list_query="SELECT id, type FROM %s"]
+
+As a library: inject(ldr_bytes, image_path, words={...}, strings={...}) -> (bytes, report).
 """
 
 import argparse
@@ -46,6 +60,7 @@ PHASE_NOTE_ON = (0x01911158, 0x01a0be82)
 PHASE_NOTE_OFF = (0x01911168, 0x01a1b5ec)
 
 PT_LOAD = 1
+SHT_SYMTAB = 2
 
 PATCH_WORD32, PATCH_IMM16_LO, PATCH_IMM16_HI, PATCH_CALL24, PATCH_HALF16 = 0, 1, 2, 3, 4
 PATCH_KIND_NAMES = {PATCH_WORD32: 'word', PATCH_IMM16_LO: 'imm16 lo', PATCH_IMM16_HI: 'imm16 hi',
@@ -53,11 +68,16 @@ PATCH_KIND_NAMES = {PATCH_WORD32: 'word', PATCH_IMM16_LO: 'imm16 lo', PATCH_IMM1
 MAX_PATCHES = 64
 
 
-def read_elf_segments(path):
-    """Return [(vaddr, file_bytes, memsz)] for the PT_LOAD segments of an ELF32 LE file."""
+def read_elf(path):
     data = open(path, 'rb').read()
     if data[:4] != b'\x7fELF' or data[4] != 1 or data[5] != 1:
         raise LdrError('{}: not a little-endian ELF32 file'.format(path))
+    return data
+
+
+def read_elf_segments(path):
+    """Return [(vaddr, file_bytes, memsz)] for the PT_LOAD segments of an ELF32 LE file."""
+    data = read_elf(path)
     (e_phoff,) = struct.unpack_from('<I', data, 28)
     e_phentsize, e_phnum = struct.unpack_from('<HH', data, 42)
     segments = []
@@ -68,6 +88,88 @@ def read_elf_segments(path):
             continue
         segments.append((p_vaddr, data[p_offset:p_offset + p_filesz], p_memsz))
     return sorted(segments)
+
+
+def read_elf_symbols(path):
+    """{name: (value, size)} from the ELF's symbol table."""
+    data = read_elf(path)
+    (e_shoff,) = struct.unpack_from('<I', data, 32)
+    e_shentsize, e_shnum = struct.unpack_from('<HH', data, 46)
+    sections = [struct.unpack_from('<10I', data, e_shoff + i * e_shentsize) for i in range(e_shnum)]
+    symbols = {}
+    for sh in sections:
+        sh_type, sh_offset, sh_size, sh_link, sh_entsize = sh[1], sh[4], sh[5], sh[6], sh[9]
+        if sh_type != SHT_SYMTAB:
+            continue
+        strtab = sections[sh_link]
+        strings = data[strtab[4]:strtab[4] + strtab[5]]
+        for i in range(sh_size // sh_entsize):
+            st_name, st_value, st_size, st_info, st_other, st_shndx = \
+                struct.unpack_from('<IIIBBH', data, sh_offset + i * sh_entsize)
+            if not st_name:
+                continue
+            end = strings.index(b'\0', st_name)
+            symbols[strings[st_name:end].decode('ascii', 'replace')] = (st_value, st_size)
+    return symbols
+
+
+def symbol_address(symbols, name):
+    """The address and size of a C symbol (bfin prefixes an underscore)."""
+    for candidate in ('_' + name, name):
+        if candidate in symbols:
+            return symbols[candidate]
+    raise LdrError('symbol {} not found in the image'.format(name))
+
+
+def set_words(segments, symbols, words):
+    """Patch 32-bit words of the image's initialised data: {name: value}.
+    Returns the new segments and [(name, address, old, new)]."""
+    report = []
+    segments = [(v, bytearray(p), m) for v, p, m in segments]
+    for name, value in words.items():
+        address, size = symbol_address(symbols, name)
+        if size not in (0, 4):
+            raise LdrError('{} is {} bytes, not a 32-bit word'.format(name, size))
+        if address & 3:
+            raise LdrError('{} at {:#x} is not word-aligned'.format(name, address))
+        if not 0 <= value <= 0xffffffff:
+            raise LdrError('{}: {:#x} is not a 32-bit value'.format(name, value))
+        for vaddr, payload, _ in segments:
+            if vaddr <= address and address + 4 <= vaddr + len(payload):
+                offset = address - vaddr
+                old = struct.unpack_from('<I', payload, offset)[0]
+                struct.pack_into('<I', payload, offset, value)
+                report.append((name, address, old, value))
+                break
+        else:
+            raise LdrError('{} at {:#x} is not in the initialised data of the image'.format(name, address))
+    return [(v, bytes(p), m) for v, p, m in segments], report
+
+
+def set_strings(segments, symbols, strings):
+    """Patch NUL-terminated char arrays of the image's initialised data:
+    {name: text}. The text and its NUL must fit the symbol's size; the rest of
+    the array is zeroed. Returns the new segments and [(name, address, old
+    text, new text)]."""
+    report = []
+    segments = [(v, bytearray(p), m) for v, p, m in segments]
+    for name, text in strings.items():
+        address, size = symbol_address(symbols, name)
+        encoded = text.encode('ascii')
+        if size == 0:
+            raise LdrError('{} has no size in the symbol table'.format(name))
+        if len(encoded) + 1 > size:
+            raise LdrError('{}: {} bytes do not fit the {}-byte array {}'.format(name, len(encoded) + 1, size, name))
+        for vaddr, payload, _ in segments:
+            if vaddr <= address and address + size <= vaddr + len(payload):
+                offset = address - vaddr
+                old = bytes(payload[offset:offset + size]).split(b'\0', 1)[0].decode('ascii', 'replace')
+                payload[offset:offset + size] = encoded + bytes(size - len(encoded))
+                report.append((name, address, old, text))
+                break
+        else:
+            raise LdrError('{} at {:#x} is not in the initialised data of the image'.format(name, address))
+    return [(v, bytes(p), m) for v, p, m in segments], report
 
 
 def read_image(segments, addr, size):
@@ -135,24 +237,27 @@ def fill_block(target, count, value):
             'argument': value, 'payload': b''}
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    parser.add_argument('ldr_in')
-    parser.add_argument('ldr_out')
-    parser.add_argument('image')
-    parser.add_argument('--fill-pattern', type=lambda s: int(s, 0),
-                        help='fill the rest of the region with this 32-bit value')
-    args = parser.parse_args()
-
-    dxes = parse(open(args.ldr_in, 'rb').read())
+def inject(ldr_bytes, image_path, words=None, fill_pattern=None, strings=None):
+    """Inject IMAGE into the LDR bytes. Returns (new LDR bytes, report), where
+    report is a dict: image_end, blocks, hooks, patches, words, strings (each
+    a list of tuples as printed by the CLI) and lines (the printed text)."""
+    dxes = parse(ldr_bytes)
     if len(dxes) != 1:
         raise LdrError('expected a single-DXE app LDR, found {}'.format(len(dxes)))
     dxe = dxes[0]
     loaded = [(start, start + len(run)) for start, run in memory_runs(dxe)]
 
-    segments = read_elf_segments(args.image)
+    segments = read_elf_segments(image_path)
     if not segments:
-        raise LdrError('{}: no load segments'.format(args.image))
+        raise LdrError('{}: no load segments'.format(image_path))
+    word_report = []
+    string_report = []
+    if words or strings:
+        symbols = read_elf_symbols(image_path)
+        if words:
+            segments, word_report = set_words(segments, symbols, words)
+        if strings:
+            segments, string_report = set_strings(segments, symbols, strings)
     new_blocks = []
     image_end = REGION_START
     header = None
@@ -179,9 +284,9 @@ def main():
     _, version, render, note_on, note_off, patch_table, patch_count = header[:7]
     patches = read_patch_table(segments, patch_table, patch_count) if patch_table else []
 
-    if args.fill_pattern is not None:
+    if fill_pattern is not None:
         fill_start = (image_end + 4095) & ~4095
-        new_blocks.append(fill_block(fill_start, REGION_END - fill_start, args.fill_pattern))
+        new_blocks.append(fill_block(fill_start, REGION_END - fill_start, fill_pattern))
 
     final = [i for i, b in enumerate(dxe) if b['flags'] & 0x8000]
     if len(final) != 1:
@@ -205,23 +310,67 @@ def main():
 
     out = serialize(dxes)
     parse(out)  # re-check headers, checksums and the FIRST block's length
-    with open(args.ldr_out, 'wb') as f:
-        f.write(out)
 
-    print('Image {} (header version {}): {:#x}-{:#x}, {} bytes'.format(
-        os.path.basename(args.image), version, REGION_START, image_end, image_end - REGION_START))
+    lines = ['Image {} (header version {}): {:#x}-{:#x}, {} bytes'.format(
+        os.path.basename(image_path), version, REGION_START, image_end, image_end - REGION_START)]
+    for name, address, old, new in word_report:
+        lines.append('  word   {} at {:#010x}: {:#010x} -> {:#010x}'.format(name, address, old, new))
+    for name, address, old, new in string_report:
+        lines.append('  string {} at {:#010x}: {!r} -> {!r}'.format(name, address, old, new))
     for b in new_blocks:
-        print('  + {:<5} {:#010x} {:#9x} bytes{}'.format(
+        lines.append('  + {:<5} {:#010x} {:#9x} bytes{}'.format(
             'FILL' if b['flags'] & 0x0100 else 'block', b['target'], b['count'],
             ' value {:#010x}'.format(b['argument']) if b['flags'] & 0x0100 else ''))
+    hook_report = []
     for (slot, stock), target, name in hooks:
         if target:
-            print('  vtable {:#010x} ({}): {:#010x} -> {:#010x}'.format(slot, name, stock, target))
+            hook_report.append((slot, name, stock, target))
+            lines.append('  vtable {:#010x} ({}): {:#010x} -> {:#010x}'.format(slot, name, stock, target))
+    patch_report = []
     for entry in patches:
         old, new = patch_bytes(entry)
-        print('  patch  {:#010x} ({}): {} -> {}'.format(
+        patch_report.append((entry[0], PATCH_KIND_NAMES[entry[1]], old[::-1].hex(), new[::-1].hex(), entry[3]))
+        lines.append('  patch  {:#010x} ({}): {} -> {}'.format(
             entry[0], PATCH_KIND_NAMES[entry[1]], old[::-1].hex(), new[::-1].hex()))
-    print('{}: {} -> {} bytes'.format(args.ldr_out, os.path.getsize(args.ldr_in), len(out)))
+    report = {'image_end': image_end, 'version': version, 'blocks': new_blocks, 'hooks': hook_report,
+              'patches': patch_report, 'words': word_report, 'strings': string_report, 'lines': lines}
+    return out, report
+
+
+def parse_set_word(text):
+    name, _, value = text.partition('=')
+    if not name or not value:
+        raise argparse.ArgumentTypeError('expected NAME=VALUE, got {!r}'.format(text))
+    return name, int(value, 0)
+
+
+def parse_set_string(text):
+    name, _, value = text.partition('=')
+    if not name:
+        raise argparse.ArgumentTypeError('expected NAME=TEXT, got {!r}'.format(text))
+    return name, value
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    parser.add_argument('ldr_in')
+    parser.add_argument('ldr_out')
+    parser.add_argument('image')
+    parser.add_argument('--fill-pattern', type=lambda s: int(s, 0),
+                        help='fill the rest of the region with this 32-bit value')
+    parser.add_argument('--set-word', type=parse_set_word, action='append', default=[],
+                        metavar='NAME=VALUE', help='set a 32-bit data word of the image (a symbol)')
+    parser.add_argument('--set-string', type=parse_set_string, action='append', default=[],
+                        metavar='NAME=TEXT', help='set a NUL-terminated char array of the image (a symbol)')
+    args = parser.parse_args()
+
+    ldr_in = open(args.ldr_in, 'rb').read()
+    out, report = inject(ldr_in, args.image, dict(args.set_word), args.fill_pattern, dict(args.set_string))
+    with open(args.ldr_out, 'wb') as f:
+        f.write(out)
+    for line in report['lines']:
+        print(line)
+    print('{}: {} -> {} bytes'.format(args.ldr_out, len(ldr_in), len(out)))
 
 
 if __name__ == '__main__':

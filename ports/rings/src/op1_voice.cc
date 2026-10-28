@@ -182,8 +182,8 @@ void Limiter::Init() {
 }
 
 void Limiter::Process(int32_t* l, int32_t* r, size_t size, int32_t pre_gain_q28) {
-  const int32_t kAttack = 107374182;     // 0.05, Q31
-  const int32_t kRelease = 42950;        // 0.00002, Q31
+  const int32_t kAttack = OP1RINGS_LIMITER_ATTACK_Q31;     // 0.05 at 44.1 kHz, Q31 (src/rate_config.h)
+  const int32_t kRelease = OP1RINGS_LIMITER_RELEASE_Q31;   // 0.00002
   const int32_t k0_8 = 1717986918;       // 0.8, Q31
   for (size_t i = 0; i < size; ++i) {
     int32_t l_pre = ShlSat(MulQ31Fast(l[i], pre_gain_q28), 3);   // Q27
@@ -217,8 +217,8 @@ void MonoLimiter::Init() {
 
 void MonoLimiterLoopC(int32_t* x, int32_t size, int32_t* peak_state, int32_t gain,
                       int32_t pre_gain) {
-  const int32_t kAttack = 107374182;     // 0.05, Q31
-  const int32_t kRelease = 42950;        // 0.00002, Q31
+  const int32_t kAttack = OP1RINGS_LIMITER_ATTACK_Q31;     // 0.05 at 44.1 kHz, Q31 (src/rate_config.h)
+  const int32_t kRelease = OP1RINGS_LIMITER_RELEASE_Q31;   // 0.00002
   int32_t peak = *peak_state;
   for (int32_t i = 0; i < size; ++i) {
     const int32_t in = x[i];
@@ -332,6 +332,9 @@ void RingsVoice::RenderSubblock(uint32_t phase_increment, const VoicePatch& patc
   if (strum_) {
     // Upstream RenderModalVoice: impulse x0 = 0.25 * 2^(2 fc^2) / fc.
     FFloat fc2 = fc * fc;
+    // The 1 / fc keeps the strike's area (amplitude x sample period)
+    // independent of the sample rate: fc is a fraction of it. So nothing to
+    // scale at another rate (the modes' Q is, modal_resonator.cc).
     FFloat x0 = k0_25 * Exp2(fc2.Scaled(1).ToQ(24)) * FFloat::Reciprocal(fc);
     FFloat g = FFloat::FromQ(excitation_filter_.g(), 29);
     FFloat h = FFloat::FromQ(excitation_filter_.h(), 31);

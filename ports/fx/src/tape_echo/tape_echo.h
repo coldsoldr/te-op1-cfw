@@ -65,6 +65,12 @@ extern const int32_t kTapeEchoHeadPos[kTapeEchoNumHeads];
 
 const int32_t kTapeEchoMaxBlock = 64;
 
+// TIME's mapping, for screens and tempo locks: the word's delay (head 3)
+// in Q4 samples at 22050 Hz (30 ms x 50^(word / 32767)), and its inverse,
+// the word for a delay (-1 if the delay is outside the range).
+int32_t TapeEchoTimeSamplesQ4(int32_t word);
+int32_t TapeEchoTimeWord(int32_t samples_q4);
+
 // The run kernel's block (tape_echo_layout.h's TEK_ offsets).
 struct TapeEchoKernel {
   int32_t pos[3];      // head delays, Q15 samples

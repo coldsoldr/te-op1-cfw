@@ -1,6 +1,160 @@
 # Handover: OP-1 custom firmware
 
-**Next project (2026-10-20): the builder and librarian app. Start from `docs/librarian-handover.md`.** On the device: `op1_246_beta4.op1` (everything on, user happy).
+**Latest (2026-10-28): tape_echo rebuilt (Test 61 awaiting install), tape_drive renamed.** The user chose
+design B "Schematic" from the canvas "Tape echo screen" (https://claude.ai/artifact/KAu8e82XAZyk9QAYPJ6sdK):
+the Space Echo's signal path with the heads sliding with the time. **Control map:** blue press = the
+input gain (word 5), white press = the head pattern (word 7, was blue's), green latches hold; **new:
+shift + blue on the time page locks the time to the project tempo's divisions** (1/16T .. 1/4, a click
+each; `TimeLock` in `ports/knl/tape_echo/tape_echo_knl.cc`; the tempo from `knl::TempoIncrement()` in
+`knl_fx.h`, the stock LFO tempo word `[0x1aadad4]`, 120 BPM if it reads nonsense). **Round 1 found:
+a page-1 word can't be rewritten** (the stock knob keeps its own copy and writes it back on the next
+click; page-2 words can, `knl::Fine`), so round 2 keeps the lock in the plugin (the core gets the
+division's time in place of the word; not saved with the sound). **Round 2 on the device: "sounding
+great, the tempo syncs nicely"**, so the stock tempo address holds on hundekraft's core. Round 3 adds
+1/2T, 1/4. and 1/2 (skipped where they exceed 1.5 s): **on the device, "great" (Test 61 done)**. Install
+lesson: replacing a plugin in place hung the boot ("kennel: updated", black; safe start = power off within
+seconds of the first screen); remove, restart, then add. The core gained `TapeEchoTimeSamplesQ4` / `TapeEchoTimeWord`
+(the time table and its inverse); `knl_glyphs.py` gained '/'. Renamed plain `tape_echo` (was cs_tape_echo)
+and `tape_drive` (was tapesat), folders, Makefile, docs; `build/knl/tape_echo.knl`, `tape_drive.knl` built.
+`docs/fx-briefs/designs/tape-echo-schematic.md`. **The UI round is done (decided 2026-10-28):** plate, hall
+and the two Clouds plugins stay as they are, uninstalled (hundekraft ships its own plate, hall and
+Clouds); their folders keep the `cs_` ids. **Next: Marbles and Grids as kennel sequencer features**
+(roadmap phase 3; `docs/op1-sequencer-decisions` in memory, `docs/marbles-port.md`, `docs/grids-port.md`;
+the tempo word `knl::TempoIncrement()` is proven on the device). **After that: better graphics for some of
+hundekraft's own plugins** (the user's ask; which ones is open). Committed 2026-10-28.
+
+**Latest (2026-10-27, end of session): freq_shift done (Test 60, "looks great").** The user chose
+design B "Dial" from the canvas "Freq shift screen" (https://claude.ai/artifact/4JwECGQ5XeJKoNRp7mLViS):
+shift as a needle on a bipolar arc spanning the width. **Control map changed:** blue press = the gain
+(word 5, the wet path's analytic signal, `ShiftParams::gain`), green press = the mode (word 6, a green
+bracket round the mode marks while pressed). Renamed `freq_shift` (was cs_shift). **Proven on the
+device: the renderer's transform is a full affine** (the needles rotate, `RotateAbout` in
+`shift_knl.cc`); rotation is available to every screen now. Also: the spread arc shows on every
+position and in ring mode; **sonar ripples** on sound (the render meters the input, four arcs scaled
+from the hub to the rim and faded, `rp1..rp4`), the user's ask. `ports/knl/freq_shift/`,
+`docs/fx-briefs/designs/freq-shift-dial.md`.
+
+**The UI round so far (all on the device, all good):** rings (Test 53), bitcrusher (54-55), drive (56),
+tapesat (57), wavefolder (58), ensemble (59), freq_shift (60). Each has: its own screen from a
+generator in its plugin folder (design chosen on a canvas), the family frame (blue gain gauge x 16,
+orange mix gauge x 304, rows 28..124, readout top left), an input gain on blue's page 2 with
+`knl::Fine` tenths, and a plain id (hundekraft's own ids avoided). **Remaining:** tape echo (installed,
+the firmware screen still), then plate, hall, cs_clouds, cs_clouds_delay (rebuilt with the shift fine
+steps, not yet installed: Test 55 points 5-6). Nothing committed since f534fe4: commit before the next
+big piece.
+
+**Earlier (2026-10-27, late): cs_ensemble rebuilt (Test 59).** The user chose design C "Drift" from the
+canvas "Ensemble screen" (https://claude.ai/artifact/DzykGtr3epWihZ7qJEUfoM): each voice a string
+swaying about its home mark, depth ticks, the dial at the right, the gain on blue's page 2 (the wet
+path's input, scaled in the plugin). `ports/knl/ensemble/gen_ensemble_knl_svg.py`, `ensemble_knl.cc`,
+`docs/fx-briefs/designs/ensemble-drift.md`; renamed plain `ensemble`, on the device, **Test 59 good**. Next: shift,
+tape echo.
+
+**Earlier (2026-10-27, late): cs_fold rebuilt (Test 58).** The user chose design A "Wave, aligned" from
+the canvas "Fold screen" (https://claude.ai/artifact/CscKQMR3VBtoGF1GQaTpNN): the folded wave without
+the box, the family gauges, the gain on blue's page 2 (`FoldParams::gain`, the fifth smoothed knob).
+`ports/knl/wavefolder/gen_fold_knl_svg.py`, `fold_knl.cc`, `docs/fx-briefs/designs/fold-aligned.md`;
+renamed `wavefolder` (was cs_fold), on the device, **Test 58 good**. The dirt family is done. Next: ensemble, shift, tape echo.
+
+**Earlier (2026-10-27, late): tapesat built (Test 57).** The user chose design A "Reels, aligned" from
+the canvas "Tape screen" (https://claude.ai/artifact/TKsEMfeTbLg34RCNroqFkJ): the firmware's reels
+without the box, spread over the width, the gain gauge (blue) at the far left as the bitcrusher's.
+Renamed `tapesat` (hundekraft has `tape`). `ports/knl/tapesat/gen_tapesat_knl_svg.py`, `tape_knl.cc`,
+`TapeParams::gain_oct`, `docs/fx-briefs/designs/tapesat.md`; on the device, **Test 57 good** (white mirrored: clockwise = a newer tape).
+Next: fold, ensemble, shift, tape echo.
+
+**Earlier (2026-10-27, night): drive redesigned (Test 56).** The user chose design A "Schematic" from
+the canvas "Drive screen" (https://claude.ai/artifact/KAb4QAzStA5Eo9vvq4nztk; B "Waveform" and C
+"Harmonics" stay there): the circuit as the screen, with the input gain as a pot (new: blue's page 2,
+`DriveParams::gain` scales the clipper's K only) and the tilt EQ as an S curve.
+`ports/knl/drive/gen_drive_knl_svg.py`, `drive_knl.cc`, `docs/fx-briefs/designs/drive-schematic.md`;
+renamed to plain `drive` (was cs_drive), on the device, **Test 56 "perfect"**. Next: tape, fold, ensemble, shift, tape echo, one by one, the same way (canvas, then build). The gain table is shared now (`knl::GainQ14`).
+
+**Earlier (2026-10-27, evening): bitcrusher done (Tests 54-55, "perfect").** On the device: the new
+screen, the input gain, the jitter shake (was scaled to 0.016 px, fixed), blue and green turning the
+stock way (clockwise = higher rate, more bits; the core's words mirrored, defaults 24767), and
+**shift + a page-2 knob = fine steps on every module** (`knl::Fine`, `ports/knl/common/knl_fx.h`:
+kennel's dispatcher steps a click regardless of shift, so the plugin rewrites the stored word; proven
+on the gain, a tenth of a dB a click). Plate, hall and both Clouds rebuilt with quarter-click shift
+steps, not yet installed (Test 55 points 5-6). Next: the remaining installed plugins' UI round (drive,
+ensemble, fold, shift, tape, tape echo), then install plate/hall/Clouds, then Marbles and Grids as
+kennel sequencer features (roadmap phase 3), then publish (phase 4). Nothing committed since f534fe4.
+
+**Earlier (2026-10-27, afternoon): the beta's first findings, cs_rings rebuilt (Test 53).** The user
+installed eight of the twelve (rings, crush, drive, ensemble, fold, shift, tape, tape echo) and is
+going through their UIs one by one; Rings first. Its presses work (kennel: a press is a page
+toggle, then the knob turns the word) but the screen gave no sign and six models took 21 clicks:
+fixed (one step per click, `settings.h`; `docs/kennel-plugins.md`). The screen was then redesigned
+on the Claude Design canvas https://claude.ai/artifact/UbRYUMAzUUc4bYNs6jJjRE (after the user
+rejected three "too literal" scenes: bell, zither, chimes): concentric rings with light (rays),
+pressure (a pad) and ripples per voice, the valve's glow on the core, MODEL/POLY rows with stroked
+labels, page-2 brackets, 8 px left and 12 px up for the viewing angle. Built:
+`ports/knl/rings/gen_rings_knl_svg.py` -> `rings.svg` (13.5 KB; the plugin is plain `rings` now, no `cs_` prefix: hundekraft has no rings), `rings_screen_knl.cc`, the
+engine exports per-voice level/age (`RingsScreenVoices`, `-DOP1_KENNEL`). **`build/knl/rings.knl`
+awaits install (Test 53; rounds 2-3 done on the device: larger, pad reversed, rows larger, sounding-voice ticks, the user is happy).** Then **bitcrusher** (was cs_crush): renamed, an input gain on blue's page 2, and its own screen (canvas option C "Ladder", https://claude.ai/artifact/MMa1PBoYe8Q3XbPvxUdx9V): `build/knl/bitcrusher.knl` awaits install (**Test 54**). Shift and tape echo rebuilt with one-step-per-click modes (`knl::ClickMode`). SquareWave's op1-design skill installed in `.claude/skills/`. Unverified on the device: whether a matrix scale thickens a stroke
+(the ripple). Next: the other seven plugins' UI findings, one by one. Nothing committed.
+
+**Latest (2026-10-27): the plugins' big state moved out of kennel's arena (Test 52 round 1 ran out).**
+All twelve installed filled kennel's 2 MB plugin arena (hundekraft's own files take 1.14 MB; Rings'
+573 KB of voices and reverb and a 360 KB Clouds core per position were in it), so hundekraft's
+MIDI sequencer failed to load and the workshop's inventory, built in the same arena, answered "io"
+and blocked Remove; the files survive reflashes and factory resets (NAND `plugins/`). Kennel's
+safe start (power off within seconds of the tape screen → next boot skips all plugin files) got
+the user out. Fix: `ports/knl/common/cs_sdram.h` puts Rings' state at 0x02C00000 (zeroed at the
+first note) and one 384 KB Clouds slot per position (shared by both Clouds plugins, cleared on
+creation) above it, region A where our firmware ran; the twelve now take 392 KB of the arena.
+Tied to cores whose arena ends at 0x02C00000 (3.0.3 does). Test 52 round 2 awaiting install. Also:
+hundekraft's author guide `incoming/hundekraft/llms.txt` read and checked (all conform; run
+`synth_sdk/harness/svg_check.py` on screens).
+
+**Earlier (2026-10-26, night): Clouds and Rings are kennel plugins too; twelve files, Test 52 = the beta.**
+`build/knl/`: cs_crush, cs_drive, cs_tape, cs_fold, cs_shift, cs_ensemble, cs_plate, cs_hall,
+cs_tape_echo, cs_clouds (granular), cs_clouds_delay (looping delay), cs_rings (synth, the 22.05 kHz
+build). `docs/kennel-plugins.md` is the control map and what changed; `docs/device-tests.md` Test 52
+the beta procedure. Rings runs in kennel's iter slot with `-DOP1_KENNEL` (36-byte voices, scratch at
+0xffb000e0, model/polyphony from page-2 words); the firmware image is still byte-identical. Clouds
+allocates ~360 KB per position on first use (`op1_alloc`); its governor runs on lateness alone.
+Next: the user's beta feedback; then Marbles and Grids as sequencer features (phase 3). Nothing committed.
+
+**Latest (2026-10-26, evening): hundekraft on the device, all nine effects ported to kennel.** The user
+flashed hundekraft 3.0.3 (the repack without te-boot.ldr) and `cs_crush.knl` worked ("ok it works,
+amazing!"). Test 51's answer first: Rings at 22.05 kHz is not audibly different and a little lighter,
+so that build carries forward. Then every effect became a plugin: `ports/knl/cs_*/` (`make` in WSL →
+`build/knl/cs_*.knl`), prefixed `cs_` because hundekraft ships its own crush/plate; **read
+`docs/kennel-plugins.md`** (ids, knobs, presses, what changed: three page-2 knobs, freeze/hold as
+latches, modes as page-2 words, no category dots, instances in the positions' scratch buffers).
+**Test 50 round 2 (installing the eight) awaits the user.** Next: Clouds as a plugin, then Rings
+(phase 2, from the 22.05 kHz build), then Marbles/Grids. Nothing committed yet.
+
+**Latest (2026-10-26, later): Rings at 22.05 kHz test build, Test 51 awaiting the flash.** Before
+moving to hundekraft the user asked for a firmware with Rings rendering at half its rate (32 samples
+a call, upsampled 4x) to hear whether it matters and whether Rings + Clouds then fit.
+`op1 firmware/op1_246_beta8_r22.op1` = beta8 with only the app image changed (checked file by file).
+`ports/rings/src/rate_config.h` is where the rate enters; `make op1-seq-r22`; `docs/rings-port.md`
+(last section) lists what had to change to keep the sound (reverb lengths, limiter coefficients,
+the modes' Q, the string FIR) and what didn't, with the simulator's A/B numbers. The 44.1 kHz build
+is byte-identical to the shipped image. `app.backend.build --image ELF` injects a test image.
+
+**Latest (2026-10-26): direction change, our modules become kennel plugins.** The user found
+hundekraft 3.0.3 (`incoming/hundekraft/`: the firmware, its full source and plugin SDK, the browser
+workshop), JoeMod 1.0 and SilverTape beta1, and decided to align with hundekraft's kennel plugin
+system: our DSP and screens ship as `.knl` files for its core, delivered over USB MIDI without a
+reflash, each a named entry in the stock lists. Licensing is inherited (GPL-3.0-or-later with the
+OP-1 firmware permission). The builder/librarian app and the click-based UX are parked until the
+user has used hundekraft's UX. **Read `docs/kennel-roadmap.md`** (facts, phases, open questions).
+Done this session: the SDK subset vendored unchanged in `third_party/kennel/` (`README-vendored.md`
+says what and why); `tools/knl_pack.py` (runs in WSL; compiles our C++/.S with our flags, hands the
+`ld -r` object to their unmodified `pack.pack()`, checks imports against `kn_exports.c`, re-reads the
+file with their `reloc.py`); `ports/knl/cs_crush/` packs to `build/knl/cs_crush.knl` (11.6 KB, stereo, with
+its screen). **Test 50 (`docs/device-tests.md`) awaits the flash:** `op1 firmware/hundekraft-3.0.3-noboot.op1`,
+the hundekraft package repacked **without `te-boot.ldr`** (their file carries the stock bootloader and
+fails `verify_bootloader.py`; never flash it as downloaded), then `crush.knl` through the workshop.
+Our firmware branch stays as the lab and the fallback (`op1_246_beta7.op1` known good). A kennel
+caveat recorded in the roadmap: their header says synth voices render at 44.1 kHz; our Tests 2-4
+measured 88.2 kHz (128 samples per 64-sample effect block, decimated by the core), which is how our
+Rings port already works. Nothing committed yet.
+
+**Latest (2026-10-20, later): the builder and librarian app is built** (`app/`, `app/README.md`; run `python -m app.backend.server`). The one firmware change (Part 0 of `docs/librarian-handover.md`) is in: a module mask word in the image switches every module, patched by the builder; **Test 46 (`op1_246_beta5.op1`, `_off`, `_mix`): all good (2026-10-20), no issues.** The user then asked that "all off" be the stock experience, so the list names (multi, reverb, dirt, modulation) now follow the mask too: the builder rewrites the engine browser's query string in the image (`op1_type_list_query`, `tools/inject_app.py --set-string`) and renames the phase folder only with Rings on; Test 47 found a boot hang: a slot saved on **hall** (and any half-rate engine: plate, ensemble, tape echo) live at power-on looped the restart logic (`fx/op1/half_rate.h`, the pause measured from the call's start; Clouds measures from its end) and starved the boot. Fixed and **confirmed: beta7 boots with the hall slot that hung beta6** (Test 48, 2026-10-20). Then, from the user's first Librarian session: a preset's name is its file name (a rename rewrites the name inside, an edit of the name renames the file, the selection follows), the factory tab shows the iter presets feature's rows (read-only), and Clouds' entry defaults are the user's snapshot (`clouds_settings.h` `kEnterDefaults`: looping delay, the knobs as saved). **Test 49 (`op1_246_beta8.op1`, `_off`, `_mix`) awaits the flash**, with the rest of Test 48's checks folded in. The Librarian's backup worked on the real OP-1 (91 files). The app's screens are on the Claude Design canvas https://claude.ai/artifact/JzDmkgJX9AziWJp5NsR4Xi (awaiting review). Nothing committed yet. Status and open questions: the end of `docs/librarian-handover.md`. On the device: `op1_246_beta5.op1` (everything on, = beta4).
 
 **Latest (2026-10-19, later): effect categories.** The user decided that spring becomes **reverb**, cwo **modulation** and punch **dirt**, delay stays **delay**, and phone is plain **phone** again; Clouds moved to reverb. Nine new engines are planned. Read `docs/fx-categories.md` (the host, the marker, the firmware words). The screen briefs are in `docs/fx-briefs/`, and the draft designs are in `docs/fx-briefs/designs/` and on the Claude Design canvas https://claude.ai/artifact/24THwmJh3HnPME5PV6FfyU, awaiting the user's review. fx1 (Test 37) worked, but its negative marker made a saved Clouds slot fail the synth patch check (error 24): fx2 fixed it (`op1_246_rings_fx2.op1`, **Test 38 all good, on the device**: the check's effect-value test patched away, an in-range marker, fx1's values migrated, LFO into Clouds). Batch 1 is built: **plate** (reverb, `ports/fx/src/plate/`, `docs/plate-port.md`) and **crush** (dirt, `ports/fx/src/crush/`); the dirt host is hooked. The package is `op1_246_rings_fx3.op1`, **Test 39, not flashed yet**. The plate costs 11.4 MHz stereo and 8.3 MHz mono in the simulator; 5.3 MHz of that is the half-rate resampling and the mix, as for Clouds. Then, while the user was away (they asked for one firmware per effect): **fx4 … fx10** add drive, ensemble, hall, fold, shift, tape and tape echo, one per build (Test 40, not flashed); fx10 has all nine engines. **Test 40 (2026-10-20):** fx3–fx8 good (sound all good), but strokes that double back render wrong, fx9 didn't boot (a stale package that replaced the stock tape.svg), and engines forgot their settings across orange clicks. Fixed in **fx11/fx12 (Test 41, not flashed)**: per-owner engine memory in `fx_host.cc`, redrawn shapes, `gen_fx_svg.py` refuses doubled-back strokes. Test 41: all good. **`op1_246_beta.op1` (Test 42, not flashed)** = fx12 + op1repacker's iter, presets-iter, filter and gfx-tape-invert. **`op1_246_beta4.op1` (Test 45, not flashed)** = beta3 + op1repacker's gfx-iter-lab. **`op1_246_beta3.op1` (Test 44, not flashed)** = beta2 + drive's valve (`docs/fx-briefs/designs/drive-valve.md`). **`op1_246_beta2.op1` (Test 43, not flashed)** = beta + the aligned Rings/Clouds/Marbles/Grids screens (`docs/module-briefs/designs/`, canvas https://claude.ai/artifact/FLWjR5T5MPnEQF6BDFPCU5). User manual: `manual/user-manual.src.html` → `manual/user-manual.html` (screens inlined), published https://claude.ai/artifact/C5nKBuHkfU8nR4RQYDRjKV. cwo and delay are now hosted (8 more hooks), stock when no engine is chosen. Build with `FX_ENGINES` (`ports/fx/engines.mk`). Plan: `%USERPROFILE%\.claude\plans\we-re-going-to-move-floating-lamport.md`.
 

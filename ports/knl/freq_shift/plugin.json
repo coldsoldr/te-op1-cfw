@@ -1,0 +1,19 @@
+{
+  "name": "freq_shift",
+  "kind": "fx",
+  "order": 0,
+  "loadable": true,
+  "stereo": true,
+  "symbol": "FX_shift",
+  "sources": ["shift_knl.cc", "../../fx/src/shift/shift.cc", "../../fx/src/shift/shift_bfin.S",
+              "../../clouds/src/core/clouds_tables.cc", "../../rings/src/fixed_tables.cc",
+              "../../rings/op1/support.cc"],
+  "include_dirs": ["..", "../..", "../../fx", "../../rings", "../../clouds"],
+  "cxxflags": ["-DOP1CLOUDS_SAMPLE_RATE=22050", "-Wno-class-memaccess"],
+  "defaults": [19000, 8192, 0, 16384],
+  "page2_defaults": [16384, 0, 0],
+  "screen": {"svg": "shift.svg", "symbol": "SCREEN_shift"},
+  "author": "coldsoldr",
+  "version": "0.2",
+  "claims": []
+}

@@ -1,0 +1,22 @@
+{
+  "id": "tape-echo",
+  "name": "tape echo",
+  "group": "effects",
+  "category": "delay",
+  "kind": "module",
+  "chain": "delay → tape echo",
+  "description": "A tape echo in the style of a Space Echo: up to three heads, each repeat darker and more wobbly, feedback that self-oscillates into a dub howl.",
+  "screens": {
+    "tapeecho.svg": "ports/fx/op1/tapeecho.svg"
+  },
+  "mask_bit": 9,
+  "cpu": "medium",
+  "order": 130,
+  "requires": [],
+  "conflicts": [],
+  "warnings": {},
+  "preset_rows": 0,
+  "option": null,
+  "tag": null,
+  "replaces_stock": []
+}

@@ -1,0 +1,24 @@
+{
+  "id": "clouds",
+  "name": "clouds",
+  "group": "effects",
+  "category": "reverb",
+  "kind": "module",
+  "tag": "Mutable Instruments",
+  "description": "Mutable Instruments Clouds, a granular texture processor: grains read out of a buffer, or a looping pitch-shiftable delay, into a diffuser and reverb. Two pages.",
+  "screens": {
+    "clouds.svg": "ports/clouds/op1/clouds.svg"
+  },
+  "mask_bit": 2,
+  "cpu": "heavy",
+  "warnings": {
+    "rings": "Clouds next to Rings: keep Rings at polyphony 4 or fewer, or the OP-1 drops audio."
+  },
+  "order": 102,
+  "requires": [],
+  "conflicts": [],
+  "preset_rows": 0,
+  "option": null,
+  "chain": null,
+  "replaces_stock": []
+}

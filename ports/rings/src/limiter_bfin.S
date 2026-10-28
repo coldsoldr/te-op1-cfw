@@ -1,3 +1,4 @@
+#include "src/rate_config.h"
 /*
  * Blackfin kernel for MonoLimiter's sample loop (src/op1_voice.cc): same
  * arithmetic as the C loop (bit-exact; tests/bench_models.cc checks it).
@@ -36,8 +37,8 @@ _MonoLimiterAsm:
 	R5 = [FP + 20];                 /* gain */
 	R6 = [FP + 24];                 /* pre-gain */
 	R7 = [P5];                      /* peak */
-	R4.H = 0x0666;                  /* attack 0.05 = 107374182 */
-	R4.L = 0x6666;
+	R4.H = (OP1RINGS_LIMITER_ATTACK_Q31 >> 16) & 0xffff;   /* attack: 0.05 at 44.1 kHz (src/rate_config.h) */
+	R4.L = OP1RINGS_LIMITER_ATTACK_Q31 & 0xffff;
 	P0.H = _kSoftLimitTable;
 	P0.L = _kSoftLimitTable;
 	P0 = [P0];                      /* table base */
@@ -50,7 +51,12 @@ _MonoLimiterAsm:
 	R1 <<= 3;
 	R1 = ABS R1;
 	R1 = R1 - R7 (NS);              /* error */
-	R3 = 42950 (Z);                 /* release 0.00002 */
+#if OP1RINGS_LIMITER_RELEASE_Q31 < 65536
+	R3 = OP1RINGS_LIMITER_RELEASE_Q31 (Z);   /* release: 0.00002 at 44.1 kHz */
+#else
+	R3.H = (OP1RINGS_LIMITER_RELEASE_Q31 >> 16) & 0xffff;   /* release (src/rate_config.h) */
+	R3.L = OP1RINGS_LIMITER_RELEASE_Q31 & 0xffff;
+#endif
 	CC = R1 <= 0;
 	IF !CC R3 = R4;
 	MUL(R2, R1, R3)

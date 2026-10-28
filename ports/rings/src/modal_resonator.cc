@@ -1,6 +1,7 @@
 // Fixed-point modal resonator. See modal_resonator.h.
 
 #include "src/modal_resonator.h"
+#include "src/rate_config.h"
 
 #include "src/ffloat.h"
 #include "src/fixed.h"
@@ -150,6 +151,14 @@ int32_t ModalResonator::RecomputeFilters() {
   FFloat harmonic = f0;
   FFloat stretch_factor = k1;
   int32_t log2_q = kLog2Of500Q24 + MulQ31Fast(damping_, k4Log2Of10Q24);
+#if OP1RINGS_SAMPLE_RATE == 22050
+  // Upstream's mode Q is 1 + pf q with pf the frequency as a fraction of
+  // the sample rate, so a mode's decay in seconds is q / (pi fs): at half
+  // the rate every mode would ring twice as long. Halve q (src/rate_config.h).
+  log2_q -= 1 << 24;
+#elif OP1RINGS_SAMPLE_RATE != 44100
+#error "modal Q: add the rate's log2 correction"
+#endif
 
   int32_t one_minus = kOne - structure_;
   int32_t attenuation = MulQ31Fast(one_minus, one_minus);

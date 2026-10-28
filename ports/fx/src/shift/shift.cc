@@ -235,6 +235,16 @@ void FreqShift::Process(int16_t* l, int16_t* r, int32_t n, const ShiftParams& p)
   ShiftHilbertC(&hk_, l, r, iq_, buf_, n);
   hk_.m = m_end;
 
+  // The input gain: the analytic signal, both halves, saturating.
+  if (p.gain != 16384) {
+    const int32_t gq = Clamp(p.gain, 0, 65536);
+    for (int32_t i = 0; i < n; ++i) {
+      const int32_t vi = Sat16((Lo(iq_[i]) * gq) >> 14);
+      const int32_t vq = Sat16((Hi(iq_[i]) * gq) >> 14);
+      iq_[i] = Pack(vi, vq);
+    }
+  }
+
   const int32_t channels = r ? 2 : 1;
   for (int32_t c = 0; c < channels; ++c) {
     ShiftChannelKernel* k = &ck_[c];

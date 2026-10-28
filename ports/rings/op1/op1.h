@@ -9,9 +9,14 @@
 namespace op1 {
 
 // Synth voice objects live in the L1 scratchpad; the phase engine's are 28
-// bytes each, 6 voices.
+// bytes each, 6 voices. As a kennel plugin (-DOP1_KENNEL, ports/knl/
+// cs_rings) Rings runs in the hidden iter slot, whose voices are 36 bytes.
 const uint32_t kVoiceObjectBase = 0xffb00000;
+#ifdef OP1_KENNEL
+const uint32_t kPhaseVoiceObjectSize = 36;
+#else
 const uint32_t kPhaseVoiceObjectSize = 28;
+#endif
 const int32_t kNumVoices = 6;
 
 // Per-sample phase increments (f / fs * 2^32) for the voice being rendered.
@@ -41,10 +46,15 @@ inline int32_t VoiceIndex(const void* self) {
   uint32_t offset = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(self)) - kVoiceObjectBase;
   // offset / 28 for the six voices' offsets (0..167), without libgcc's
   // division (~500 instructions per call on Blackfin): (offset * 2341) >> 16
-  // equals it on that whole range (checked for every offset).
-  static_assert(kPhaseVoiceObjectSize == 28 && kNumVoices == 6, "VoiceIndex: the constant is for 28 x 6");
+  // equals it on that whole range (checked for every offset); for 36-byte
+  // voices (0..215), (offset * 1821) >> 16 does.
+  static_assert(kNumVoices == 6, "VoiceIndex: the constants are for 6 voices");
   if (offset >= kPhaseVoiceObjectSize * kNumVoices) return 0;
+#ifdef OP1_KENNEL
+  return static_cast<int32_t>((offset * 1821u) >> 16);
+#else
   return static_cast<int32_t>((offset * 2341u) >> 16);
+#endif
 }
 
 #ifdef OP1_SIM
