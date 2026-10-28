@@ -8,7 +8,7 @@ import sys
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPO = os.path.dirname(APP_DIR)
 TOOLS = os.path.join(REPO, 'tools')
-REPACKER = os.path.join(REPO, 'op1repacker-master')
+REPACKER = os.path.join(REPO, 'third_party', 'op1repacker')
 MANIFESTS = os.path.join(APP_DIR, 'manifests')
 IMAGE_DIR = os.path.join(APP_DIR, 'image')
 UI_DIR = os.path.join(APP_DIR, 'ui')

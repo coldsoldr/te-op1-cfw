@@ -158,7 +158,7 @@ Start with the manifests and the resolver as a CLI (`tools/build_firmware.py --f
 
 ## 5. op1repacker mods
 
-op1repacker 0.2.6 (`op1repacker-master/`, MIT, op1hacks) **never patches `OP1_vdk.ldr`**. Every mod edits content [C]:
+op1repacker 0.2.6 (`third_party/op1repacker/`, MIT, op1hacks) **never patches `OP1_vdk.ldr`**. Every mod edits content [C]:
 
 | Mod | Change |
 |---|---|

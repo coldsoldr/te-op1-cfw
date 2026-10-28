@@ -15,7 +15,7 @@ import subprocess
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'op1repacker-master'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'third_party', 'op1repacker'))
 from op1repacker.op1_repack import OP1Repack  # noqa: E402
 
 EXCLUDED = ('te-boot.ldr',)

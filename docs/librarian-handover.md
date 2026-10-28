@@ -63,7 +63,7 @@ Optionally publish a static, non-functional preview of the app as an artifact fo
 ## Part 1: the builder
 
 **Pipeline** (all of it exists; wrap it as a library):
-1. **Input:** the user's stock `op1_246.op1`. Verify it is stock 246: unpack with op1repacker (`op1repacker-master/op1repacker/op1_repack.py`), then check `OP1_vdk.ldr`'s hash against the known stock one. Compute that hash now from `op1 firmware/op1_246/OP1_vdk.ldr` and put it in the manifest.
+1. **Input:** the user's stock `op1_246.op1`. Verify it is stock 246: unpack with op1repacker (`third_party/op1repacker/op1repacker/op1_repack.py`), then check `OP1_vdk.ldr`'s hash against the known stock one. Compute that hash now from `op1 firmware/op1_246/OP1_vdk.ldr` and put it in the manifest.
 2. **Unpack** to a temp work dir.
 3. **Inject** the shipped ELF with the module mask: `tools/inject_app.py STOCK_LDR OUT_LDR op1_seq.elf` (with the new `--set-word`).
    - The ELF's patch list includes the insn16 patch at `0x1a040ac`.
@@ -97,7 +97,7 @@ The resolver:
 
 **The OP-1 in disk mode** shows a USB drive with `synth/`, `drum/`, `tape/` and `album/`.
 - **User presets** are `.aif` files in `synth/` and `drum/`, possibly in subfolders.
-- **Settings:** each holds its settings as JSON in an AIFF `APPL` chunk. The chunk data starts with `op-1`, then the JSON (see `op1repacker-master/op1repacker/op1_patches.py:read_patch`).
+- **Settings:** each holds its settings as JSON in an AIFF `APPL` chunk. The chunk data starts with `op-1`, then the JSON (see `third_party/op1repacker/op1repacker/op1_patches.py:read_patch`).
 - **Audio:** sampler and drum presets carry their audio in the AIFF's `SSND` chunk.
 - **Verify on the device:** confirm the exact layout with the user's OP-1, and whether subfolders show on the device. Ask the user to plug it in. Read only until you know the format round-trips.
 
@@ -188,7 +188,7 @@ The resolver:
   - the image must end below `0x03000000`;
   - every hook target in the inject log must be a symbol: 50 hooks today.
 - **Package recipe:** `tools/package_fx.sh NAME "ENGINES"` builds, injects, copies the SVGs (refusing stock names), packages, verifies and checks the package's contents. It copies from `op1 firmware/work_fx2` (stock content plus older SVGs); the app should build from the stock unpack instead. `tools/pkg_check.py PKG.op1 WORKDIR` compares a package with a work dir.
-- **Mods on a work dir:** from `op1repacker-master/`, run `../.venv/Scripts/python -m op1repacker.main modify "<work dir>" --options iter presets-iter filter gfx-tape-invert gfx-iter-lab`.
+- **Mods on a work dir:** from `third_party/op1repacker/`, run `../../.venv/Scripts/python -m op1repacker.main modify "<work dir>" --options iter presets-iter filter gfx-tape-invert gfx-iter-lab`.
 - **SVG rules** (memory notes `op1-svg-parser-gotchas`, and `ports/fx/op1/gen_fx_svg.py`):
   - **Boot-fatal:** `_x` ids without a closing `_`, exponents in numbers, and malformed XML.
   - **Other rules:** one M per path, no group transforms, no arcs, and no stroke that doubles back.
@@ -206,7 +206,7 @@ The resolver:
 import base64, re
 src = open('manual/user-manual.src.html', encoding='utf-8').read()
 paths = {m: f'docs/module-briefs/designs/{m}.svg' for m in ('rings', 'clouds', 'marbles', 'grids')}
-paths['iter'] = 'op1repacker-master/op1repacker/assets/display/iter-lab.svg'
+paths['iter'] = 'third_party/op1repacker/op1repacker/assets/display/iter-lab.svg'
 sub = lambda m: 'data:image/svg+xml;base64,' + base64.b64encode(
     open(paths.get(m.group(1), f'ports/fx/op1/{m.group(1)}.svg'), 'rb').read()).decode()
 open('manual/user-manual.html', 'w', encoding='utf-8', newline='\n').write(re.sub(r'\{\{svg:(\w+)\}\}', sub, src))

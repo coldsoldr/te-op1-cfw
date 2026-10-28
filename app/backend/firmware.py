@@ -14,7 +14,7 @@ import shutil
 import tarfile
 import tempfile
 
-from . import paths  # noqa: F401  (puts tools/ and op1repacker-master/ on sys.path)
+from . import paths  # noqa: F401  (puts tools/ and third_party/op1repacker/ on sys.path)
 import verify_bootloader  # noqa: E402
 from op1repacker.op1_repack import OP1Repack  # noqa: E402
 

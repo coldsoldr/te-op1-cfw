@@ -95,7 +95,7 @@ class Validator(unittest.TestCase):
         self.assertAlmostEqual(1028893014 / knobs.DRUM_UNIT, 253549, delta=4)
 
 
-@unittest.skipUnless(os.path.isdir(ITER_PRESETS), 'needs op1repacker-master')
+@unittest.skipUnless(os.path.isdir(ITER_PRESETS), 'needs third_party/op1repacker')
 class AiffFiles(unittest.TestCase):
     def test_round_trip(self):
         files = sorted(glob.glob(os.path.join(ITER_PRESETS, '*.aif')))
