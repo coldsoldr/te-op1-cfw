@@ -1,0 +1,10 @@
+{
+  "name": "audition",
+  "kind": "feature",
+  "loadable": true,
+  "symbol": "FEATURE_audition",
+  "sources": ["audition_knl.c"],
+  "author": "coldsoldr",
+  "version": "0.3",
+  "claims": []
+}
