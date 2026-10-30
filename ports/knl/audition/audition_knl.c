@@ -7,9 +7,11 @@
  * 7 apply it with its audio, 8 cancel. The reply is CC 119 on channel 16 (AU_* below). Between begin and apply, a
  * patch frame (audition_frame.h) arrives as polyphonic pressure on channel 15, two 7-bit values a message.
  *
- * A sampler patch: begin, the frame, 6, wait for AU_READY, the audio on the same pressure messages, 7. The audio goes
- * to a buffer of its own and only reaches the slot, and a RAM copy of the slot's audio is made, once it arrived whole.
- * The slot's sample file is never marked changed, so the flash keeps its own sound.
+ * A sampler patch: begin, the frame, 6, wait for AU_READY, the audio on the same pressure messages, 7. It needs no
+ * plugin memory, which is often short: the slot's audio first goes to a file of our own under /yaffs2/user/, in steps
+ * on the main loop, then the new audio arrives straight in the slot's sample buffer. So the slot sounds scrambled
+ * during the transfer. Put back, or a transfer that fails its check, reads the file back and deletes it. The slot's
+ * sample file is never marked changed, so the flash keeps its own sound.
  *
  * Speed test: how fast could a patch's audio be sent as ordinary MIDI? SysEx never reaches a plugin, so the data is
  * polyphonic pressure on channel 15, two 7-bit bytes a message. CC 118 value 2 zeroes the count and sum, value 3
@@ -54,8 +56,10 @@ enum { MIDI_CC_CH16 = 0xBF, MIDI_PRESSURE_CH15 = 0xAE, CC_REQUEST = 118, CC_REPL
 enum { REQ_AUDITION = 127, REQ_BACK = 0, REQ_HELLO = 1, REQ_ZERO = 2, REQ_REPORT = 3, REQ_BEGIN = 4, REQ_APPLY = 5,
        REQ_TAKE_AUDIO = 6, REQ_APPLY_AUDIO = 7, REQ_CANCEL = 8 };
 enum { AU_APPLIED = 1, AU_PUT_BACK = 2, AU_NOT_SYNTH = 3, AU_NOTHING_TO_PUT_BACK = 4, AU_BUSY = 5, AU_HELLO = 6, AU_REPORT = 7,
-       AU_BAD_PATCH = 8, AU_NO_MEMORY = 9, AU_READY = 10 };
+       AU_BAD_PATCH = 8, AU_NO_ROOM = 9, AU_READY = 10, AU_OTHER_SLOT = 11 };
 #define AUDIO_BYTES_MAX ((264600u - OP1_SAMPLE_GUARD) * 2u)     /* the synth sampler's 6 s, after its guard samples */
+#define SAVED_FILE "/yaffs2/user/coop_audition.raw"
+#define FILE_STEP 16384u                                        /* bytes a main loop pass */
 enum { JV_NULL = 0, JV_VALUE_WORDS = 4 };
 #define REQUEST_MS 2000u
 
@@ -76,11 +80,15 @@ static volatile uint16_t wire_len;
 static volatile uint8_t wire_open;
 static uint8_t frame[AU_PATCH_MAX + 8];
 static au_patch pending;                                        /* the patch whose audio is arriving */
-static uint8_t *audio_in, *audio_saved;                         /* AUDIO_BYTES_MAX each, taken on first use */
+static uint8_t *audio_to;                                       /* the slot's sample buffer, while audio arrives */
 static volatile uint8_t audio_open;
 static volatile uint32_t audio_at, audio_sum;
 static uint8_t group_left, group_high, group_bit;
 static uint8_t have_saved_audio;
+enum { JOB_NONE, JOB_SAVE, JOB_RESTORE };                       /* the slot's audio going to or from the file */
+static uint8_t job, job_reply;
+static int job_fd;
+static uint32_t job_at;
 
 static uint32_t cycles(void) { uint32_t c; __asm__ volatile ("%0 = CYCLES;" : "=d"(c)); return c; }
 static int saver_busy(void) { return SAVER_JOB != 0 || SAVER_RD != SAVER_WR; }
@@ -131,11 +139,6 @@ static int16_t *slot_audio(int slot)
 {
     const uint8_t *sb = op1_sample_buffer(slot);
     return sb && *(int16_t *const *)sb ? *(int16_t *const *)sb + OP1_SAMPLE_GUARD : 0;
-}
-
-static void copy_bytes(uint8_t *to, const uint8_t *from, uint32_t n)
-{
-    for (uint32_t i = 0; i < n; i++) to[i] = from[i];
 }
 
 static void peaks_rebuild(int slot)                             /* the waveform on the sampler screen */
@@ -215,68 +218,106 @@ static void load_patch(int slot, const au_patch *p)
 static int audition_received(void)
 {
     au_patch p;
-    if (frame_received(&p)) return -1;
+    if (frame_received(&p)) return AU_BAD_PATCH;
+    if (have_saved && saved_slot != SLOT) return AU_OTHER_SLOT;
     load_patch(keep_original(SLOT), &p);
-    return 0;
+    return AU_APPLIED;
 }
 
-/* A reply, and whether the audio can start. */
-static int take_audio(void)
+static void start_stream(void)
 {
-    if (frame_received(&pending) || !pending.audio_bytes || pending.audio_bytes > AUDIO_BYTES_MAX) return AU_BAD_PATCH;
-    if (!audio_in) audio_in = op1_alloc(AUDIO_BYTES_MAX);
-    if (!audio_saved) audio_saved = op1_alloc(AUDIO_BYTES_MAX);
-    if (!audio_in || !audio_saved) return AU_NO_MEMORY;
+    audio_to = (uint8_t *)slot_audio(saved_slot);
+    VOICES_RESET();
     group_left = 0;
     audio_at = 0;
     audio_sum = 0;
     audio_open = 1;
-    return AU_READY;
+    reply(AU_READY);
 }
 
+/* Starts taking a sampler's audio; the reply comes when it can begin. */
+static void take_audio(void)
+{
+    int slot = SLOT;
+    if (frame_received(&pending) || !pending.audio_bytes || pending.audio_bytes > AUDIO_BYTES_MAX || !slot_audio(slot)) { reply(AU_BAD_PATCH); return; }
+    if (have_saved && saved_slot != slot) { reply(AU_OTHER_SLOT); return; }
+    keep_original(slot);
+    if (have_saved_audio) { start_stream(); return; }
+    job_fd = op1_file_open(SAVED_FILE, OP1_FILE_WRITE | OP1_FILE_CREATE | OP1_FILE_TRUNC);
+    if (job_fd < 0) { reply(AU_NO_ROOM); return; }
+    job = JOB_SAVE;
+    job_at = 0;
+}
+
+/* The saved audio comes back in steps; the reply follows. */
+static void put_back(int code)
+{
+    int16_t *to = slot_audio(saved_slot);
+    load(saved_slot, saved);
+    have_saved = 0;
+    job_fd = have_saved_audio && to ? op1_file_open(SAVED_FILE, OP1_FILE_READ) : -1;
+    if (job_fd < 0) { have_saved_audio = 0; reply(code); return; }
+    audio_to = (uint8_t *)to;
+    job = JOB_RESTORE;
+    job_at = 0;
+    job_reply = (uint8_t)code;
+}
+
+static void job_step(void)
+{
+    uint32_t left = AUDIO_BYTES_MAX - job_at, n = left < FILE_STEP ? left : FILE_STEP;
+    if (job == JOB_SAVE) {
+        const uint8_t *from = (const uint8_t *)slot_audio(saved_slot);
+        if (!from || op1_file_write(job_fd, from + job_at, (int)n) != (int)n) {
+            op1_file_close(job_fd);
+            op1_file_unlink(SAVED_FILE);
+            job = JOB_NONE;
+            reply(AU_NO_ROOM);
+            return;
+        }
+    } else if (op1_file_read(job_fd, audio_to + job_at, (int)n) != (int)n) {
+        n = left;                                               /* a short file: nothing more to bring back */
+    }
+    job_at += n;
+    if (job_at < AUDIO_BYTES_MAX) return;
+    op1_file_close(job_fd);
+    if (job == JOB_SAVE) {
+        job = JOB_NONE;
+        have_saved_audio = 1;
+        start_stream();
+        return;
+    }
+    op1_file_unlink(SAVED_FILE);
+    peaks_rebuild(saved_slot);
+    have_saved_audio = 0;
+    job = JOB_NONE;
+    reply(job_reply);
+}
+
+/* A reply, or -1 when put_back is under way and will answer. */
 static int audition_audio(void)
 {
     audio_open = 0;
-    if (audio_at != pending.audio_bytes || audio_sum != pending.audio_sum) return AU_BAD_PATCH;
+    if (audio_at != pending.audio_bytes || audio_sum != pending.audio_sum) { put_back(AU_BAD_PATCH); return -1; }
     int slot = SLOT;
-    int16_t *to = slot_audio(slot);
-    if (!to) return AU_BAD_PATCH;
-    keep_original(slot);
-    if (!have_saved_audio) {                                    /* a second audition keeps the first copy */
-        copy_bytes(audio_saved, (const uint8_t *)to, AUDIO_BYTES_MAX);
-        have_saved_audio = 1;
-    }
     load_patch(slot, &pending);
-    copy_bytes((uint8_t *)to, audio_in, pending.audio_bytes);
-    for (uint32_t i = pending.audio_bytes; i < AUDIO_BYTES_MAX; i++) ((uint8_t *)to)[i] = 0;
+    for (uint32_t i = pending.audio_bytes; i < AUDIO_BYTES_MAX; i++) audio_to[i] = 0;
     peaks_rebuild(slot);
     return AU_APPLIED;
 }
 
-static void put_back(void)
-{
-    int16_t *to = slot_audio(saved_slot);
-    load(saved_slot, saved);
-    if (have_saved_audio && to) {
-        copy_bytes((uint8_t *)to, audio_saved, AUDIO_BYTES_MAX);
-        peaks_rebuild(saved_slot);
-    }
-    have_saved_audio = 0;
-    have_saved = 0;
-}
-
 static void service(void)
 {
+    if (job) { job_step(); return; }
     int req = request;
     if (!saved_ready) { JV_NULL_C(saved, JV_NULL); saved_ready = 1; }
     if (!req) return;
     int value = req - 1;
     if (value == REQ_HELLO) { reply(AU_HELLO); request = 0; return; }
-    if (value == REQ_CANCEL) { audio_open = 0; wire_open = 0; op1_sound_fade(0); request = 0; return; }
     if (value == REQ_TAKE_AUDIO) {
-        int ok = CUR_MODE_ID == SYNTH_MODE && !op1_sound_editor_open();
-        reply(ok ? take_audio() : AU_NOT_SYNTH);
         request = 0;
+        if (CUR_MODE_ID != SYNTH_MODE || op1_sound_editor_open()) reply(AU_NOT_SYNTH);
+        else take_audio();
         return;
     }
     if (value == REQ_ZERO) { speed_count = 0; speed_sum = 0; reply(AU_HELLO); request = 0; return; }
@@ -287,9 +328,9 @@ static void service(void)
     if (saver_busy()) return;                                   /* the saver writes sounds without a lock */
     if (op1_sound_fade(1)) return;                              /* until the audio thread confirms silence */
     if (value == REQ_AUDITION) { audition(); reply(AU_APPLIED); }
-    else if (value == REQ_APPLY) reply(audition_received() ? AU_BAD_PATCH : AU_APPLIED);
-    else if (value == REQ_APPLY_AUDIO) reply(audition_audio());
-    else { put_back(); reply(AU_PUT_BACK); }
+    else if (value == REQ_APPLY) reply(audition_received());
+    else if (value == REQ_APPLY_AUDIO) { int done = audition_audio(); if (done >= 0) reply(done); }
+    else put_back(AU_PUT_BACK);
     op1_sound_fade(0);
     request = 0;
 }
@@ -301,7 +342,7 @@ static void audio_value(int value)
     uint8_t byte = (uint8_t)(value | (((group_high >> group_bit) & 1) << 7));
     group_bit++;
     group_left--;
-    if (audio_at < pending.audio_bytes) { audio_in[audio_at] = byte; audio_at = audio_at + 1; audio_sum = audio_sum + byte; }
+    if (audio_at < pending.audio_bytes) { audio_to[audio_at] = byte; audio_at = audio_at + 1; audio_sum = audio_sum + byte; }
 }
 
 /* Timer context: only notes the request. */
@@ -315,8 +356,11 @@ static void midi_raw(const uint8_t *msg, int len)
         if (wire_open && wire_len + 2 <= AU_WIRE_MAX) { wire[wire_len] = msg[1]; wire[wire_len + 1] = msg[2]; wire_len = (uint16_t)(wire_len + 2); }
         return;
     }
-    if (msg[0] != MIDI_CC_CH16 || msg[1] != CC_REQUEST || request) return;
+    if (msg[0] != MIDI_CC_CH16 || msg[1] != CC_REQUEST) return;
+    /* These two never wait: a click on another patch sends them one after the other. */
     if (msg[2] == REQ_BEGIN) { audio_open = 0; wire_len = 0; wire_open = 1; return; }
+    if (msg[2] == REQ_CANCEL) { audio_open = 0; wire_open = 0; return; }
+    if (request) return;
     if (msg[2] == REQ_APPLY || msg[2] == REQ_TAKE_AUDIO) wire_open = 0;
     else if (msg[2] > REQ_CANCEL && msg[2] != REQ_AUDITION) return;
     request_t0 = cycles();
