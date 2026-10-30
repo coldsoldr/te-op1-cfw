@@ -14,7 +14,7 @@ PACK    := python3 $(REPO)/tools/knl_pack.py
 SVG     := python3 $(REPO)/tools/knl_svg.py
 FXSVG   := ../fx/op1
 
-PLUGINS := bitcrusher drive tape_drive wavefolder freq_shift ensemble cs_plate cs_hall tape_echo \
+PLUGINS := audition bitcrusher drive tape_drive wavefolder freq_shift ensemble cs_plate cs_hall tape_echo \
            cs_clouds cs_clouds_delay rings marbles grids
 
 # plugin screen = firmware screen (the reverbs and Clouds)

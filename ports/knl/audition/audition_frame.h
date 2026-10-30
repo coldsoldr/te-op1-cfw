@@ -5,14 +5,16 @@
  *
  *   u16 payload length, payload, u32 sum of the payload's bytes
  *
- * Payload: u8 format (1), u8 flags (bit 0 fx_active, bit 1 lfo_active), i8 octave, u8 synth_version,
- * i16 knobs[8], adsr[8], fx_params[8], lfo_params[8], then four NUL-terminated names: type, fx_type, lfo_type, name.
+ * Payload: u8 format (2), u8 flags (bit 0 fx_active, bit 1 lfo_active), i8 octave, u8 synth_version,
+ * i16 knobs[8], adsr[8], fx_params[8], lfo_params[8], f64 base_freq, u32 audio bytes, u32 sum of the audio's bytes,
+ * then four NUL-terminated names: type, fx_type, lfo_type, name. A sampler sets the three audio fields, and its
+ * audio follows on its own, packed the same way. Everything else leaves them zero.
  * Copyright (C) 2026 coldsoldr. GPL-3.0-or-later with the OP-1 firmware permission of the kennel SDK. */
 #ifndef AUDITION_FRAME_H
 #define AUDITION_FRAME_H
 #include <stdint.h>
 
-#define AU_FORMAT 1
+#define AU_FORMAT 2
 #define AU_PATCH_MAX 400                                        /* a stock patch's fields take about 110 */
 #define AU_WIRE_MAX ((AU_PATCH_MAX + 6) * 8 / 7 + 2)
 #define AU_NAME_MAX 39
@@ -22,6 +24,7 @@ typedef struct {
     uint8_t fx_active, lfo_active, synth_version;
     int8_t octave;
     int16_t knobs[AU_WORDS], adsr[AU_WORDS], fx_params[AU_WORDS], lfo_params[AU_WORDS];
+    uint32_t base_freq_lo, base_freq_hi, audio_bytes, audio_sum;
     const char *type, *fx_type, *lfo_type, *name;               /* into the unpacked buffer */
 } au_patch;
 
@@ -36,6 +39,11 @@ static inline int au_unpack(uint8_t *out, int cap, const uint8_t *wire, int len)
         }
     }
     return n;
+}
+
+static inline uint32_t au_u32(const uint8_t *p)
+{
+    return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
 }
 
 static inline void au_words(int16_t *out, const uint8_t *p)
@@ -62,9 +70,9 @@ static inline int au_parse(au_patch *o, const uint8_t *frame, int len)
 {
     if (len < 6) return -1;
     int size = frame[0] | (frame[1] << 8);
-    if (size < 4 + 4 * AU_WORDS * 2 + 8 || size > AU_PATCH_MAX || size + 6 > len) return -1;
+    if (size < 84 + 8 || size > AU_PATCH_MAX || size + 6 > len) return -1;
     const uint8_t *p = frame + 2, *end = p + size;
-    uint32_t sum = 0, want = (uint32_t)end[0] | (uint32_t)end[1] << 8 | (uint32_t)end[2] << 16 | (uint32_t)end[3] << 24;
+    uint32_t sum = 0, want = au_u32(end);
     for (int i = 0; i < size; i++) sum += p[i];
     if (sum != want || p[0] != AU_FORMAT) return -1;
     o->fx_active = (uint8_t)(p[1] & AU_FLAG_FX ? 1 : 0);
@@ -75,7 +83,11 @@ static inline int au_parse(au_patch *o, const uint8_t *frame, int len)
     au_words(o->adsr, p + 20);
     au_words(o->fx_params, p + 36);
     au_words(o->lfo_params, p + 52);
-    const uint8_t *at = p + 68;
+    o->base_freq_lo = au_u32(p + 68);
+    o->base_freq_hi = au_u32(p + 72);
+    o->audio_bytes = au_u32(p + 76);
+    o->audio_sum = au_u32(p + 80);
+    const uint8_t *at = p + 84;
     o->type = au_name(&at, end);
     o->fx_type = au_name(&at, end);
     o->lfo_type = au_name(&at, end);
