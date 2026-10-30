@@ -136,6 +136,21 @@ static void set_i32s(void *json, const char *key, const uint8_t *p, int count)
     }
 }
 
+static void set_dbox(void *json, const uint8_t *p)              /* dbox_data: 24 rows of 8 */
+{
+    uint32_t v[JV_VALUE_WORDS];
+    void *rows = JV_KEY(json, "dbox_data");
+    for (unsigned i = 0; i < AU_PADS; i++) {
+        void *row = JV_IDX(rows, i);
+        for (unsigned k = 0; k < AU_WORDS; k++) {
+            const uint8_t *at = p + (i * AU_WORDS + k) * 2;
+            JV_INT_C(v, (int16_t)(uint16_t)(at[0] | (at[1] << 8)));
+            JV_ASSIGN(JV_IDX(row, k), v);
+            JV_DTOR(v, 2);
+        }
+    }
+}
+
 static void page_refresh(int slot)                              /* as the stock key dispatch after a key */
 {
     uint32_t *c = CUR_CTRL();
@@ -228,7 +243,8 @@ static void load_patch(int slot, const au_patch *p)
     JV_NULL_C(json, JV_NULL);
     if (p->drum) {
         static const char *const names[AU_KIT_ARRAYS] = { "start", "end", "pitch", "playmode", "reverse", "volume" };
-        for (int i = 0; i < AU_KIT_ARRAYS; i++) set_i32s(json, names[i], p->kit + i * AU_PADS * 4, AU_PADS);
+        if (p->dbox) set_dbox(json, p->kit);
+        else for (int i = 0; i < AU_KIT_ARRAYS; i++) set_i32s(json, names[i], p->kit + i * AU_PADS * 4, AU_PADS);
         set_words(json, "dyna_env", p->adsr);
         set_int(json, "drum_version", p->synth_version);
     } else {
@@ -257,10 +273,10 @@ static void load_patch(int slot, const au_patch *p)
 
 static int audition_received(void)
 {
-    au_patch p;
-    if (frame_received(&p) || p.drum) return AU_BAD_PATCH;
-    if (other_sound(0, SLOT)) return AU_OTHER_SLOT;
-    load_patch(keep_original(0, SLOT), &p);
+    int drum = pending.drum, slot = drum ? DRUM_SLOT : SLOT;
+    if (drum && !pending.dbox) return AU_BAD_PATCH;             /* a sampled kit needs its audio */
+    if (other_sound(drum, slot)) return AU_OTHER_SLOT;
+    load_patch(keep_original(drum, slot), &pending);
     return AU_APPLIED;
 }
 
@@ -366,7 +382,8 @@ static void service(void)
     }
     if (value == REQ_ZERO) { speed_count = 0; speed_sum = 0; reply(AU_HELLO); request = 0; return; }
     if (value == REQ_REPORT) { send_word(CC_COUNT, speed_count); send_word(CC_SUM, speed_sum); reply(AU_REPORT); request = 0; return; }
-    int drum = value == REQ_APPLY_AUDIO ? pending.drum : value == REQ_BACK ? saved_drum : 0;
+    if (value == REQ_APPLY && frame_received(&pending)) { reply(AU_BAD_PATCH); request = 0; return; }
+    int drum = value == REQ_APPLY_AUDIO || value == REQ_APPLY ? pending.drum : value == REQ_BACK ? saved_drum : 0;
     if (op1_sound_editor_open() || (drum ? !DRUM_BANK : CUR_MODE_ID != SYNTH_MODE)) {
         op1_sound_fade(0);
         reply(drum ? AU_NOT_DRUM : AU_NOT_SYNTH);

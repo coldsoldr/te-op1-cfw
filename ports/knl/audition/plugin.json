@@ -5,6 +5,6 @@
   "symbol": "FEATURE_audition",
   "sources": ["audition_knl.c"],
   "author": "coldsoldr",
-  "version": "0.6",
+  "version": "0.7",
   "claims": []
 }
