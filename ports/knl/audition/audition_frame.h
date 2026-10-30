@@ -5,26 +5,28 @@
  *
  *   u16 payload length, payload, u32 sum of the payload's bytes
  *
- * Payload: u8 format (2), u8 flags (bit 0 fx_active, bit 1 lfo_active), i8 octave, u8 synth_version,
+ * Payload: u8 format (3), u8 flags (bit 0 fx_active, bit 1 lfo_active, bit 2 a drum kit), i8 octave, u8 version,
  * i16 knobs[8], adsr[8], fx_params[8], lfo_params[8], f64 base_freq, u32 audio bytes, u32 sum of the audio's bytes,
  * then four NUL-terminated names: type, fx_type, lfo_type, name. A sampler sets the three audio fields, and its
  * audio follows on its own, packed the same way. Everything else leaves them zero.
+ * A drum kit uses adsr for dyna_env, and has i32 start, end, pitch, playmode, reverse and volume[24] before the names.
  * Copyright (C) 2026 coldsoldr. GPL-3.0-or-later with the OP-1 firmware permission of the kennel SDK. */
 #ifndef AUDITION_FRAME_H
 #define AUDITION_FRAME_H
 #include <stdint.h>
 
-#define AU_FORMAT 2
-#define AU_PATCH_MAX 400                                        /* a stock patch's fields take about 110 */
+#define AU_FORMAT 3
+#define AU_PATCH_MAX 800                                        /* a stock patch's fields take about 110, a kit's 700 */
 #define AU_WIRE_MAX ((AU_PATCH_MAX + 6) * 8 / 7 + 2)
 #define AU_NAME_MAX 39
-enum { AU_WORDS = 8, AU_FLAG_FX = 1, AU_FLAG_LFO = 2 };
+enum { AU_WORDS = 8, AU_PADS = 24, AU_KIT_ARRAYS = 6, AU_FLAG_FX = 1, AU_FLAG_LFO = 2, AU_FLAG_DRUM = 4 };
 
 typedef struct {
-    uint8_t fx_active, lfo_active, synth_version;
+    uint8_t fx_active, lfo_active, synth_version, drum;
     int8_t octave;
     int16_t knobs[AU_WORDS], adsr[AU_WORDS], fx_params[AU_WORDS], lfo_params[AU_WORDS];
     uint32_t base_freq_lo, base_freq_hi, audio_bytes, audio_sum;
+    const uint8_t *kit;                                         /* the six kit arrays; into the unpacked buffer */
     const char *type, *fx_type, *lfo_type, *name;               /* into the unpacked buffer */
 } au_patch;
 
@@ -79,6 +81,7 @@ static inline int au_parse(au_patch *o, const uint8_t *frame, int len)
     o->lfo_active = (uint8_t)(p[1] & AU_FLAG_LFO ? 1 : 0);
     o->octave = (int8_t)p[2];
     o->synth_version = p[3];
+    o->drum = (uint8_t)(p[1] & AU_FLAG_DRUM ? 1 : 0);
     au_words(o->knobs, p + 4);
     au_words(o->adsr, p + 20);
     au_words(o->fx_params, p + 36);
@@ -88,6 +91,11 @@ static inline int au_parse(au_patch *o, const uint8_t *frame, int len)
     o->audio_bytes = au_u32(p + 76);
     o->audio_sum = au_u32(p + 80);
     const uint8_t *at = p + 84;
+    o->kit = o->drum ? at : 0;
+    if (o->drum) {
+        if (size < 84 + AU_KIT_ARRAYS * AU_PADS * 4 + 8) return -1;
+        at += AU_KIT_ARRAYS * AU_PADS * 4;
+    }
     o->type = au_name(&at, end);
     o->fx_type = au_name(&at, end);
     o->lfo_type = au_name(&at, end);

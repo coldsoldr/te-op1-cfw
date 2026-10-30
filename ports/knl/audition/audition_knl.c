@@ -34,6 +34,12 @@
 #define SYNTH_MODE    0
 #define CYCLES_MS     400000u
 #define PATCH(s)      ((uint8_t *)0x01DDD7E8 + ((s) & 7) * 0x38)        /* +0 slot, +4 the sound's JSON */
+#define DRUM_SLOT     (*(volatile int *)0xFF8016D8 & 7)
+#define DRUM_PATCH(s) ((uint8_t *)0x01DDD9A8 + ((s) & 7) * 0x38)
+#define DRUM_BANK     (*(volatile int *)0x01DE4C40 == 1)        /* 0 synth, 1 drum */
+#define DRUM_BUFFERS  ((uint32_t **)0x01CC10CC)
+#define DRUM_SET      ((void (*)(void *, int, const void *))0x01A04C48)   /* as the stock drum drop at 0x01977F16 */
+#define DRUM_APPLY    ((void (*)(void *))0x01A006C0)
 #define VOICES_RESET  ((void (*)(void))0x01A862D4)
 #define PATCH_SET     ((void (*)(void *, int, const void *))0x01A052DC)
 #define SAVER_JOB     (*(void *const volatile *)0x01BA29D8)
@@ -56,8 +62,9 @@ enum { MIDI_CC_CH16 = 0xBF, MIDI_PRESSURE_CH15 = 0xAE, CC_REQUEST = 118, CC_REPL
 enum { REQ_AUDITION = 127, REQ_BACK = 0, REQ_HELLO = 1, REQ_ZERO = 2, REQ_REPORT = 3, REQ_BEGIN = 4, REQ_APPLY = 5,
        REQ_TAKE_AUDIO = 6, REQ_APPLY_AUDIO = 7, REQ_CANCEL = 8 };
 enum { AU_APPLIED = 1, AU_PUT_BACK = 2, AU_NOT_SYNTH = 3, AU_NOTHING_TO_PUT_BACK = 4, AU_BUSY = 5, AU_HELLO = 6, AU_REPORT = 7,
-       AU_BAD_PATCH = 8, AU_NO_ROOM = 9, AU_READY = 10, AU_OTHER_SLOT = 11 };
-#define AUDIO_BYTES_MAX ((264600u - OP1_SAMPLE_GUARD) * 2u)     /* the synth sampler's 6 s, after its guard samples */
+       AU_BAD_PATCH = 8, AU_NO_ROOM = 9, AU_READY = 10, AU_OTHER_SLOT = 11, AU_NOT_DRUM = 12 };
+#define SYNTH_BYTES ((264600u - OP1_SAMPLE_GUARD) * 2u)         /* the synth sampler's 6 s, after its guard samples */
+#define DRUM_BYTES  ((529200u - OP1_SAMPLE_GUARD) * 2u)         /* a kit's 12 s */
 #define SAVED_FILE "/yaffs2/user/coop_audition.raw"
 #define FILE_STEP 16384u                                        /* bytes a main loop pass */
 enum { JV_NULL = 0, JV_VALUE_WORDS = 4 };
@@ -71,7 +78,7 @@ static const int16_t LFO[8] = { 4608, 32767, 8448, 15360, 0, 0, 0, 0 };
 
 static uint32_t saved[JV_VALUE_WORDS];                          /* a copy of the slot's JSON */
 static uint8_t saved_ready, have_saved;
-static int saved_slot;
+static int saved_slot, saved_drum;
 static volatile uint8_t request;                                /* 0 none, else the CC value + 1 */
 static volatile uint32_t request_t0;
 static volatile uint32_t speed_count, speed_sum;
@@ -118,6 +125,17 @@ static void set_words(void *json, const char *key, const int16_t *w)
     for (unsigned i = 0; i < 8; i++) { JV_INT_C(v, w[i]); JV_ASSIGN(JV_IDX(array, i), v); JV_DTOR(v, 2); }
 }
 
+static void set_i32s(void *json, const char *key, const uint8_t *p, int count)
+{
+    uint32_t v[JV_VALUE_WORDS];
+    void *array = JV_KEY(json, key);
+    for (int i = 0; i < count; i++) {
+        JV_INT_C(v, (int)au_u32(p + i * 4));
+        JV_ASSIGN(JV_IDX(array, (unsigned)i), v);
+        JV_DTOR(v, 2);
+    }
+}
+
 static void page_refresh(int slot)                              /* as the stock key dispatch after a key */
 {
     uint32_t *c = CUR_CTRL();
@@ -126,24 +144,36 @@ static void page_refresh(int slot)                              /* as the stock 
     SCREEN_REQ(id, slot, LAST_MODE());
 }
 
-static void load(int slot, const void *json)                    /* a preset drop without its save job */
+static void load(int drum, int slot, const void *json)          /* a preset drop without its save job */
 {
-    uint8_t *patch = PATCH(slot);
+    uint8_t *patch = drum ? DRUM_PATCH(slot) : PATCH(slot);
     VOICES_RESET();
-    PATCH_SET(patch, slot, json);
-    op1_sound_apply((int *)patch);
-    page_refresh(SLOT);
+    if (drum) {
+        DRUM_SET(patch, slot, json);
+        DRUM_APPLY(patch);
+    } else {
+        PATCH_SET(patch, slot, json);
+        op1_sound_apply((int *)patch);
+    }
+    page_refresh(drum ? DRUM_SLOT : SLOT);
 }
 
-static int16_t *slot_audio(int slot)
+static const uint8_t *sample_buffer(int drum, int slot)
 {
-    const uint8_t *sb = op1_sample_buffer(slot);
+    if (!drum) return op1_sample_buffer(slot);
+    const uint32_t *o = DRUM_BUFFERS[slot];
+    return o ? (const uint8_t *)o[0] : 0;
+}
+
+static int16_t *slot_audio(int drum, int slot)
+{
+    const uint8_t *sb = sample_buffer(drum, slot);
     return sb && *(int16_t *const *)sb ? *(int16_t *const *)sb + OP1_SAMPLE_GUARD : 0;
 }
 
-static void peaks_rebuild(int slot)                             /* the waveform on the sampler screen */
+static void peaks_rebuild(int drum, int slot)                   /* the waveform on the sampler screen */
 {
-    const uint8_t *sb = op1_sample_buffer(slot);
+    const uint8_t *sb = sample_buffer(drum, slot);
     if (!sb) return;
     int16_t *peaks = (int16_t *)(sb + 4);
     const int16_t *all = *(int16_t *const *)sb;
@@ -152,19 +182,22 @@ static void peaks_rebuild(int slot)                             /* the waveform 
     for (int32_t i = 0; i < cap; i++) if (all[i] > peaks[i >> 8]) peaks[i >> 8] = all[i];
 }
 
-static int keep_original(int slot)                               /* a second audition keeps the first copy */
+static int keep_original(int drum, int slot)                     /* a second audition keeps the first copy */
 {
     if (!have_saved) {
-        JV_ASSIGN(saved, PATCH(slot) + 4);
+        JV_ASSIGN(saved, (drum ? DRUM_PATCH(slot) : PATCH(slot)) + 4);
         saved_slot = slot;
+        saved_drum = drum;
         have_saved = 1;
     }
     return slot;
 }
 
+static int other_sound(int drum, int slot) { return have_saved && (saved_slot != slot || saved_drum != drum); }
+
 static void audition(void)
 {
-    int slot = keep_original(SLOT);
+    int slot = keep_original(0, SLOT);
     uint32_t json[JV_VALUE_WORDS];
     JV_NULL_C(json, JV_NULL);
     set_words(json, "adsr", ADSR);
@@ -179,7 +212,7 @@ static void audition(void)
     set_int(json, "octave", 0);
     set_int(json, "synth_version", 2);
     set_str(json, "type", "cluster");
-    load(slot, json);
+    load(0, slot, json);
     JV_DTOR(json, 2);
 }
 
@@ -193,17 +226,24 @@ static void load_patch(int slot, const au_patch *p)
 {
     uint32_t json[JV_VALUE_WORDS];
     JV_NULL_C(json, JV_NULL);
-    set_words(json, "adsr", p->adsr);
+    if (p->drum) {
+        static const char *const names[AU_KIT_ARRAYS] = { "start", "end", "pitch", "playmode", "reverse", "volume" };
+        for (int i = 0; i < AU_KIT_ARRAYS; i++) set_i32s(json, names[i], p->kit + i * AU_PADS * 4, AU_PADS);
+        set_words(json, "dyna_env", p->adsr);
+        set_int(json, "drum_version", p->synth_version);
+    } else {
+        set_words(json, "adsr", p->adsr);
+        set_words(json, "knobs", p->knobs);
+        set_int(json, "synth_version", p->synth_version);
+    }
     set_bool(json, "fx_active", p->fx_active);
     set_words(json, "fx_params", p->fx_params);
     set_str(json, "fx_type", p->fx_type);
-    set_words(json, "knobs", p->knobs);
     set_bool(json, "lfo_active", p->lfo_active);
     set_words(json, "lfo_params", p->lfo_params);
     set_str(json, "lfo_type", p->lfo_type);
     set_str(json, "name", p->name);
     set_int(json, "octave", p->octave);
-    set_int(json, "synth_version", p->synth_version);
     set_str(json, "type", p->type);
     if (p->base_freq_hi) {
         uint32_t v[JV_VALUE_WORDS];
@@ -211,22 +251,22 @@ static void load_patch(int slot, const au_patch *p)
         set_value(json, "base_freq", v);
         JV_DTOR(v, 2);
     }
-    load(slot, json);
+    load(p->drum, slot, json);
     JV_DTOR(json, 2);
 }
 
 static int audition_received(void)
 {
     au_patch p;
-    if (frame_received(&p)) return AU_BAD_PATCH;
-    if (have_saved && saved_slot != SLOT) return AU_OTHER_SLOT;
-    load_patch(keep_original(SLOT), &p);
+    if (frame_received(&p) || p.drum) return AU_BAD_PATCH;
+    if (other_sound(0, SLOT)) return AU_OTHER_SLOT;
+    load_patch(keep_original(0, SLOT), &p);
     return AU_APPLIED;
 }
 
 static void start_stream(void)
 {
-    audio_to = (uint8_t *)slot_audio(saved_slot);
+    audio_to = (uint8_t *)slot_audio(saved_drum, saved_slot);
     VOICES_RESET();
     group_left = 0;
     audio_at = 0;
@@ -235,13 +275,17 @@ static void start_stream(void)
     reply(AU_READY);
 }
 
-/* Starts taking a sampler's audio; the reply comes when it can begin. */
+static uint32_t audio_cap(int drum) { return drum ? DRUM_BYTES : SYNTH_BYTES; }
+
+/* Starts taking a sampler's or kit's audio; the reply comes when it can begin. */
 static void take_audio(void)
 {
-    int slot = SLOT;
-    if (frame_received(&pending) || !pending.audio_bytes || pending.audio_bytes > AUDIO_BYTES_MAX || !slot_audio(slot)) { reply(AU_BAD_PATCH); return; }
-    if (have_saved && saved_slot != slot) { reply(AU_OTHER_SLOT); return; }
-    keep_original(slot);
+    if (frame_received(&pending)) { reply(AU_BAD_PATCH); return; }
+    int drum = pending.drum, slot = drum ? DRUM_SLOT : SLOT;
+    if (op1_sound_editor_open() || (drum ? !DRUM_BANK : CUR_MODE_ID != SYNTH_MODE)) { reply(drum ? AU_NOT_DRUM : AU_NOT_SYNTH); return; }
+    if (!pending.audio_bytes || pending.audio_bytes > audio_cap(drum) || !slot_audio(drum, slot)) { reply(AU_BAD_PATCH); return; }
+    if (other_sound(drum, slot)) { reply(AU_OTHER_SLOT); return; }
+    keep_original(drum, slot);
     if (have_saved_audio) { start_stream(); return; }
     job_fd = op1_file_open(SAVED_FILE, OP1_FILE_WRITE | OP1_FILE_CREATE | OP1_FILE_TRUNC);
     if (job_fd < 0) { reply(AU_NO_ROOM); return; }
@@ -252,8 +296,8 @@ static void take_audio(void)
 /* The saved audio comes back in steps; the reply follows. */
 static void put_back(int code)
 {
-    int16_t *to = slot_audio(saved_slot);
-    load(saved_slot, saved);
+    int16_t *to = slot_audio(saved_drum, saved_slot);
+    load(saved_drum, saved_slot, saved);
     have_saved = 0;
     job_fd = have_saved_audio && to ? op1_file_open(SAVED_FILE, OP1_FILE_READ) : -1;
     if (job_fd < 0) { have_saved_audio = 0; reply(code); return; }
@@ -265,9 +309,9 @@ static void put_back(int code)
 
 static void job_step(void)
 {
-    uint32_t left = AUDIO_BYTES_MAX - job_at, n = left < FILE_STEP ? left : FILE_STEP;
+    uint32_t cap = audio_cap(saved_drum), left = cap - job_at, n = left < FILE_STEP ? left : FILE_STEP;
     if (job == JOB_SAVE) {
-        const uint8_t *from = (const uint8_t *)slot_audio(saved_slot);
+        const uint8_t *from = (const uint8_t *)slot_audio(saved_drum, saved_slot);
         if (!from || op1_file_write(job_fd, from + job_at, (int)n) != (int)n) {
             op1_file_close(job_fd);
             op1_file_unlink(SAVED_FILE);
@@ -279,7 +323,7 @@ static void job_step(void)
         n = left;                                               /* a short file: nothing more to bring back */
     }
     job_at += n;
-    if (job_at < AUDIO_BYTES_MAX) return;
+    if (job_at < cap) return;
     op1_file_close(job_fd);
     if (job == JOB_SAVE) {
         job = JOB_NONE;
@@ -288,7 +332,7 @@ static void job_step(void)
         return;
     }
     op1_file_unlink(SAVED_FILE);
-    peaks_rebuild(saved_slot);
+    peaks_rebuild(saved_drum, saved_slot);
     have_saved_audio = 0;
     job = JOB_NONE;
     reply(job_reply);
@@ -299,10 +343,11 @@ static int audition_audio(void)
 {
     audio_open = 0;
     if (audio_at != pending.audio_bytes || audio_sum != pending.audio_sum) { put_back(AU_BAD_PATCH); return -1; }
-    int slot = SLOT;
+    int drum = pending.drum, slot = drum ? DRUM_SLOT : SLOT;
+    if (other_sound(drum, slot)) { put_back(AU_OTHER_SLOT); return -1; }
     load_patch(slot, &pending);
-    for (uint32_t i = pending.audio_bytes; i < AUDIO_BYTES_MAX; i++) audio_to[i] = 0;
-    peaks_rebuild(slot);
+    for (uint32_t i = pending.audio_bytes, cap = audio_cap(drum); i < cap; i++) audio_to[i] = 0;
+    peaks_rebuild(drum, slot);
     return AU_APPLIED;
 }
 
@@ -316,13 +361,18 @@ static void service(void)
     if (value == REQ_HELLO) { reply(AU_HELLO); request = 0; return; }
     if (value == REQ_TAKE_AUDIO) {
         request = 0;
-        if (CUR_MODE_ID != SYNTH_MODE || op1_sound_editor_open()) reply(AU_NOT_SYNTH);
-        else take_audio();
+        take_audio();
         return;
     }
     if (value == REQ_ZERO) { speed_count = 0; speed_sum = 0; reply(AU_HELLO); request = 0; return; }
     if (value == REQ_REPORT) { send_word(CC_COUNT, speed_count); send_word(CC_SUM, speed_sum); reply(AU_REPORT); request = 0; return; }
-    if (CUR_MODE_ID != SYNTH_MODE || op1_sound_editor_open()) { op1_sound_fade(0); reply(AU_NOT_SYNTH); request = 0; return; }
+    int drum = value == REQ_APPLY_AUDIO ? pending.drum : value == REQ_BACK ? saved_drum : 0;
+    if (op1_sound_editor_open() || (drum ? !DRUM_BANK : CUR_MODE_ID != SYNTH_MODE)) {
+        op1_sound_fade(0);
+        reply(drum ? AU_NOT_DRUM : AU_NOT_SYNTH);
+        request = 0;
+        return;
+    }
     if (value == REQ_BACK && !have_saved) { reply(AU_NOTHING_TO_PUT_BACK); request = 0; return; }
     if (cycles() - request_t0 > REQUEST_MS * CYCLES_MS) { op1_sound_fade(0); reply(AU_BUSY); request = 0; return; }
     if (saver_busy()) return;                                   /* the saver writes sounds without a lock */
